@@ -1,0 +1,42 @@
+# ==============================================================
+# docker-compose.yml — Services du framework
+#   - langfuse : observabilité / traçage des appels LLM
+#   - api      : l'API FastAPI du framework d'audit
+# PLACEHOLDER Phase 1 — à affiner en Phase 2 (volumes, secrets, réseau sandbox).
+# ==============================================================
+version: "3.9"
+
+services:
+  # ----------------------------------------------------------
+  # LangFuse — monitoring et traçage LLM
+  # (config minimale ; base de données à ajouter en Phase 2)
+  # ----------------------------------------------------------
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: langfuse
+    ports:
+      - "3000:3000"
+    environment:
+      # TODO Phase 2 : renseigner via .env (voir .env.example)
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-changeme}
+      SALT: ${SALT:-changeme}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/langfuse}
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # API du framework d'audit (FastAPI + Uvicorn)
+  # ----------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile   # TODO Phase 2 : créer le Dockerfile de l'API
+    container_name: ai_security_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - langfuse
+    # Le module sandbox (ASI05) exécute du code dans des conteneurs Docker
+    # éphémères : l'accès au socket Docker sera configuré en Phase 2.
+    restart: unless-stopped

@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "title": "Cartographie des menaces ↔ contexte entreprise (Ooredoo)",
+    "version": "placeholder-0.1",
+    "description": "À remplir en Phase 1 : relier chaque catégorie ASI aux actifs, aux impacts métier et aux scénarios de menace concrets du contexte Ooredoo.",
+    "status": "PLACEHOLDER"
+  },
+  "mappings": {
+    "ASI_01": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_02": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_03": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_04": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_05": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_06": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_07": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_08": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_09": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
+    "ASI_10": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""}
+  }
+}

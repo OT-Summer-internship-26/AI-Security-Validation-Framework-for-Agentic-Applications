@@ -1,0 +1,35 @@
+# ==============================================================
+# security_audit.yml — GitHub Actions : audit de sécurité avant déploiement
+# PLACEHOLDER Phase 1 — le workflow réel sera complété en Phase 2 / CI-CD.
+#
+# Objectif : lancer le framework d'audit sur l'agent cible et BLOQUER le
+# déploiement si le score global < SCORE_THRESHOLD (défaut 70).
+# ==============================================================
+name: AI Security Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # TODO Phase 2 :
+      #   - installer les dépendances (requirements.txt)
+      #   - lancer l'audit via l'API ou en CLI
+      #   - récupérer le score global
+      #   - échouer le job si score < SCORE_THRESHOLD (gate CI/CD)
+      - name: Placeholder
+        run: echo "PLACEHOLDER — étape d'audit à implémenter en Phase 2"

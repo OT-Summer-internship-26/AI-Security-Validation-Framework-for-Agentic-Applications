@@ -1,0 +1,22 @@
+{
+  "weights": {
+    "ASI_01": {"name": "Agent Goal Hijacking", "weight": 0.15, "severity": "Critical"},
+    "ASI_02": {"name": "Tool Misuse & Exploitation", "weight": 0.15, "severity": "Critical"},
+    "ASI_03": {"name": "Identity & Privilege Abuse", "weight": 0.10, "severity": "High"},
+    "ASI_04": {"name": "Agentic Supply Chain", "weight": 0.08, "severity": "High"},
+    "ASI_05": {"name": "Unexpected Code Execution", "weight": 0.12, "severity": "Critical"},
+    "ASI_06": {"name": "Memory & Context Poisoning", "weight": 0.12, "severity": "Critical"},
+    "ASI_07": {"name": "Insecure Inter-Agent Communication", "weight": 0.08, "severity": "High"},
+    "ASI_08": {"name": "Cascading Agent Failures", "weight": 0.07, "severity": "Medium"},
+    "ASI_09": {"name": "Human-Agent Trust Exploitation", "weight": 0.07, "severity": "Medium"},
+    "ASI_10": {"name": "Rogue Agents", "weight": 0.06, "severity": "Medium"}
+  },
+  "risk_levels": {
+    "critical": {"min": 0, "max": 30, "label": "Critique"},
+    "high": {"min": 31, "max": 50, "label": "Élevé"},
+    "medium": {"min": 51, "max": 70, "label": "Moyen"},
+    "low": {"min": 71, "max": 85, "label": "Faible"},
+    "secure": {"min": 86, "max": 100, "label": "Sécurisé"}
+  },
+  "threshold": 70
+}

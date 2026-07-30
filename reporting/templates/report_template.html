@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rapport d'audit de sécurité — {{ target_url | default("cible") }}</title>
+  <!-- PLACEHOLDER — template Jinja2 à compléter en Phase 2 (reporting/report_generator.py) -->
+  <!-- Chart.js sera chargé via CDN pour le radar chart et les bar charts -->
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 2rem; color: #1a1a1a; }
+    header { border-bottom: 3px solid #d0021b; padding-bottom: 1rem; }
+    .score { font-size: 3rem; font-weight: bold; }
+    .placeholder { color: #888; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Rapport d'audit de sécurité — Applications IA agentiques</h1>
+    <p>OWASP Top 10 for Agentic Applications 2026</p>
+  </header>
+
+  <section>
+    <h2>Score global</h2>
+    <p class="score">{{ global_score | default("—") }} / 100</p>
+    <p>Niveau de risque : {{ risk_level | default("—") }}</p>
+  </section>
+
+  <section>
+    <h2>Détail par catégorie ASI</h2>
+    <p class="placeholder">
+      PLACEHOLDER — le tableau des 10 catégories, le radar chart et la liste
+      des vulnérabilités seront générés en Phase 2.
+    </p>
+    <!-- {% for asi, result in results.items() %} ... {% endfor %} -->
+  </section>
+
+  <footer>
+    <p class="placeholder">Généré automatiquement par AI Security Audit Framework.</p>
+  </footer>
+</body>
+</html>

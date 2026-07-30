@@ -1,0 +1,44 @@
+# ==============================================================
+# AI Security Audit Framework — dépendances Python
+# OWASP Top 10 for Agentic Applications 2026
+# ==============================================================
+
+# Core
+langchain
+langgraph
+langchain-openai
+langchain-community
+
+# Red Teaming
+deepteam
+deepeval
+# garak : NE PAS installer dans cet environnement. La version récente exige Rust (build de litellm),
+# et la version sans-Rust (0.9.0.11, via `--only-binary=:all:`) épingle openai==0.28.1, ce qui CASSE
+# deepteam / deepeval / langchain-openai (openai 2.x). Les deux ne peuvent pas coexister.
+# → garak est installé isolé dans un venv dédié : voir docs/garak_isolated_env.md (~/garak-venv).
+# garak   # <- volontairement commenté : outil d'attaque secondaire, isolé hors de cet env.
+
+# Observability
+langfuse
+opentelemetry-api
+opentelemetry-sdk
+
+# Security Analysis
+# semgrep : sur Windows, installer via `pip install --only-binary=:all: semgrep`
+# (sinon le résolveur pip peut backtracker vers un sdist qui refuse de compiler sur Windows).
+# Le wheel récent (>=1.112) embarque le moteur et fonctionne nativement (vérifié : v1.170.0).
+semgrep
+pip-audit
+
+# API
+fastapi
+uvicorn[standard]
+
+# Reporting
+jinja2
+weasyprint
+
+# Utils
+python-dotenv
+httpx
+pydantic

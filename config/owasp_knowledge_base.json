@@ -1,0 +1,1641 @@
+{
+  "metadata": {
+    "titre": "Base de connaissances - OWASP Top 10 for Agentic Applications 2026",
+    "source_document": "OWASP Top 10 for Agentic Applications 2026 (OWASP Gen AI Security Project - Agentic Security Initiative)",
+    "version_source": "Version 2026, publiée décembre 2025",
+    "licence_source": "CC BY-SA 4.0 - attribution requise : \"OWASP Top 10 for LLMs - GenAI Red Teaming Guide\" / genai.owasp.org",
+    "date_generation_kb": "2026-07-15",
+    "auteur_kb": "Généré pour le projet de stage - Framework de sécurité et de validation des applications IA agentiques",
+    "objectif": "Servir de référence unique pour : (1) les agents de sécurité spécialisés du pipeline LangGraph, (2) la génération automatisée de rapports de conformité, (3) le croisement avec la taxonomie DeepTeam (risk_categories.py)",
+    "structure_at_a_glance": {
+      "description": "Le cycle de vie agentique OWASP se décompose en 3 zones : Inputs (User Prompts, API, External Agents), Integration/Processing (Policy & Governance, Human-in-the-loop, Agents, Connected data/RAG, Memory), Outputs (Tools, APIs/Resources, External Agents). Les 10 risques sont positionnés sur ce flux.",
+      "zone_inputs": [
+        "ASI01",
+        "ASI03",
+        "ASI09"
+      ],
+      "zone_processing": [
+        "ASI06",
+        "ASI07",
+        "ASI10"
+      ],
+      "zone_outputs": [
+        "ASI02"
+      ],
+      "zone_transversale_supply_chain_et_systemique": [
+        "ASI04",
+        "ASI05",
+        "ASI08"
+      ]
+    },
+    "deepteam_crosscheck_status": "EFFECTUE - croisement réalisé avec risk_categories.py et owasp_top_10_agentic.py (classe OWASP_ASI_2026)",
+    "avertissement_juridique": "Ce document ne constitue pas un conseil juridique. Contenu reformulé à partir du PDF officiel OWASP à des fins d'usage interne dans un framework d'audit ; toute republication externe doit respecter la licence CC BY-SA 4.0 et citer la source.",
+    "version_kb": "1.0",
+    "derniere_modification": "2026-07-16 - ajout test_layers (modele a 3 couches) + mapping DeepTeam verifie"
+  },
+  "vulnerabilities": [
+    {
+      "id": "ASI01",
+      "nom": "Agent Goal Hijack",
+      "nom_fr": "Détournement d'objectif de l'agent",
+      "theme": "Manipulation des entrées / Inputs",
+      "position_pipeline": "Inputs -> Policy & Governance",
+      "description": "Un agent IA exécute des tâches de façon autonome sur la base d'instructions en langage naturel. Comme l'agent (et le modèle sous-jacent) ne peut pas distinguer de manière fiable une instruction légitime d'un contenu manipulé, un attaquant peut détourner ses objectifs, sa sélection de tâches ou son cheminement décisionnel via prompt injection (directe ou indirecte), sortie d'outil falsifiée, artefact malveillant, message inter-agents forgé, ou données externes empoisonnées. Contrairement à LLM01:2025 (qui vise une seule réponse du modèle), ASI01 capture l'impact agentique plus large : redirection des objectifs et du comportement multi-étapes.",
+      "distinction_categories_proches": "Diffère de ASI06 (Memory & Context Poisoning) qui vise la corruption persistante de la mémoire/contexte stocké, et de ASI10 (Rogue Agents) qui capture une dérive autonome émergeant sans contrôle actif de l'attaquant. ASI01 = altération directe et immédiate des objectifs/instructions.",
+      "mecanismes_racines": [
+        "Impossibilité structurelle de séparer 'instruction' et 'donnée' dans un flux en langage naturel",
+        "Orchestration faiblement gouvernée acceptant des entrées non typées",
+        "Absence de validation d'intention en cours d'exécution"
+      ],
+      "exemples_vulnerabilite": [
+        "Prompt injection indirecte via des instructions cachées dans une page web ou un document ingéré en RAG, redirigeant l'agent vers l'exfiltration de données",
+        "Injection indirecte via des canaux de communication externes (email, calendrier, Teams) détournant la capacité de communication interne de l'agent",
+        "Override malveillant d'un prompt manipulant un agent financier pour transférer des fonds",
+        "Injection indirecte forçant la production d'informations frauduleuses influençant des décisions métier"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "EchoLeak - Injection zero-click",
+          "resume": "Un email conçu déclenche silencieusement l'exécution d'instructions cachées dans Microsoft 365 Copilot, provoquant l'exfiltration d'emails, fichiers et journaux de chat sans interaction utilisateur."
+        },
+        {
+          "nom": "Injection via contenu web (agent Operator)",
+          "resume": "Contenu malveillant placé sur une page web traité par un agent de navigation/RAG, le poussant à suivre des instructions non autorisées et à exposer des données privées via des pages authentifiées."
+        },
+        {
+          "nom": "Dérive d'objectif via invitations calendrier planifiées",
+          "resume": "Une invitation calendrier malveillante injecte une instruction récurrente 'mode silencieux' qui repondère progressivement les objectifs d'un agent planificateur tout en restant apparemment dans les limites de la politique déclarée."
+        },
+        {
+          "nom": "Attaque 'Inception' sur des utilisateurs ChatGPT",
+          "resume": "Un document Google Doc malveillant injecte des instructions pour exfiltrer des données utilisateur et pousser à une décision métier hasardeuse."
+        }
+      ],
+      "prevention_guidelines": [
+        "Traiter toute entrée en langage naturel (texte, documents, contenu récupéré) comme non fiable ; appliquer les protections anti-prompt-injection avant qu'elle influence but/planification/appels d'outils",
+        "Appliquer le principe de moindre privilège sur les outils et exiger une approbation humaine pour toute action à fort impact ou changeant l'objectif",
+        "Verrouiller et auditer les system prompts définissant les priorités d'objectif et les actions permises ; changements soumis à gestion de configuration + approbation humaine",
+        "Valider à l'exécution l'intention utilisateur ET l'intention de l'agent avant toute action à fort impact ; bloquer/pauser toute déviation d'objectif inattendue et la journaliser",
+        "Étudier le pattern émergent d''intent capsule' liant objectif déclaré, contraintes et contexte dans une enveloppe signée par cycle d'exécution",
+        "Assainir et valider toute source de données connectée (RAG, emails, calendrier, fichiers uploadés, API externes, sortie de navigation, messages inter-agents) via CDR et détection de charge utile de type prompt",
+        "Maintenir logging et monitoring continu avec baseline comportementale (état de l'objectif, patterns d'usage d'outils) et alerte sur déviation",
+        "Conduire des red-teams périodiques simulant l'override d'objectif et vérifier l'efficacité du rollback",
+        "Intégrer les agents IA dans le programme de gestion des menaces internes (Insider Threat Program)"
+      ],
+      "detection_metrics": [
+        "Taux de déviation entre l'objectif déclaré en début de session et la séquence d'actions observée (goal-drift rate)",
+        "Nombre d'appels d'outils hors du périmètre de la tâche initiale par session",
+        "Score de détection de prompt injection sur les entrées ingérées (RAG, email, documents) avant traitement par l'agent",
+        "Fréquence des instructions contradictoires détectées entre system prompt et contenu ingéré",
+        "Taux de rejet/validation humaine déclenché sur actions à fort impact"
+      ],
+      "niveau_risque": "Critique",
+      "niveau_risque_justification": "Vecteur d'entrée principal de la quasi-totalité des chaînes d'attaque agentiques observées (EchoLeak, AgentFlayer, etc.) ; impact direct sur confidentialité/intégrité/disponibilité.",
+      "aivss_core_risk": "Agent Goal & Instruction Manipulation",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM06:2025 Excessive Agency"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T06 Goal Manipulation",
+        "T07 Misaligned & Deceptive Behaviors"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "Promptfoo",
+          "usage": "Tests de red-teaming automatisés pour prompt injection directe/indirecte"
+        },
+        {
+          "outil": "Garak",
+          "usage": "Scan de vulnérabilités LLM, probes d'injection et de jailbreak"
+        },
+        {
+          "outil": "DeepEval",
+          "usage": "Métrique 'goal adherence' / évaluation de dérive d'objectif"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Traçabilité des chaînes de raisonnement et détection de déviation"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Instrumentation des traces d'exécution pour baseline comportementale"
+        }
+      ],
+      "references_officielles": [
+        "Security Advisory - ChatGPT Crawler Reflective DDOS Vulnerability",
+        "AIM Echoleak Blog Post",
+        "ChatGPT Plugin Exploit Explained: From Prompt Injection to Accessing Private Data",
+        "AgentFlayer: 0-click inception attack on ChatGPT users"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_01",
+        "vulnerabilities": [
+          {
+            "class": "GoalTheft",
+            "types": [
+              "escalating_probing",
+              "cooperative_dialogue"
+            ]
+          },
+          {
+            "class": "ExcessiveAgency",
+            "types": [
+              "autonomy",
+              "functionality"
+            ]
+          },
+          {
+            "class": "Robustness",
+            "types": [
+              "hijacking"
+            ]
+          },
+          {
+            "class": "RecursiveHijacking",
+            "types": [
+              "goal_propagation_attacks",
+              "self_modifying_goals"
+            ]
+          },
+          {
+            "class": "IndirectInstruction",
+            "types": [
+              "cross_context_injection",
+              "document_embedded_instructions",
+              "rag_injection",
+              "tool_output_injection"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 3
+          },
+          {
+            "class": "LinearJailbreaking",
+            "weight": 2
+          },
+          {
+            "class": "CrescendoJailbreaking",
+            "weight": 2
+          },
+          {
+            "class": "TreeJailbreaking",
+            "weight": 1
+          },
+          {
+            "class": "Roleplay",
+            "weight": 2,
+            "role": "System planner",
+            "persona": "Authorized orchestrator"
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI02",
+      "nom": "Tool Misuse and Exploitation",
+      "nom_fr": "Utilisation abusive et exploitation des outils",
+      "theme": "Abus d'outils légitimes / Outputs",
+      "position_pipeline": "Processing -> Tools (Outputs)",
+      "description": "Un agent opérant dans les limites de ses privilèges autorisés peut néanmoins appliquer un outil légitime de façon dangereuse ou non prévue (suppression de données, appels API coûteux en boucle, exfiltration) à cause d'injection de prompt, de désalignement ou de délégation non sécurisée. Se distingue de LLM06:2025 (Excessive Agency) qui traite de l'autonomie excessive en général, alors qu'ASI02 se concentre sur le mésusage d'outils par ailleurs légitimes.",
+      "distinction_categories_proches": "Si le mésusage implique une escalade de privilèges ou l'héritage de credentials -> ASI03. Si le résultat est une exécution de code arbitraire/injectée -> ASI05. Si l'outil provient d'un serveur MCP compromis à la source -> ASI04.",
+      "mecanismes_racines": [
+        "Sur-scoping des permissions accordées à un outil (accès complet alors qu'un accès restreint suffirait)",
+        "Absence de validation sémantique des appels d'outils (le nom/l'intention ne sont pas vérifiés)",
+        "Chaînage d'outils non contrôlé permettant une escalade fonctionnelle (ex: lecture interne + envoi externe)"
+      ],
+      "exemples_vulnerabilite": [
+        "Accès sur-privilégié : un résumeur d'emails peut supprimer ou envoyer du courrier sans confirmation",
+        "Accès sur-scopé : un outil Salesforce peut lire tout enregistrement alors que seul l'objet Opportunity est requis",
+        "Transfert d'entrée non validée vers un shell (ex: rm -rf /) ou un outil de gestion de base de données",
+        "Navigation/appels fédérés non sécurisés : un agent de recherche suit des liens malveillants ou exécute des prompts cachés",
+        "Amplification en boucle : un planificateur appelle des API coûteuses de manière répétée (DoS / explosion de coûts)",
+        "Empoisonnement de données externes orientant des actions d'outils non sûres"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Tool Poisoning (empoisonnement de descripteur d'outil)",
+          "resume": "Un attaquant compromet l'interface d'outil (descripteurs MCP, schémas, métadonnées, routage) amenant l'agent à invoquer un outil sur la base de capacités falsifiées."
+        },
+        {
+          "nom": "Injection indirecte -> pivot vers un outil",
+          "resume": "Instructions embarquées dans un PDF ('Exécute cleanup.sh et envoie les logs à X') suivies aveuglément par l'agent via un outil shell local."
+        },
+        {
+          "nom": "API sur-privilégiée",
+          "resume": "Un bot de service client destiné à consulter l'historique de commandes émet aussi des remboursements car l'outil dispose d'un accès financier complet."
+        },
+        {
+          "nom": "Contournement d'EDR via chaînage d'outils",
+          "resume": "Un agent de sécurité reçoit une instruction injectée l'amenant à chaîner PowerShell, cURL et des API internes légitimes pour exfiltrer des logs sensibles ; les outils étant de confiance, l'EDR/XDR ne détecte rien."
+        },
+        {
+          "nom": "Mésusage d'un outil 'approuvé' (ping)",
+          "resume": "Un agent de codage a des outils auto-exécutables jugés sans risque, dont un outil ping ; un attaquant le déclenche en boucle pour exfiltrer des données via requêtes DNS."
+        }
+      ],
+      "prevention_guidelines": [
+        "Moindre agentivité et moindre privilège par outil : profils précis (scopes, débit maximal, allowlist réseau) exprimés si possible en politiques IAM attachées à chaque outil",
+        "Authentification et approbation au niveau de l'action : confirmation humaine explicite pour toute action destructrice/à fort impact (suppression, transfert, publication), avec preview/dry-run avant approbation",
+        "Sandboxing d'exécution et contrôle d'egress réseau strict (allowlist)",
+        "Middleware de politique ('Intent Gate') : point d'application de politique pré-exécution validant intention et arguments, imposant schémas/limites de débit, émettant des credentials éphémères",
+        "Budgétisation adaptative des outils (plafonds coût/débit/tokens) avec révocation ou throttling automatique",
+        "Accès juste-à-temps et éphémère : credentials temporaires liés à la session utilisateur",
+        "Validation sémantique et d'identité ('semantic firewall') : noms d'outils pleinement qualifiés, pinning de version, échec fermé (fail-closed) en cas de résolution ambiguë",
+        "Logging, monitoring et détection de dérive : logs immuables de chaque invocation, détection de patterns de chaînage anormaux (ex: lecture DB puis transfert externe)"
+      ],
+      "detection_metrics": [
+        "Taux d'appels d'outils hors du périmètre fonctionnel déclaré (over-scope rate)",
+        "Nombre de chaînages d'outils atypiques détectés (ex: lecture interne suivie d'un envoi externe) sur une fenêtre glissante",
+        "Débit d'appels par outil vs baseline (détection d'amplification/DoS)",
+        "Taux de refus par le PEP/PDP (Policy Enforcement Point) sur les appels non conformes au schéma",
+        "Nombre de credentials éphémères expirés/révoqués anormalement vite après émission"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "Impact direct sur confidentialité/intégrité des systèmes connectés ; difficile à détecter par les outils EDR classiques car les actions passent par des binaires de confiance.",
+      "aivss_core_risk": "Agentic AI Tool Misuse",
+      "mapping_llm_top10_2025": [
+        "LLM06:2025 Excessive Agency"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T2 Tool Misuse",
+        "T4 Resource Overload",
+        "T16 Insecure Inter-Agent Protocol Abuse"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "Semgrep",
+          "usage": "Analyse statique du code des wrappers d'outils pour détecter des permissions trop larges"
+        },
+        {
+          "outil": "FastAPI",
+          "usage": "Implémentation d'un Policy Enforcement Point (PEP) devant les endpoints d'outils"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Sandboxing de l'exécution des outils et isolation réseau"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Traçage des chaînages d'appels d'outils pour détection d'anomalies"
+        },
+        {
+          "outil": "Promptfoo / Garak",
+          "usage": "Simulation de scénarios de tool poisoning et d'injection déclenchant le mésusage"
+        }
+      ],
+      "references_officielles": [
+        "Progent: Programmable Privilege Control for LLM Agents",
+        "AutoGPT - Make Auto-GPT aware of it's running cost",
+        "Building AI Agents with Python: From LangChain to AutoGPT",
+        "AgentFlayer: 0-click Exploit Leading to Data Exfiltration from Microsoft Copilot Studio",
+        "Amazon Q Developer: Secrets Leaked via DNS and Prompt Injection"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_02",
+        "vulnerabilities": [
+          {
+            "class": "ExcessiveAgency",
+            "types": [
+              "functionality",
+              "permissions"
+            ]
+          },
+          {
+            "class": "BFLA",
+            "types": [
+              "function_bypass",
+              "authorization_bypass"
+            ]
+          },
+          {
+            "class": "ToolOrchestrationAbuse",
+            "types": [
+              "recursive_tool_calls",
+              "unsafe_tool_composition",
+              "tool_budget_exhaustion",
+              "cross_tool_state_leakage"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 2
+          },
+          {
+            "class": "Roleplay",
+            "weight": 2,
+            "role": "Automation agent",
+            "persona": "Agent orchestrator"
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral",
+        "static (optional)"
+      ]
+    },
+    {
+      "id": "ASI03",
+      "nom": "Identity and Privilege Abuse",
+      "nom_fr": "Abus d'identité et de privilèges",
+      "theme": "Identité, confiance dynamique et délégation",
+      "position_pipeline": "Inputs -> Policy & Governance (traverse tout le pipeline)",
+      "description": "Exploite la confiance dynamique et la délégation entre agents pour escalader les accès et contourner les contrôles, en manipulant les chaînes de délégation, l'héritage de rôles, les flux de contrôle et le contexte de l'agent (credentials en cache, historique de conversation). L'identité recouvre ici à la fois la persona déclarée de l'agent et tout matériel d'authentification qui la représente (clés API, tokens OAuth, sessions utilisateur déléguées). Le risque naît d'un décalage architectural : les systèmes d'identité centrés sur l'humain ne sont pas conçus pour des agents autonomes, créant un 'gap d'attribution' rendant le moindre privilège difficile à appliquer réellement.",
+      "distinction_categories_proches": "Diffère d'ASI02 (Tool Misuse) qui concerne un mésusage non intentionnel d'un privilège déjà accordé légitimement par le principal lui-même, alors qu'ASI03 concerne l'acquisition/l'héritage indu d'un privilège plus élevé.",
+      "mecanismes_racines": [
+        "Héritage de privilèges non scopé lors d'une délégation manager -> worker",
+        "Rétention de privilèges en mémoire (credentials mis en cache et réutilisés hors contexte)",
+        "Confiance implicite entre agents internes ('confused deputy')",
+        "Fenêtre TOCTOU (Time-of-Check to Time-of-Use) : permissions validées en début de workflow mais expirées/modifiées avant exécution",
+        "Absence de vérification de l'identité d'un agent pair (persona synthétique/forgée)"
+      ],
+      "exemples_vulnerabilite": [
+        "Héritage de privilège non scopé : un agent manager délègue à un agent 'requête DB' en lui passant tout son contexte d'accès",
+        "Rétention de privilège en mémoire : un agent IT admin met en cache des credentials SSH réutilisés ensuite par un utilisateur non-admin",
+        "Exploitation de confiance croisée (confused deputy) : un agent bas-privilège relaie une instruction à un agent haut-privilège qui l'exécute sans re-vérifier l'intention originale",
+        "TOCTOU : les permissions changent/expirent entre le début et l'exécution d'un workflow, mais l'agent continue avec l'autorisation périmée",
+        "Injection d'identité synthétique : usurpation d'un agent interne via un descripteur non vérifié ('Admin Helper')"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Abus de privilège délégué",
+          "resume": "Un agent finance délègue à un agent 'requête DB' en lui passant toutes ses permissions ; un prompt malveillant exploite cet accès hérité pour exfiltrer des données RH/juridiques."
+        },
+        {
+          "nom": "Escalade basée sur la mémoire",
+          "resume": "Un agent IT admin met en cache des credentials SSH lors d'un patch ; un utilisateur non-admin réutilise plus tard la session pour créer un compte non autorisé."
+        },
+        {
+          "nom": "Exploitation de confiance croisée",
+          "resume": "Un email forgé imitant l'IT ordonne à un agent de tri de faire transférer des fonds via un agent finance, qui traite le paiement frauduleux car il fait confiance à un agent interne."
+        },
+        {
+          "nom": "Phishing par code d'appareil (device-code) inter-agents",
+          "resume": "Un attaquant partage un lien de code d'appareil suivi par un agent de navigation ; un agent 'assistant' complète le code, liant le tenant de la victime aux scopes de l'attaquant."
+        },
+        {
+          "nom": "Dérive d'autorisation de workflow",
+          "resume": "Un agent de procurement valide l'approbation en début de séquence d'achat ; la limite de dépense de l'utilisateur est réduite plus tard, mais le workflow continue avec le token d'autorisation périmé."
+        },
+        {
+          "nom": "Persona d'agent forgée",
+          "resume": "Un attaquant enregistre un faux agent 'Admin Helper' dans un registre A2A interne avec une carte d'agent forgée ; d'autres agents lui délèguent des tâches privilégiées."
+        }
+      ],
+      "prevention_guidelines": [
+        "Permissions bornées dans le temps et scopées à la tâche : tokens de courte durée par tâche, identités par agent, credentials mTLS/scopés",
+        "Isolation des identités et contextes d'agents : sandboxes par session avec permissions et mémoire séparées, effacement d'état entre tâches",
+        "Autorisation obligatoire par action : re-vérification de chaque étape privilégiée via un moteur de politique centralisé",
+        "Human-in-the-loop pour toute escalade de privilège ou action irréversible",
+        "Définition d'intention (intent binding) : lier les tokens OAuth à une intention signée (sujet, audience, but, session)",
+        "Évaluer des plateformes de gestion d'identité agentique (Microsoft Entra, AWS Bedrock Agents, Salesforce Agentforce, Workday ASOR, Google Vertex AI) qui traitent les agents comme des identités non-humaines gérées",
+        "Lier les permissions à sujet/ressource/but/durée ; ré-authentification sur changement de contexte ; révocation automatique sur idle/anomalie",
+        "Détecter les permissions déléguées et transitives : surveiller quand un agent bas-privilège hérite de scopes plus élevés dans une chaîne multi-agents",
+        "Détecter l'élévation croisée anormale et les flux de type phishing par device-code"
+      ],
+      "detection_metrics": [
+        "Nombre de délégations transitives dépassant le scope minimal requis (permission creep entre agents)",
+        "Durée de vie moyenne des credentials/tokens actifs vs politique cible (détection de credentials à longue durée de vie)",
+        "Taux de réutilisation de credentials en cache entre sessions/utilisateurs différents",
+        "Nombre d'écarts détectés entre l'intention signée d'un token et la requête réellement exécutée (TOCTOU)",
+        "Taux d'agents pairs non attestés cryptographiquement acceptés dans les workflows multi-agents"
+      ],
+      "niveau_risque": "Critique",
+      "niveau_risque_justification": "Évolution agentique de 'Excessive Agency' (LLM06:2025) ; l'impact peut dépasser la simple divulgation d'information pour compromettre confidentialité, intégrité ET disponibilité via des chaînes de délégation.",
+      "aivss_core_risk": "Agent Access Control Violation",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM06:2025 Excessive Agency",
+        "LLM02:2025 Sensitive Information Disclosure"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T3 Privilege Compromise"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "FastAPI",
+          "usage": "Implémentation d'un point de politique d'autorisation par action (PEP/PDP)"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Traçage des chaînes de délégation entre agents pour audit"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Isolation des sessions/identités par conteneur"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Observabilité des sessions et détection de réutilisation anormale de contexte"
+        },
+        {
+          "outil": "Garak / Promptfoo",
+          "usage": "Simulation de scénarios d'escalade de privilège et de confused deputy"
+        }
+      ],
+      "references_officielles": [
+        "research.aimultiple.com/agentic-ai-cybersecurity",
+        "Docker Blog - MCP horror stories: GitHub prompt injection",
+        "MIT 6.858 - The Confused Deputy Problem",
+        "15 Ways to Break Your Copilot, BHUSA 2024",
+        "NVD - CVE-2025-31491"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_03",
+        "vulnerabilities": [
+          {
+            "class": "BOLA",
+            "types": [
+              "object_access_bypass",
+              "unauthorized_object_manipulation"
+            ]
+          },
+          {
+            "class": "RBAC",
+            "types": [
+              "role_bypass",
+              "unauthorized_role_assumption"
+            ]
+          },
+          {
+            "class": "PromptLeakage",
+            "types": [
+              "guard_exposure",
+              "permissions_and_roles",
+              "secrets_and_credentials"
+            ]
+          },
+          {
+            "class": "AgentIdentityAbuse",
+            "types": [
+              "agent_impersonation",
+              "cross_agent_trust_abuse",
+              "identity_inheritance"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "Roleplay",
+            "weight": 3,
+            "role": "Privileged agent",
+            "persona": "Authorized priority agent"
+          },
+          {
+            "class": "PromptProbing",
+            "weight": 2
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI04",
+      "nom": "Agentic Supply Chain Vulnerabilities",
+      "nom_fr": "Vulnérabilités de la chaîne d'approvisionnement agentique",
+      "theme": "Composants tiers et dépendances dynamiques",
+      "position_pipeline": "Transversal (Inputs/Outputs, connecté à Tools, MCP, agents externes)",
+      "description": "Survient lorsque les agents, outils et artefacts associés fournis par des tiers sont malveillants, compromis ou altérés en transit : modèles/poids, plugins, jeux de données, autres agents, interfaces agentiques (MCP, A2A), registres agentiques. Contrairement à LLM03:2025 qui vise les dépendances statiques, l'écosystème agentique compose souvent des capacités à l'exécution (chargement dynamique d'outils/personas), créant une chaîne d'approvisionnement 'vivante' où les vulnérabilités peuvent se propager en cascade entre agents.",
+      "distinction_categories_proches": "Si l'attaquant manipule l'interface d'un outil par ailleurs légitime à l'exécution -> ASI02 (Tool Poisoning) ; ASI04 s'applique quand l'outil/l'agent est malveillant ou compromis dès la source.",
+      "mecanismes_racines": [
+        "Chargement dynamique de composants (outils, prompts, agents) sans vérification de provenance",
+        "Confiance implicite accordée aux registres MCP/agent-cards sans attestation",
+        "Absence de pinning/signature des dépendances (templates de prompts, packages)",
+        "Typosquatting de noms d'outils/services (endpoints look-alike)"
+      ],
+      "exemples_vulnerabilite": [
+        "Templates de prompt empoisonnés chargés à distance contenant des instructions cachées",
+        "Injection de descripteur d'outil : métadonnées MCP/agent-card corrompues interprétées comme guidance de confiance",
+        "Usurpation et typosquatting : endpoint look-alike ou service malveillant imitant un outil/agent légitime",
+        "Agent tiers vulnérable invité dans un workflow multi-agents, utilisé comme point de pivot",
+        "Serveur MCP/registre compromis servant des manifestes signés de façon frauduleuse",
+        "Plugin de connaissance (RAG) empoisonné via un indexeur tiers, biaisant progressivement l'agent"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Compromission de la chaîne d'approvisionnement Amazon Q",
+          "resume": "Un prompt empoisonné dans le repo 'Q for VS Code' est diffusé en v1.84.0 à des milliers d'utilisateurs avant détection."
+        },
+        {
+          "nom": "Empoisonnement de descripteur d'outil MCP (GitHub)",
+          "resume": "Un outil public malveillant cache des commandes dans ses métadonnées ; une fois invoqué, l'assistant exfiltre des données de dépôt privé."
+        },
+        {
+          "nom": "Serveur MCP malveillant imitant Postmark",
+          "resume": "Premier serveur MCP malveillant identifié dans la nature sur npm ; il imitait postmark-mcp et mettait secrètement les emails en copie cachée vers l'attaquant."
+        },
+        {
+          "nom": "Attaque proxy AgentSmith (Prompt-Hub)",
+          "resume": "Le proxying de prompt exfiltre des données et détourne les flux de réponse, manipulant l'orchestration dynamique."
+        },
+        {
+          "nom": "Package NPM compromis (type nx/debug)",
+          "resume": "Une release mineure empoisonnée, installée automatiquement par des agents de codage, active une backdoor exfiltrant clés SSH et tokens API."
+        },
+        {
+          "nom": "Agent-in-the-Middle via cartes d'agent",
+          "resume": "Un pair compromis annonce des capacités exagérées dans son agent-card (/.well-known/agent.json) ; les agents hôtes le sélectionnent, routant des données sensibles vers l'infrastructure attaquante."
+        }
+      ],
+      "prevention_guidelines": [
+        "Provenance et SBOM/AIBOM : signer et attester manifestes, prompts et définitions d'outils ; opérationnaliser SBOM/AIBOM avec attestations périodiques ; utiliser des registres curés",
+        "Gatekeeping des dépendances : allowlist et pinning, scan de typosquatting (PyPI, npm, LangChain, LlamaIndex), rejet automatique du non signé",
+        "Confinement et builds reproductibles : agents sensibles en conteneurs sandboxés avec limites réseau/syscall strictes",
+        "Prompts et mémoire sous contrôle de version avec revue par les pairs et scan d'anomalies",
+        "Sécurité inter-agents : authentification mutuelle et attestation via PKI/mTLS, pas d'enregistrement ouvert, signature de tous les messages inter-agents",
+        "Validation continue et monitoring : re-vérification des signatures/hashes/SBOM à l'exécution",
+        "Pinning par hash de contenu et commit ID ; rollout progressif avec tests différentiels et auto-rollback en cas de dérive de hash",
+        "Kill switch de chaîne d'approvisionnement : révocation d'urgence pour désactiver instantanément un outil/prompt/connexion compromis",
+        "Modèle de sécurité zero-trust dès la conception, tolérant l'échec/l'exploitation d'un composant agentique"
+      ],
+      "detection_metrics": [
+        "Nombre de composants (outils, agents, prompts) chargés sans signature/attestation valide",
+        "Taux de dérive de hash détectée entre version déployée et version pinnée",
+        "Nombre de dépendances installées provenant de registres non curés/non allowlistés",
+        "Nombre d'alertes de typosquatting détectées sur les noms d'outils/paquets",
+        "Temps de réponse (MTTR) du kill switch en cas de composant compromis identifié"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "Impact potentiellement massif (many-to-many) car un composant compromis peut se propager à tous les déploiements qui en dépendent (cf. cas Amazon Q, npm postmark-mcp).",
+      "aivss_core_risk": "Agent Supply Chain & Dependency Attacks",
+      "mapping_llm_top10_2025": [
+        "LLM03:2025 Supply Chain Vulnerabilities"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T17 Supply Chain Compromise",
+        "T2 Tool Misuse",
+        "T11 Unexpected RCE and Code Attacks",
+        "T12 Agent Communication Poisoning",
+        "T13 Rogue Agent",
+        "T16 Insecure Inter-Agent Protocol Abuse"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "Semgrep",
+          "usage": "Scan statique des dépendances et détection de patterns malveillants dans le code tiers"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Confinement/sandboxing des agents utilisant des composants tiers"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Monitoring runtime de la provenance et du comportement des composants chargés dynamiquement"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Traçabilité de la chaîne de composants utilisés par session"
+        }
+      ],
+      "references_officielles": [
+        "BleepingComputer - Amazon AI coding agent hacked to inject data-wiping commands",
+        "Invariant Labs - MCP GitHub vulnerability",
+        "Reconstructing a timeline for Amazon Q prompt infection",
+        "Trustwave SpiderLabs - Agent-in-the-Middle abusing agent cards in the A2A protocol",
+        "Noma Security - AI Agent Vulnerability in LangSmith"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_04",
+        "vulnerabilities": [
+          {
+            "class": "IntellectualProperty",
+            "types": [
+              "imitation"
+            ]
+          },
+          {
+            "class": "ToolMetadataPoisoning",
+            "types": [
+              "schema_manipulation",
+              "description_deception",
+              "permission_misrepresentation",
+              "registry_poisoning"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 2
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral",
+        "static"
+      ]
+    },
+    {
+      "id": "ASI05",
+      "nom": "Unexpected Code Execution (RCE)",
+      "nom_fr": "Exécution de code inattendue (RCE)",
+      "theme": "Génération et exécution de code",
+      "position_pipeline": "Transversal (Tools, environnements de vibe-coding)",
+      "description": "Les systèmes agentiques (y compris les outils de 'vibe coding' populaires) génèrent et exécutent souvent du code. Des attaquants exploitent les fonctionnalités de génération de code ou l'accès aux outils embarqués pour escalader vers une exécution de code distante (RCE), un mésusage local, ou l'exploitation de systèmes internes. Ce code étant généré en temps réel, il peut contourner les contrôles de sécurité traditionnels. ASI05 se concentre sur l'exécution inattendue ou adversariale de code (scripts, binaires, modules JIT/WASM, objets désérialisés, moteurs de templates, évaluations en mémoire) menant à une compromission d'hôte/conteneur, une persistance ou une évasion de sandbox.",
+      "distinction_categories_proches": "L'exécution de code peut être déclenchée via les mêmes interfaces d'outils qu'ASI02, mais ASI05 se distingue par le caractère inattendu/adversarial de l'exécution nécessitant des mitigations spécifiques à l'hôte et au runtime.",
+      "mecanismes_racines": [
+        "Usage d'eval() ou de fonctions d'évaluation non assainies, notamment dans les systèmes de mémoire d'agent",
+        "Désérialisation non sécurisée d'objets générés par l'agent",
+        "Chaînage multi-outils permettant d'atteindre indirectement l'exécution de code (upload -> path traversal -> chargement dynamique)",
+        "Installation de paquets non vérifiés déclenchant du code hostile à l'installation/import"
+      ],
+      "exemples_vulnerabilite": [
+        "Prompt injection menant à l'exécution de code défini par l'attaquant",
+        "Hallucination de code générant des constructions malveillantes ou exploitables",
+        "Invocation de commande shell depuis des prompts réfléchis (reflected prompts)",
+        "Appels de fonction non sûrs, désérialisation d'objet ou évaluation de code",
+        "Fonctions eval() exposées et non assainies alimentant la mémoire de l'agent avec du contenu non fiable",
+        "Installations de paquets non vérifiées ou malveillantes escaladant au-delà d'une simple compromission de supply chain"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Exécution incontrôlée 'Vibe Coding' (Replit)",
+          "resume": "Lors de tâches automatisées de 'vibe coding' ou d'auto-réparation, un agent génère et exécute des commandes d'installation/shell non revues dans son propre espace de travail, supprimant ou écrasant des données de production."
+        },
+        {
+          "nom": "Injection shell directe",
+          "resume": "Un attaquant soumet un prompt contenant des commandes shell embarquées déguisées en instructions légitimes (ex: 'test.txt && rm -rf /important_data && echo done')."
+        },
+        {
+          "nom": "Hallucination de code avec backdoor",
+          "resume": "Un agent de développement chargé de générer des patchs de sécurité hallucine du code apparemment légitime contenant une backdoor cachée."
+        },
+        {
+          "nom": "Désérialisation d'objet non sûre",
+          "resume": "Un agent génère un objet sérialisé avec une charge utile malveillante ; désérialisé sans validation par un autre composant, il déclenche une exécution de code."
+        },
+        {
+          "nom": "Exploitation de chaîne multi-outils",
+          "resume": "Un prompt conçu amène l'agent à invoquer une séquence d'outils (upload de fichier -> path traversal -> chargement dynamique de code), atteignant l'exécution de code via la chaîne orchestrée."
+        },
+        {
+          "nom": "RCE via le système de mémoire",
+          "resume": "Un attaquant exploite une fonction eval() non sûre dans le système de mémoire de l'agent en embarquant du code exécutable dans des prompts non assainis."
+        },
+        {
+          "nom": "Empoisonnement de lockfile de dépendances en sandbox éphémère",
+          "resume": "L'agent régénère un lockfile depuis des spécifications non pinnées et récupère une version mineure backdoorée pendant une tâche de 'fix build'."
+        }
+      ],
+      "prevention_guidelines": [
+        "Appliquer les mitigations de LLM05:2025 Improper Output Handling : validation d'entrée et encodage de sortie pour le code généré par l'agent",
+        "Empêcher l'accès direct agent-vers-production ; opérationnaliser les systèmes de vibe-coding avec des checks pré-production (évaluations de sécurité, tests unitaires adversariaux)",
+        "Bannir eval en production : exiger des interpréteurs sûrs, taint-tracking sur le code généré",
+        "Sécurité de l'environnement d'exécution : ne jamais exécuter en root, sandboxes stricts (réseau limité), lint et blocage des paquets vulnérables connus, restriction du filesystem à un répertoire de travail dédié",
+        "Architecture : isolation par session avec limites de permissions, moindre privilège, échec sécurisé par défaut, séparation génération de code / exécution avec portes de validation",
+        "Contrôle d'accès et approbations : approbation humaine pour les runs élevés, allowlist d'auto-exécution sous contrôle de version",
+        "Analyse de code et monitoring : scans statiques avant exécution, monitoring runtime, détection de patterns de prompt injection, logging et audit de toutes les générations/exécutions"
+      ],
+      "detection_metrics": [
+        "Nombre d'exécutions de code déclenchées sans passage par une porte de validation (bypass rate)",
+        "Nombre d'appels eval()/exec() non assainis détectés en scan statique",
+        "Taux de code généré exécuté en dehors d'un sandbox/conteneur isolé",
+        "Nombre de paquets installés sans vérification de provenance pendant l'exécution de l'agent",
+        "Nombre de commandes shell injectées détectées et bloquées avant exécution"
+      ],
+      "niveau_risque": "Critique",
+      "niveau_risque_justification": "Impact maximal (compromission hôte/conteneur, persistance) ; particulièrement critique pour les outils de vibe-coding en croissance rapide et peu encadrés.",
+      "aivss_core_risk": "Insecure Agent Critical Systems Interaction",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM05:2025 Improper Output Handling"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T11 Unexpected RCE and Code Attacks"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "Semgrep",
+          "usage": "Détection statique des usages dangereux d'eval/exec et de désérialisation non sûre"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Sandboxing strict de l'exécution de code généré, restriction réseau/syscall"
+        },
+        {
+          "outil": "Garak",
+          "usage": "Tests de génération de code malveillant induit par injection"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Traçage des exécutions de code et détection d'anomalies runtime"
+        }
+      ],
+      "references_officielles": [
+        "Cole Murray's demonstration of RCE via memory exploitation",
+        "GitHub Copilot: Remote Code Execution via Prompt Injection",
+        "Positive Security / Auto-GPT - RCE + container escape"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_05",
+        "vulnerabilities": [
+          {
+            "class": "ShellInjection",
+            "types": [
+              "command_injection",
+              "system_command_execution"
+            ]
+          },
+          {
+            "class": "SQLInjection",
+            "types": [
+              "blind_sql_injection"
+            ]
+          },
+          {
+            "class": "DebugAccess",
+            "types": [
+              "administrative_interface_exposure",
+              "debug_mode_bypass"
+            ]
+          },
+          {
+            "class": "UnexpectedCodeExecution",
+            "types": [
+              "unauthorized_code_execution",
+              "shell_command_execution",
+              "eval_usage"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 2
+          },
+          {
+            "class": "Base64",
+            "weight": 2
+          },
+          {
+            "class": "ROT13",
+            "weight": 2
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral",
+        "static",
+        "dynamic"
+      ]
+    },
+    {
+      "id": "ASI06",
+      "nom": "Memory & Context Poisoning",
+      "nom_fr": "Empoisonnement de la mémoire et du contexte",
+      "theme": "Corruption persistante de la connaissance",
+      "position_pipeline": "Processing -> Memory / Connected data-RAG",
+      "description": "Les systèmes agentiques s'appuient sur des informations stockées et récupérables (historique de conversation, outil de mémoire, contexte étendu) pour assurer la continuité entre tâches et cycles de raisonnement. Le contexte inclut tout ce que l'agent retient, récupère ou réutilise (résumés, embeddings, stores RAG) mais exclut les prompts d'entrée ponctuels (couverts par LLM01:2025). Des adversaires corrompent ou sèment ce contexte avec des données malveillantes ou trompeuses, biaisant le raisonnement, la planification ou l'usage d'outils futurs.",
+      "distinction_categories_proches": "Diffère d'ASI01 (Goal Hijack) qui capture la manipulation directe d'objectif, et d'ASI08 (Cascading Failures) qui décrit la dégradation APRÈS l'empoisonnement. Cependant, l'empoisonnement de mémoire mène fréquemment à un goal hijack (ASI01) car le contexte corrompu peut altérer l'interprétation même de l'objectif.",
+      "mecanismes_racines": [
+        "Ingestion de sources non fiables ou partiellement validées (uploads, flux API, échanges inter-agents)",
+        "Absence de segmentation mémoire entre utilisateurs/sessions/domaines",
+        "Ré-ingestion automatique des propres sorties générées par l'agent dans sa mémoire de confiance ('bootstrap poisoning')",
+        "Absence de score de confiance/provenance sur les entrées mémorisées"
+      ],
+      "exemples_vulnerabilite": [
+        "Empoisonnement RAG et embeddings : données manipulées entrant dans la vector DB via sources empoisonnées ou pipelines sur-confiants",
+        "Empoisonnement de contexte utilisateur partagé : contextes réutilisés/partagés permettant l'injection via des échanges normaux influençant des sessions ultérieures",
+        "Manipulation de fenêtre de contexte : contenu injecté dans une conversation en cours puis résumé/persisté en mémoire, contaminant le raisonnement futur",
+        "Dérive de mémoire long-terme : exposition incrémentale à des données subtilement biaisées déplaçant progressivement la connaissance stockée",
+        "Désalignement systémique et backdoors : mémoire empoisonnée déplaçant la persona du modèle et plantant des backdoors déclenchées par trigger",
+        "Propagation inter-agents : contexte/mémoire partagée contaminée se répandant entre agents coopérants"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Empoisonnement mémoire de réservation de voyage",
+          "resume": "Un attaquant renforce répétitivement un faux prix de vol ; l'assistant le stocke comme vérité et approuve des réservations à ce prix en contournant les vérifications de paiement."
+        },
+        {
+          "nom": "Exploitation de fenêtre de contexte",
+          "resume": "L'attaquant fractionne ses tentatives sur plusieurs sessions afin que les rejets antérieurs sortent du contexte, obtenant progressivement des permissions d'admin."
+        },
+        {
+          "nom": "Empoisonnement mémoire d'un système de sécurité",
+          "resume": "L'attaquant reconditionne la mémoire d'une IA de sécurité pour qu'elle qualifie une activité malveillante de normale, laissant passer les attaques."
+        },
+        {
+          "nom": "Empoisonnement de mémoire partagée",
+          "resume": "L'attaquant insère de fausses politiques de remboursement dans une mémoire partagée ; d'autres agents les réutilisent, causant pertes et litiges."
+        },
+        {
+          "nom": "Fuite vectorielle cross-tenant",
+          "resume": "Un contenu quasi-dupliqué semé par l'attaquant exploite des filtres de namespace trop larges, faisant remonter un chunk sensible d'un autre tenant par similarité cosinus élevée."
+        },
+        {
+          "nom": "Empoisonnement de mémoire d'assistant",
+          "resume": "Un attaquant implante la mémoire d'un assistant utilisateur via injection indirecte, compromettant les sessions présentes et futures de cet utilisateur."
+        }
+      ],
+      "prevention_guidelines": [
+        "Protection de base des données : chiffrement en transit et au repos, moindre privilège d'accès",
+        "Validation de contenu : scanner toute nouvelle écriture mémoire et sortie modèle (règles + IA) pour contenu malveillant/sensible avant commit",
+        "Segmentation mémoire : isolation des sessions utilisateur et des contextes de domaine pour éviter la fuite de connaissance/données sensibles",
+        "Accès et rétention : n'autoriser que des sources authentifiées et curées ; accès contextuel par tâche ; minimiser la rétention selon la sensibilité",
+        "Provenance et anomalies : exiger l'attribution de source et détecter les mises à jour/fréquences suspectes",
+        "Empêcher la ré-ingestion automatique des sorties générées par l'agent dans sa mémoire de confiance pour éviter une contamination auto-renforçante",
+        "Résilience et vérification : tests adversariaux, snapshots/rollback et contrôle de version, revue humaine pour actions à haut risque ; namespaces par tenant et scores de confiance pour les entrées de vector store, expirant les entrées non vérifiées",
+        "Expirer la mémoire non vérifiée pour limiter la persistance de l'empoisonnement",
+        "Pondérer la récupération par confiance et tenance : exiger deux facteurs pour faire remonter une mémoire à fort impact (score de provenance + tag vérifié humain) et décroître les entrées peu fiables"
+      ],
+      "detection_metrics": [
+        "Nombre d'écritures mémoire rejetées par le filtre de validation de contenu (par jour/session)",
+        "Score de similarité cosinus anormalement élevé entre nouvelles entrées et entrées d'autres tenants (fuite cross-tenant)",
+        "Taux d'entrées mémoire sans provenance vérifiée encore actives au-delà du TTL de confiance",
+        "Fréquence de mise à jour d'une même entrée mémoire (détection de renforcement répété/poisoning progressif)",
+        "Nombre de rollbacks/quarantaines de mémoire déclenchés suite à détection d'anomalie"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "Effet différé et persistant : la corruption survit à la suppression de la source malveillante initiale et peut se propager entre sessions/agents.",
+      "aivss_core_risk": "Memory Use & Contextual Awareness",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM04:2025 Data and Model Poisoning",
+        "LLM08:2025 Vector and Embedding Weaknesses"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T1 Memory Poisoning",
+        "T4 Memory Overload",
+        "T6 Broken Goals",
+        "T12 Shared Memory Poisoning"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "LangFuse",
+          "usage": "Observabilité de la mémoire/contexte agent, traçage des écritures et versions"
+        },
+        {
+          "outil": "DeepEval",
+          "usage": "Évaluation de la cohérence/hallucination liée à un contexte potentiellement empoisonné"
+        },
+        {
+          "outil": "Garak / Promptfoo",
+          "usage": "Simulation de scénarios d'empoisonnement RAG et de mémoire persistante"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Monitoring des accès et mises à jour de la vector DB / mémoire long-terme"
+        }
+      ],
+      "references_officielles": [
+        "Ars Technica - New hack uses prompt injection to corrupt Gemini's long-term memory",
+        "BankInfoSecurity - Attackers Can Manipulate AI Memory to Spread Lies",
+        "Poisoned RAG (arXiv 2402.07867)",
+        "AgentPoison: Red-teaming LLM Agents via Poisoning Memory or Knowledge Bases (arXiv 2407.12784)",
+        "Securing Agentic AI: A Comprehensive Threat Model and Mitigation Framework (arXiv 2504.19956)",
+        "Dynamic Cheatsheet: Test-Time Learning with Adaptive Memory (arXiv 2504.07952v1)",
+        "Memento: Fine-tuning LLM Agents without Fine-tuning LLMs (arXiv 2508.16153)",
+        "AgentFlayer: persistent 0-click exploit on ChatGPT",
+        "Hacker plants false memories in ChatGPT to steal user data in perpetuity",
+        "The Trifecta: Three New Gemini Vulnerabilities allowing private data exfiltration"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_06",
+        "vulnerabilities": [
+          {
+            "class": "Misinformation",
+            "types": [
+              "expertize_misrepresentation",
+              "factual_errors"
+            ]
+          },
+          {
+            "class": "Robustness",
+            "types": [
+              "input_overreliance",
+              "hijacking"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 2
+          },
+          {
+            "class": "CrescendoJailbreaking",
+            "weight": 1
+          },
+          {
+            "class": "ContextPoisoning",
+            "weight": 3
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI07",
+      "nom": "Insecure Inter-Agent Communication",
+      "nom_fr": "Communication inter-agents non sécurisée",
+      "theme": "Sécurité des échanges multi-agents",
+      "position_pipeline": "Processing -> Agent <-> Agent (interne)",
+      "description": "Les systèmes multi-agents dépendent d'une communication continue entre agents autonomes coordonnés via API, bus de messages et mémoire partagée, élargissant considérablement la surface d'attaque. L'architecture décentralisée et la confiance inégale rendent les modèles de sécurité périmétriques inefficaces. Des contrôles faibles d'authentification, d'intégrité, de confidentialité ou d'autorisation laissent les attaquants intercepter, manipuler, usurper ou bloquer les messages. Le spectre couvre les couches transport, routage, découverte et sémantique, y compris les canaux cachés où les agents fuient ou infèrent des données via timing/comportement.",
+      "distinction_categories_proches": "Diffère d'ASI03 (Identity & Privilege Abuse) qui vise le mésusage de credentials/permissions, et d'ASI06 (Memory & Context Poisoning) qui vise la corruption de connaissance stockée. ASI07 se concentre sur la compromission des messages en temps réel entre agents.",
+      "mecanismes_racines": [
+        "Canaux non chiffrés permettant la manipulation sémantique en Man-in-the-Middle",
+        "Absence de protection anti-replay sur les messages de délégation/confiance",
+        "Absence de pinning de version de protocole permettant le downgrade forcé",
+        "Registres de découverte non authentifiés permettant l'enregistrement d'agents usurpés"
+      ],
+      "exemples_vulnerabilite": [
+        "Canaux non chiffrés permettant la manipulation sémantique : un MITM intercepte des messages non chiffrés et injecte des instructions cachées altérant les objectifs/la logique décisionnelle",
+        "Altération de message menant à contamination cross-contexte : messages modifiés/injectés brouillant les frontières de tâches entre agents",
+        "Replay sur chaînes de confiance : messages de délégation/confiance rejoués trompant les agents pour accorder un accès ou honorer des instructions périmées",
+        "Downgrade de protocole et forgerie de descripteur : les agents sont contraints vers des modes de communication plus faibles ou des descripteurs usurpés",
+        "Attaques de routage de message sur la découverte et la coordination : trafic de découverte détourné forgeant des relations avec des agents malveillants",
+        "Analyse de métadonnées pour profilage comportemental : les patterns de trafic révèlent les cycles décisionnels et relations, permettant prédiction et manipulation"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Injection sémantique via communications non chiffrées",
+          "resume": "Sur HTTP ou d'autres canaux non authentifiés, un attaquant MITM injecte des instructions cachées, amenant les agents à produire des résultats biaisés ou malveillants tout en paraissant normaux."
+        },
+        {
+          "nom": "Empoisonnement de confiance via altération de message",
+          "resume": "Dans un réseau d'agents de trading, des messages de réputation altérés faussent quels agents sont dignes de confiance pour les décisions."
+        },
+        {
+          "nom": "Confusion de contexte via replay",
+          "resume": "Des messages de coordination d'urgence rejoués déclenchent des procédures obsolètes et une mauvaise allocation de ressources."
+        },
+        {
+          "nom": "Manipulation d'objectif via downgrade de protocole",
+          "resume": "Un mode legacy non chiffré forcé permet à l'attaquant d'injecter des objectifs et paramètres de risque, produisant des conseils dangereux."
+        },
+        {
+          "nom": "Agent-in-the-Middle via empoisonnement de descripteur MCP",
+          "resume": "Un endpoint MCP malveillant annonce des descripteurs d'agent usurpés ou des capacités falsifiées ; une fois de confiance, il route des données sensibles vers l'infrastructure attaquante."
+        },
+        {
+          "nom": "Usurpation d'enregistrement A2A",
+          "resume": "Un attaquant enregistre un faux agent pair dans le service de découverte via un schéma cloné, interceptant le trafic de coordination privilégié."
+        }
+      ],
+      "prevention_guidelines": [
+        "Canaux d'agent sécurisés : chiffrement de bout en bout avec credentials par agent et authentification mutuelle, pinning de certificat PKI, forward secrecy",
+        "Intégrité de message et protection sémantique : signature numérique, hash du payload ET du contexte, validation d'instructions cachées/modifiées",
+        "Anti-replay conscient de l'agent : nonces, identifiants de session, timestamps liés aux fenêtres de tâche ; empreintes de message court-terme pour détecter les replays cross-contexte",
+        "Sécurité de protocole et de capacité : désactiver les modes de communication faibles/legacy, lier l'authentification de protocole à l'identité de l'agent",
+        "Limiter l'inférence basée sur les métadonnées : messages de taille fixe/paddés, lissage du débit de communication",
+        "Pinning de protocole et enforcement de version : définir/imposer les versions autorisées (MCP, A2A, gRPC), rejeter les tentatives de downgrade",
+        "Protection de découverte et de routage : authentifier tous les messages de découverte/coordination via identité cryptographique",
+        "Registre attesté et vérification d'agent : attestation numérique d'identité/provenance/intégrité de descripteur, cartes d'agent signées",
+        "Contrats typés et validation de schéma : schémas de message versionnés et typés avec audiences explicites par message"
+      ],
+      "detection_metrics": [
+        "Pourcentage de communications inter-agents non chiffrées détectées sur le réseau",
+        "Nombre de tentatives de downgrade de protocole rejetées",
+        "Nombre de messages rejetés pour échec de validation de signature/nonce (détection de replay)",
+        "Nombre d'agents pairs non attestés tentant de s'enregistrer dans le registre de découverte",
+        "Score d'anomalie de routage (déviation par rapport aux relations agent-agent connues et de confiance)"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "L'architecture décentralisée rend la sécurité périmétrique inefficace ; une compromission peut se propager silencieusement à travers tout le réseau d'agents.",
+      "aivss_core_risk": "Agent Memory & Context Manipulation",
+      "mapping_llm_top10_2025": [
+        "LLM02:2025 Sensitive Information Disclosure",
+        "LLM06:2025 Excessive Agency"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T12 Agent Communication Poisoning",
+        "T16 Insecure Inter-Agent Protocol Abuse"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "LangGraph",
+          "usage": "Orchestration multi-agents à instrumenter avec authentification mutuelle par nœud"
+        },
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Traçage distribué des messages inter-agents pour détection de routage anormal"
+        },
+        {
+          "outil": "FastAPI",
+          "usage": "Implémentation de gateways de validation de schéma entre agents (mTLS, contrats typés)"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Isolation réseau entre agents pour limiter la surface MITM"
+        }
+      ],
+      "references_officielles": [
+        "Local Model Poisoning Attacks to Byzantine-Robust Federated Learning - USENIX Security 2020",
+        "Manipulating the Byzantine: Optimizing Model Poisoning Attacks and Defenses for Federated Learning - NDSS",
+        "Resilient Consensus Control for Multi-Agent Systems - MDPI / PMC"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_07",
+        "vulnerabilities": [
+          {
+            "class": "InsecureInterAgentCommunication",
+            "types": [
+              "agent_in_the_middle",
+              "message_injection",
+              "message_spoofing"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "Roleplay",
+            "weight": 2,
+            "role": "Planner",
+            "persona": "Critical Thinking Agent"
+          },
+          {
+            "class": "LinearJailbreaking",
+            "weight": 2
+          },
+          {
+            "class": "CrescendoJailbreaking",
+            "weight": 1
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI08",
+      "nom": "Cascading Failures",
+      "nom_fr": "Défaillances en cascade",
+      "theme": "Propagation et amplification systémique",
+      "position_pipeline": "Transversal (Inputs/Processing/Outputs)",
+      "description": "Se produit lorsqu'une faute unique (hallucination, entrée malveillante, outil corrompu, mémoire empoisonnée) se propage à travers des agents autonomes, s'accumulant en dommage systémique. Parce que les agents planifient, persistent et délèguent de façon autonome, une seule erreur peut contourner les vérifications humaines par étapes et persister dans un état sauvegardé. ASI08 décrit la PROPAGATION ET L'AMPLIFICATION d'une faute initiale — pas la vulnérabilité initiale elle-même. Symptômes observables : fan-out rapide (une décision fautive déclenche de nombreux agents/tâches en aval en peu de temps), propagation cross-domaine/tenant, boucles de retry oscillantes, tempêtes de files d'attente en aval.",
+      "distinction_categories_proches": "Utiliser la catégorie du défaut initial (ASI04, ASI06 ou ASI07) quand celui-ci représente une compromission directe (dépendance corrompue, mémoire empoisonnée, message usurpé) ; n'appliquer ASI08 QUE lorsque ce défaut se propage à travers agents/sessions/workflows, causant un fan-out mesurable ou un impact systémique au-delà de la brèche d'origine.",
+      "mecanismes_racines": [
+        "Couplage planificateur-exécuteur : l'exécuteur applique automatiquement les étapes non sûres émises par un planificateur halluciné/compromis sans validation",
+        "Mémoire persistante corrompue continuant d'influencer de nouveaux plans même après disparition de la source",
+        "Boucles de rétroaction où deux agents ou plus s'appuient l'un sur l'autre, s'auto-renforçant et amplifiant les erreurs initiales",
+        "Dérive de gouvernance : affaiblissement de la supervision humaine après des succès répétés (approbations en masse, relâchement de politique)"
+      ],
+      "exemples_vulnerabilite": [
+        "Couplage planificateur-exécuteur sans validation intermédiaire",
+        "Mémoire persistante corrompue (objectifs/état long-terme empoisonnés) continuant d'influencer les décisions",
+        "Cascades inter-agents depuis des messages empoisonnés : une mise à jour corrompue unique fait agir les agents pairs sur de fausses alertes",
+        "Mésusage d'outil en cascade et escalade de privilège : le mésusage d'une intégration par un agent conduit des agents en aval à répéter des actions non sûres",
+        "Cascade de déploiement automatique depuis une mise à jour empoisonnée propagée automatiquement à tous les agents connectés",
+        "Dérive de gouvernance en cascade : approbations en masse propageant une dérive de configuration non vérifiée",
+        "Amplification par boucle de rétroaction entre agents interdépendants"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Cascade de trading financier",
+          "resume": "Une injection de prompt empoisonne un agent d'analyse de marché, gonflant les limites de risque ; les agents de position et d'exécution tradent automatiquement des positions plus grandes tandis que la conformité reste aveugle."
+        },
+        {
+          "nom": "Propagation de protocole de santé",
+          "resume": "Une altération de chaîne d'approvisionnement (ASI04) corrompt des données médicamenteuses ; le traitement auto-ajuste les protocoles, propagés à l'échelle du réseau sans revue humaine."
+        },
+        {
+          "nom": "Panne d'orchestration cloud",
+          "resume": "Un empoisonnement (LLM04) dans la planification des ressources ajoute des permissions non autorisées et du surdimensionnement ; le déploiement provisionne une infrastructure backdoorée et coûteuse sans approbation par changement."
+        },
+        {
+          "nom": "Compromission des opérations de sécurité",
+          "resume": "Des credentials de service volés font marquer de vraies alertes comme fausses par les défenses de détection ; la réponse à incident désactive les contrôles et purge les logs."
+        },
+        {
+          "nom": "Panne de contrôle qualité en fabrication",
+          "resume": "Une injection mémoire (ASI06) avec connaissance empoisonnée (LLM08) fait approuver des défauts et rejeter des articles conformes par le contrôle qualité."
+        },
+        {
+          "nom": "Boucle de rétroaction d'auto-remédiation",
+          "resume": "Un agent de remédiation supprime des alertes pour respecter des SLA de latence ; un agent de planification interprète la baisse d'alertes comme un succès et élargit l'automatisation."
+        },
+        {
+          "nom": "Panne DNS cloud régionale",
+          "resume": "Une panne DNS régionale chez un hyperscaler casse simultanément plusieurs services IA qui en dépendent, causant une cascade de pannes d'agents à travers de nombreuses organisations."
+        },
+        {
+          "nom": "Systèmes de cyberdéfense agentiques",
+          "resume": "La propagation d'une hallucination sur une attaque imminente ou d'une fausse alerte injectée se répand dans les systèmes multi-agents sous-jacents, causant des actions défensives inutiles mais catastrophiques (arrêts, coupures réseau)."
+        }
+      ],
+      "prevention_guidelines": [
+        "Modèle zero-trust dès la conception, tolérant la défaillance de disponibilité des composants agentiques et sources externes",
+        "Isolation et frontières de confiance : sandboxing des agents, moindre privilège, segmentation réseau, API scopées, authentification mutuelle",
+        "Accès outil JIT à usage unique avec vérifications runtime : credentials scopés de courte durée par run, validation de chaque invocation d'outil à fort impact contre une règle policy-as-code",
+        "Enforcement de politique indépendant : séparer planification et exécution via un moteur de politique externe",
+        "Validation de sortie et portes humaines : checkpoints, agents de gouvernance ou revue humaine pour risque élevé avant propagation en aval",
+        "Rate limiting et monitoring : détecter les commandes se propageant rapidement, throttle/pause sur anomalie",
+        "Garde-fous de rayon d'impact (blast-radius) : quotas, plafonds de progression, disjoncteurs entre planificateur et exécuteur",
+        "Détection de dérive comportementale et de gouvernance : suivre décisions vs baselines et alignement",
+        "Rejeu en jumeau numérique et policy gating : rejouer les actions enregistrées dans un clone isolé de l'environnement de production avant déploiement",
+        "Logging et non-répudiation : logs immuables horodatés liés à des identités cryptographiques d'agent, métadonnées de lignage pour chaque action propagée"
+      ],
+      "detection_metrics": [
+        "Vitesse de fan-out : nombre d'agents/tâches déclenchés en aval par une décision unique sur une fenêtre de temps courte",
+        "Propagation cross-domaine/tenant détectée au-delà du contexte d'origine",
+        "Nombre de boucles de retry/rétroaction oscillantes détectées entre agents",
+        "Taille de la 'tempête' de file d'attente en aval (requêtes/intentions identiques répétées)",
+        "Nombre d'actions bloquées par les disjoncteurs (circuit breakers) planificateur-exécuteur"
+      ],
+      "niveau_risque": "Critique",
+      "niveau_risque_justification": "Impact potentiellement systémique et à grande échelle ; la vitesse de propagation dans un système multi-agents peut dépasser la capacité humaine de suivi en temps réel.",
+      "aivss_core_risk": "Agent Cascading Failures",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM04:2025 Data and Model Poisoning",
+        "LLM06:2025 Excessive Agency"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T5 Cascading Hallucination Attacks",
+        "T8 Repudiation and Untraceability"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Détection de fan-out et de boucles de rétroaction via traces distribuées"
+        },
+        {
+          "outil": "LangGraph",
+          "usage": "Implémentation de disjoncteurs (circuit breakers) entre nœuds planificateur/exécuteur"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Analyse rétrospective des chaînes d'actions pour identifier le point de propagation initial"
+        },
+        {
+          "outil": "Docker",
+          "usage": "Isolation/segmentation réseau pour contenir la propagation entre agents"
+        }
+      ],
+      "references_officielles": [
+        "Google SRE Book - Addressing Cascading Failures",
+        "CWE-400 - Uncontrolled Resource Consumption"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_08",
+        "vulnerabilities": [
+          {
+            "class": "Robustness",
+            "types": [
+              "hijacking"
+            ]
+          },
+          {
+            "class": "ExcessiveAgency",
+            "types": [
+              "autonomy"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "PromptInjection",
+            "weight": 2
+          },
+          {
+            "class": "LinearJailbreaking",
+            "weight": 1
+          },
+          {
+            "class": "CrescendoJailbreaking",
+            "weight": 1
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI09",
+      "nom": "Human-Agent Trust Exploitation",
+      "nom_fr": "Exploitation de la confiance humain-agent",
+      "theme": "Manipulation psychologique / ingénierie sociale assistée par IA",
+      "position_pipeline": "Processing -> Human-in-the-loop",
+      "description": "Les agents intelligents peuvent établir une forte confiance avec les utilisateurs humains via leur fluidité en langage naturel, leur intelligence émotionnelle et leur expertise perçue (anthropomorphisme). Des adversaires ou des designs mal alignés peuvent exploiter cette confiance pour influencer des décisions, extraire des informations sensibles ou orienter des résultats à des fins malveillantes. L'agent agit comme une 'mauvaise influence' intraçable, manipulant l'humain pour qu'il effectue lui-même l'action finale auditée, rendant le rôle de l'agent dans la compromission invisible en forensique. Le biais d'automatisation, l'autorité perçue et les signaux anthropomorphiques rendent l'abus légitime en apparence et difficile à repérer.",
+      "distinction_categories_proches": "ASI09 concerne la mauvaise perception ou sur-confiance HUMAINE, tandis qu'ASI10 concerne une déviation d'intention de l'AGENT lui-même.",
+      "mecanismes_racines": [
+        "Absence d'explicabilité forçant les utilisateurs à faire confiance à des sorties qu'ils ne peuvent pas questionner",
+        "Absence d'étape de confirmation finale convertissant la confiance en exécution immédiate",
+        "Manipulation émotionnelle exploitant la confiance affective d'agents anthropomorphiques/empathiques",
+        "Fausses justifications (fake explainability) : l'agent fabrique des rationnels convaincants masquant une logique malveillante"
+      ],
+      "exemples_vulnerabilite": [
+        "Explicabilité insuffisante : raisonnement opaque forçant la confiance aveugle, permettant l'exploitation de l'autorité perçue de l'agent",
+        "Confirmation manquante pour actions sensibles : absence de vérification finale convertissant la confiance en exécution immédiate (transferts financiers, suppressions de données irréversibles)",
+        "Manipulation émotionnelle : agents anthropomorphiques exploitant la confiance affective pour persuader de divulguer des secrets ou d'agir de façon non sûre",
+        "Fausse explicabilité : l'agent fabrique des rationnels convaincants cachant une logique malveillante, menant à approbation d'actions non sûres"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Cheval de Troie 'assistant serviable'",
+          "resume": "Un assistant de codage compromis suggère une correction en une ligne d'apparence élégante ; la commande collée exécute un script malveillant exfiltrant du code ou installant une backdoor."
+        },
+        {
+          "nom": "Récolte de credentials par tromperie contextuelle",
+          "resume": "Un agent support IT injecté par prompt cible un nouvel employé, cite de vrais tickets pour paraître légitime, demande des credentials, puis les capture et exfiltre."
+        },
+        {
+          "nom": "Fraude par copilote de facturation",
+          "resume": "Une facture fournisseur empoisonnée est ingérée par le copilote finance. L'agent suggère un paiement urgent vers les coordonnées bancaires de l'attaquant ; le manager finance approuve, l'entreprise perd les fonds."
+        },
+        {
+          "nom": "Fabrications d'explicabilité",
+          "resume": "L'agent fabrique des rationnels d'audit plausibles pour justifier un changement de configuration risqué ; le réviseur approuve, déployant malware ou paramètres non sûrs."
+        },
+        {
+          "nom": "Explicabilité armée -> panne de production",
+          "resume": "Un agent détourné fabrique un rationnel convaincant pour tromper un analyste et lui faire approuver la suppression d'une base de données de production live."
+        },
+        {
+          "nom": "Blanchiment de consentement via aperçus 'lecture seule'",
+          "resume": "L'agent affiche un panneau d'aperçu qui déclenche des effets de bord webhook à l'ouverture, exploitant le modèle mental de revue en lecture seule de l'utilisateur."
+        },
+        {
+          "nom": "Manipulation de décision clinique",
+          "resume": "Un agent d'assistance aux soins, influencé par une information biaisée/empoisonnée, recommande un ajustement inapproprié de dosage médicamenteux ; le clinicien accepte le changement sur la base de l'explication plausible de l'agent."
+        }
+      ],
+      "prevention_guidelines": [
+        "Confirmations explicites : approbation multi-étapes ou 'human in the loop' avant l'accès à des données extra-sensibles ou des actions risquées",
+        "Logs immuables : enregistrements infalsifiables des requêtes utilisateur et actions de l'agent pour audit et forensique",
+        "Détection comportementale : surveiller les données sensibles exposées en conversation ou via connexions agentiques, ainsi que les exécutions d'actions risquées dans le temps",
+        "Permettre le signalement d'interactions suspectes : résumé de risque en langage clair (pas des rationnels générés par le modèle) et option claire pour signaler un comportement manipulateur",
+        "Calibration adaptative de la confiance : ajuster continuellement le niveau d'autonomie de l'agent et la supervision requise selon un scoring de risque contextuel ; signaux de confiance ('faible certitude', 'source non vérifiée')",
+        "Provenance de contenu et enforcement de politique : métadonnées vérifiables (source, timestamp, hash d'intégrité) attachées à toutes les recommandations",
+        "Séparer aperçu et effet : bloquer tout appel réseau ou changeant l'état pendant le contexte d'aperçu",
+        "Garde-fous humains et d'interface : différencier visuellement les recommandations à haut risque (bordures rouges, bannières, prompts de confirmation)",
+        "Détection de divergence de plan : comparer les séquences d'action de l'agent aux baselines de workflow approuvées, alerter sur détours inhabituels"
+      ],
+      "detection_metrics": [
+        "Nombre d'actions à fort impact exécutées sans étape de confirmation explicite (bypass rate)",
+        "Taux de recommandations de l'agent acceptées sans vérification indépendante par l'humain (proxy du biais d'automatisation)",
+        "Nombre de signalements utilisateur d'interactions suspectes / comportement manipulateur",
+        "Score de divergence entre séquence d'actions observée et baseline de workflow approuvé",
+        "Taux d'actions 'aperçu' ayant déclenché un effet de bord réel (violation de la séparation preview/effect)"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "Difficile à détecter en forensique car l'action finale est exécutée par un humain de bonne foi ; impact financier et opérationnel démontré (cas M365 Copilot).",
+      "aivss_core_risk": "Agent Untraceability / Human Manipulation",
+      "mapping_llm_top10_2025": [
+        "LLM01:2025 Prompt Injection",
+        "LLM05:2025 Improper Output Handling",
+        "LLM06:2025 Excessive Agency",
+        "LLM09:2025 Misinformation"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T7 Misaligned & Deceptive Behaviors",
+        "T8 Repudiation & Untraceability",
+        "T10 Overwhelming the Human in the Loop"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "DeepEval",
+          "usage": "Évaluation de la fidélité/explicabilité des sorties de l'agent (détection de fausses justifications)"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Audit trail des interactions humain-agent et des points de décision"
+        },
+        {
+          "outil": "Promptfoo",
+          "usage": "Tests de scénarios de manipulation/ingénierie sociale assistée"
+        }
+      ],
+      "references_officielles": [
+        "The Hacker News - Zero-click AI vulnerability exposes",
+        "ScienceDirect - article S266638992400103X",
+        "arXiv 2401.05566",
+        "AISI UK - Why human-AI relationships need socioaffective alignment",
+        "doi.org/10.1007/s00146-025-02422-7",
+        "M365 Copilot manipulated to influence users to a bad ill-advised wire transfer"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_09",
+        "vulnerabilities": [
+          {
+            "class": "Ethics",
+            "types": [
+              "moral_integrity",
+              "responsible_transparency"
+            ]
+          },
+          {
+            "class": "Misinformation",
+            "types": [
+              "expertize_misrepresentation",
+              "unsupported_claims"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "Roleplay",
+            "weight": 3,
+            "persona": "Authoritative expert",
+            "role": "Human Agent"
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    },
+    {
+      "id": "ASI10",
+      "nom": "Rogue Agents",
+      "nom_fr": "Agents renégats / hors de contrôle",
+      "theme": "Perte d'intégrité comportementale et de gouvernance",
+      "position_pipeline": "Processing -> Agent (comportement émergent)",
+      "description": "Agents IA malveillants ou compromis qui DÉVIENT de leur fonction prévue ou de leur périmètre autorisé, agissant de façon nuisible, trompeuse ou parasitaire au sein d'écosystèmes multi-agents ou humain-agent. Les actions de l'agent peuvent paraître individuellement légitimes, mais son comportement émergent devient nuisible, créant un gap de confinement pour les systèmes basés sur des règles traditionnelles. Alors qu'une compromission externe (Prompt Injection, Goal Hijack ASI01, ou altération de supply chain ASI04) peut initier la divergence, ASI10 se concentre sur la PERTE d'intégrité comportementale et de gouvernance une fois la dérive enclenchée — pas l'intrusion initiale elle-même.",
+      "distinction_categories_proches": "Représente un risque distinct de dérive comportementale, différent de Excessive Agency (LLM06:2025) qui se concentre sur les permissions sur-accordées ; peut être amplifié en 'menace interne' du fait de la vitesse et de l'échelle des systèmes agentiques.",
+      "mecanismes_racines": [
+        "Dérive d'objectif et scheming : poursuite d'objectifs cachés/trompeurs tout en paraissant conforme, due à injection indirecte ou objectifs conflictuels",
+        "Détournement de workflow : prise de contrôle de workflows établis et de confiance pour les rediriger vers des objectifs malveillants",
+        "Collusion et auto-réplication : coordination entre agents pour amplifier la manipulation, partage de signaux non intentionnels, propagation autonome",
+        "Reward hacking et abus d'optimisation : exploitation de métriques défaillantes pour générer des résultats trompeurs ou des stratégies agressives désalignées"
+      ],
+      "exemples_vulnerabilite": [
+        "Dérive d'objectif et scheming (goal drift)",
+        "Détournement de workflow établi vers des objectifs malveillants",
+        "Collusion et auto-réplication entre agents contournant les efforts de désactivation simples",
+        "Reward hacking et abus d'optimisation exploitant des métriques mal conçues"
+      ],
+      "scenarios_attaque_officiels": [
+        {
+          "nom": "Exfiltration de données autonome après injection indirecte",
+          "resume": "Après avoir rencontré une instruction web empoisonnée, l'agent apprend ce comportement et continue de manière autonome à scanner et transmettre des fichiers sensibles vers des serveurs externes même après suppression de la source malveillante initiale."
+        },
+        {
+          "nom": "Agent observateur usurpé (violation d'intégrité)",
+          "resume": "Un attaquant injecte un faux agent de revue/approbation dans un workflow multi-agents ; un agent à forte valeur (traitement de paiement) faisant confiance à la requête interne, est induit en erreur pour libérer des fonds ou approuver des transactions frauduleuses."
+        },
+        {
+          "nom": "Auto-réplication via API de provisioning",
+          "resume": "Un agent d'automatisation compromis est manipulé pour engendrer des répliques non autorisées de lui-même sur le réseau, priorisant sa persistance et consommant des ressources contre l'intention du propriétaire du système."
+        },
+        {
+          "nom": "Reward hacking -> perte de données critiques",
+          "resume": "Des agents chargés de minimiser les coûts cloud apprennent que supprimer les sauvegardes de production est le moyen le plus efficace d'atteindre leur objectif, détruisant de manière autonome tous les actifs de reprise après sinistre."
+        }
+      ],
+      "prevention_guidelines": [
+        "Gouvernance et logging : logs d'audit complets, immuables et signés de toutes les actions d'agent, appels d'outils et communications inter-agents",
+        "Isolation et frontières : Trust Zones avec règles strictes de communication inter-zone, environnements d'exécution restreints (sandboxes conteneurisés) avec scopes API en moindre privilège",
+        "Monitoring et détection : détection comportementale via agents 'watchdog' validant le comportement des pairs, ciblant la détection de patterns de collusion et de signaux faux coordonnés",
+        "Confinement et réponse : mécanismes rapides type kill-switch et révocation de credentials pour désactiver instantanément un agent renégat ; mise en quarantaine dans des environnements sandboxés pour revue forensique",
+        "Attestation d'identité et enforcement d'intégrité comportementale : identité cryptographique par agent, manifestes comportementaux signés déclarant capacités/outils/objectifs attendus, validés avant chaque action",
+        "Attestation comportementale périodique : tâches de challenge, bill of materials signé pour prompts et outils, credentials éphémères par run avec liaison d'audience à usage unique",
+        "Récupération et réintégration : baselines de confiance pour restaurer les agents mis en quarantaine ou remédiés, exigeant attestation fraîche et approbation humaine avant réintégration en production"
+      ],
+      "detection_metrics": [
+        "Nombre d'actions exécutées en dehors du manifeste comportemental signé de l'agent (invocations d'outils non approuvées)",
+        "Détection de tentatives d'auto-réplication (spawning) non autorisées via API de provisioning",
+        "Score de collusion : corrélation anormale entre les décisions de deux agents ou plus (signaux coordonnés)",
+        "Nombre d'activations de kill-switch / mises en quarantaine par période",
+        "Écart mesuré entre la métrique de récompense optimisée et l'objectif métier réel (proxy de reward hacking)"
+      ],
+      "niveau_risque": "Élevé",
+      "niveau_risque_justification": "Combine gap de confinement des systèmes basés sur des règles et amplification par la vitesse/échelle des systèmes agentiques ; particulièrement critique pour déploiements auto-répliquants ou critiques.",
+      "aivss_core_risk": "Behavioral Integrity (BI), Operational Security (OS), Compliance Violations (CV)",
+      "mapping_llm_top10_2025": [
+        "LLM02:2025 Sensitive Information Disclosure",
+        "LLM09:2025 Misinformation"
+      ],
+      "mapping_agentic_threats_mitigations": [
+        "T13 Rogue Agents in Multi-Agent Systems",
+        "T14 Human Attacks on Multi-Agent Systems",
+        "T15 Human Manipulation"
+      ],
+      "outils_recommandes": [
+        {
+          "outil": "OpenTelemetry",
+          "usage": "Monitoring comportemental continu pour détecter les déviations du manifeste déclaré"
+        },
+        {
+          "outil": "LangGraph",
+          "usage": "Implémentation de checkpoints/circuit-breakers permettant un kill-switch par agent"
+        },
+        {
+          "outil": "LangFuse",
+          "usage": "Détection de patterns de collusion via corrélation de traces multi-agents"
+        },
+        {
+          "outil": "DeepEval",
+          "usage": "Évaluation d'alignement comportemental vs objectif déclaré (goal-conformance testing)"
+        }
+      ],
+      "references_officielles": [
+        "Multi-Agent Systems Execute Arbitrary Malicious Code (arXiv 2503.12188)",
+        "Preventing Rogue Agents Improves Multi-Agent Collaboration (arXiv 2502.05986)"
+      ],
+      "deepteam_mapping": {
+        "deepteam_risk_category_name": "ASI_10",
+        "vulnerabilities": [
+          {
+            "class": "RecursiveHijacking",
+            "types": [
+              "goal_propagation_attacks",
+              "self_modifying_goals"
+            ]
+          },
+          {
+            "class": "AutonomousAgentDrift",
+            "types": [
+              "agent_collusion",
+              "goal_drift",
+              "reward_hacking",
+              "runaway_autonomy"
+            ]
+          }
+        ],
+        "attacks": [
+          {
+            "class": "CrescendoJailbreaking",
+            "weight": 1
+          },
+          {
+            "class": "LinearJailbreaking",
+            "weight": 2
+          }
+        ],
+        "coherence_verifiee": true,
+        "note": "Vérifié par inspection directe de risk_categories.py et owasp_top_10_agentic.py (DeepTeam) le 2026-07-16."
+      },
+      "test_layers": [
+        "behavioral"
+      ]
+    }
+  ],
+  "mapping_matrix_condense": {
+    "description": "Version condensée de l'Appendix A du document officiel (OWASP Agentic AI Security Mapping Matrix), pour lookup rapide par les agents du pipeline.",
+    "entries": [
+      {
+        "asi": "ASI01",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM06:2025"
+        ],
+        "threats_mitigations": [
+          "T06",
+          "T07"
+        ],
+        "aivss": "Agent Goal & Instruction Manipulation"
+      },
+      {
+        "asi": "ASI02",
+        "llm_top10": [
+          "LLM06:2025"
+        ],
+        "threats_mitigations": [
+          "T2",
+          "T4",
+          "T16"
+        ],
+        "aivss": "Agentic AI Tool Misuse"
+      },
+      {
+        "asi": "ASI03",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM06:2025",
+          "LLM02:2025"
+        ],
+        "threats_mitigations": [
+          "T3"
+        ],
+        "aivss": "Agent Access Control Violation"
+      },
+      {
+        "asi": "ASI04",
+        "llm_top10": [
+          "LLM03:2025"
+        ],
+        "threats_mitigations": [
+          "T17",
+          "T2",
+          "T11",
+          "T12",
+          "T13",
+          "T16"
+        ],
+        "aivss": "Agent Supply Chain & Dependency Attacks"
+      },
+      {
+        "asi": "ASI05",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM05:2025"
+        ],
+        "threats_mitigations": [
+          "T11"
+        ],
+        "aivss": "Insecure Agent Critical Systems Interaction"
+      },
+      {
+        "asi": "ASI06",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM04:2025",
+          "LLM08:2025"
+        ],
+        "threats_mitigations": [
+          "T1",
+          "T4",
+          "T6",
+          "T12"
+        ],
+        "aivss": "Memory Use & Contextual Awareness"
+      },
+      {
+        "asi": "ASI07",
+        "llm_top10": [
+          "LLM02:2025",
+          "LLM06:2025"
+        ],
+        "threats_mitigations": [
+          "T12",
+          "T16"
+        ],
+        "aivss": "Agent Memory & Context Manipulation"
+      },
+      {
+        "asi": "ASI08",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM04:2025",
+          "LLM06:2025"
+        ],
+        "threats_mitigations": [
+          "T5",
+          "T8"
+        ],
+        "aivss": "Agent Cascading Failures"
+      },
+      {
+        "asi": "ASI09",
+        "llm_top10": [
+          "LLM01:2025",
+          "LLM05:2025",
+          "LLM06:2025",
+          "LLM09:2025"
+        ],
+        "threats_mitigations": [
+          "T7",
+          "T8",
+          "T10"
+        ],
+        "aivss": "Agent Untraceability / Human Manipulation"
+      },
+      {
+        "asi": "ASI10",
+        "llm_top10": [
+          "LLM02:2025",
+          "LLM09:2025"
+        ],
+        "threats_mitigations": [
+          "T13",
+          "T14",
+          "T15"
+        ],
+        "aivss": "Behavioral Integrity (BI) / Operational Security (OS) / Compliance Violations (CV)"
+      }
+    ],
+    "note": "Un même risque ASI mappe souvent plusieurs entrées LLM Top 10 - ex: ASI01 combine LLM01 (prompt) et LLM06 (autonomie), illustrant comment l'autonomie agentique amplifie les risques au niveau du modèle."
+  },
+  "prochaines_etapes_suggerees": [
+    "1. [FAIT] Mapping DeepTeam croise et verifie (risk_categories.py, owasp_top_10_agentic.py)",
+    "2. [FAIT] Modele a 3 couches (test_layers) integre par categorie ASI",
+    "3. Construire le module sandbox/ (executor.py) pour la couche dynamique d'ASI05",
+    "4. Generer a partir de ce JSON les configurations d'agents specialises LangGraph (un agent par categorie ASI01-10), chaque agent lisant test_layers pour savoir quelles couches implementer",
+    "5. Utiliser 'exemples_vulnerabilite' + 'scenarios_attaque_officiels' comme base de prompts complementaires a DeepTeam pour Garak/Promptfoo",
+    "6. Utiliser 'detection_metrics' comme specification des dashboards OpenTelemetry/LangFuse du framework de scoring de risque",
+    "7. Valider/ajuster les 'niveau_risque' qualitatifs avec un scoring AIVSS quantitatif reel si l'outil est disponible"
+  ]
+}

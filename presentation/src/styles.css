@@ -1,0 +1,273 @@
+:root {
+  --red: #ed1c24;
+  --red-600: #c4161c;
+  --ink: #0b0b0c;
+  --paper: #ffffff;
+  --paper-2: #f6f6f7;
+  --paper-3: #f8fafc;
+  --line: #e2e4e8;
+  --muted: #64748b;
+  --dark: #0f172a;
+  --dark-2: #1e293b;
+
+  /* Triplet UNIQUE des 3 couches — utilisé partout, jamais recodé */
+  --layer-behavioral: #3b82f6;
+  --layer-static: #f59e0b;
+  --layer-dynamic: #ef4444;
+
+  --ok: #10b981;
+  --warn: #f59e0b;
+  --crit: #ef4444;
+  --accent: #8b5cf6;
+
+  --font-heading: "Space Grotesk", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+h1 {
+  font-size: 44px;
+}
+h2 {
+  font-size: 30px;
+}
+h3 {
+  font-size: 21px;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.stage.dark {
+  background: var(--dark);
+  color: #f8fafc;
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 56px 72px 84px;
+}
+
+.slide-head {
+  margin-bottom: 22px;
+  flex-shrink: 0;
+}
+
+.slide-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 13px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 19px;
+  margin-top: 6px;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  gap: 18px;
+}
+
+.term {
+  background: #000;
+  border: 1px solid #2a2f3a;
+  border-radius: 12px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow: hidden;
+}
+
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a2f3a;
+  background: #12161f;
+}
+
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+table.t {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+table.t th {
+  text-align: left;
+  font-weight: 700;
+  padding: 9px 12px;
+  border-bottom: 2px solid var(--line);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+table.t td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+}
+
+.progress {
+  height: 3px;
+  background: var(--line);
+}
+
+.progress > div {
+  height: 100%;
+  background: var(--red);
+}
+
+.footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 72px;
+  font-size: 13px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.stage.dark .footer-bar {
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.kbd {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.overview {
+  padding: 40px 60px;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--paper-3);
+}
+
+.ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.ov-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.ov-item.active {
+  border: 2px solid var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
