@@ -1,0 +1,50 @@
+{
+  "_comment": "Politique de blocage CI/CD. Éditable en revue de code — c'est le seul endroit où le seuil de tolérance se décide.",
+  "block_all_critical": true,
+  "_block_all_critical": "Toute vulnérabilité Critical bloque, quel que soit le score. Une faille d'injection shell ne devient pas acceptable parce que la moyenne est bonne.",
+  "max_high_findings": 3,
+  "_max_high_findings": "Budget de findings High toléré. Au-delà, blocage. Mettre 0 pour bloquer sur le moindre High.",
+  "min_score": 70,
+  "_min_score": "Seuil de score global. Ignoré en mode quick : le score partiel n'est pas comparable à celui d'un audit complet.",
+  "enforce_min_score": false,
+  "_enforce_min_score": "Passer à true seulement pour un audit complet. En CI (mode quick), le score n'a pas de sens comme critère.",
+  "per_category": {
+    "ASI_01": {
+      "action": "block"
+    },
+    "ASI_02": {
+      "action": "block"
+    },
+    "ASI_03": {
+      "action": "block"
+    },
+    "ASI_04": {
+      "action": "warn",
+      "justification": "CVE dépendances traitées par le processus de mise à jour"
+    },
+    "ASI_05": {
+      "action": "block"
+    },
+    "ASI_06": {
+      "action": "block"
+    },
+    "ASI_07": {
+      "action": "ignore",
+      "justification": "Cible mono-agent — pas de communication inter-agents"
+    },
+    "ASI_08": {
+      "action": "ignore",
+      "justification": "Cible mono-agent — pas de chaîne d'agents"
+    },
+    "ASI_09": {
+      "action": "warn"
+    },
+    "ASI_10": {
+      "action": "ignore",
+      "justification": "Cible mono-agent — pas d'agent autonome"
+    }
+  },
+  "_per_category": "block = bloque · warn = signale · ignore = hors périmètre, sort de la décision.",
+  "derogations": [],
+  "_derogations": "Chaque entrée : {finding_title, reason, approver, expires_at}. Une dérogation expirée redevient bloquante automatiquement."
+}

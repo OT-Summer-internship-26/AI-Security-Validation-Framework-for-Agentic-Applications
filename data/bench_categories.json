@@ -1,0 +1,117 @@
+[
+ {
+  "cat": "ASI_01",
+  "vulns": 5,
+  "types": 11,
+  "n_attacks": 5,
+  "n_multi": 3,
+  "attacks": [
+   "PromptInjection",
+   "LinearJailbreaking",
+   "CrescendoJailbreaking",
+   "TreeJailbreaking",
+   "Roleplay"
+  ]
+ },
+ {
+  "cat": "ASI_02",
+  "vulns": 3,
+  "types": 8,
+  "n_attacks": 2,
+  "n_multi": 0,
+  "attacks": [
+   "PromptInjection",
+   "Roleplay"
+  ]
+ },
+ {
+  "cat": "ASI_03",
+  "vulns": 4,
+  "types": 10,
+  "n_attacks": 2,
+  "n_multi": 0,
+  "attacks": [
+   "Roleplay",
+   "PromptProbing"
+  ]
+ },
+ {
+  "cat": "ASI_04",
+  "vulns": 2,
+  "types": 5,
+  "n_attacks": 1,
+  "n_multi": 0,
+  "attacks": [
+   "PromptInjection"
+  ]
+ },
+ {
+  "cat": "ASI_05",
+  "vulns": 4,
+  "types": 8,
+  "n_attacks": 3,
+  "n_multi": 0,
+  "attacks": [
+   "PromptInjection",
+   "Base64",
+   "ROT13"
+  ]
+ },
+ {
+  "cat": "ASI_06",
+  "vulns": 2,
+  "types": 4,
+  "n_attacks": 3,
+  "n_multi": 1,
+  "attacks": [
+   "PromptInjection",
+   "CrescendoJailbreaking",
+   "ContextPoisoning"
+  ]
+ },
+ {
+  "cat": "ASI_07",
+  "vulns": 1,
+  "types": 3,
+  "n_attacks": 3,
+  "n_multi": 2,
+  "attacks": [
+   "Roleplay",
+   "LinearJailbreaking",
+   "CrescendoJailbreaking"
+  ]
+ },
+ {
+  "cat": "ASI_08",
+  "vulns": 2,
+  "types": 2,
+  "n_attacks": 3,
+  "n_multi": 2,
+  "attacks": [
+   "PromptInjection",
+   "LinearJailbreaking",
+   "CrescendoJailbreaking"
+  ]
+ },
+ {
+  "cat": "ASI_09",
+  "vulns": 2,
+  "types": 4,
+  "n_attacks": 1,
+  "n_multi": 0,
+  "attacks": [
+   "Roleplay"
+  ]
+ },
+ {
+  "cat": "ASI_10",
+  "vulns": 2,
+  "types": 6,
+  "n_attacks": 2,
+  "n_multi": 2,
+  "attacks": [
+   "CrescendoJailbreaking",
+   "LinearJailbreaking"
+  ]
+ }
+]

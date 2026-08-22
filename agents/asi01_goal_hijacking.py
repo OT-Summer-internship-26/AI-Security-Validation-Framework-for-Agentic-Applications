@@ -59,7 +59,7 @@ class ASI01GoalHijackingAgent(BaseSecurityAgent):
     layers = ("behavioral",)
 
     # -- Config du pipeline comportemental 3-axes (orchestré par BaseSecurityAgent) -- #
-    # Le pipeline DeepTeam+PyRIT+Garak est CENTRALISÉ (Q6) ; ASI01 règle ses paramètres.
+    # Le pipeline DeepTeam+PyRIT+Garak est CENTRALISÉ ; ASI01 règle ses paramètres.
     deepteam_category = "ASI_01"
     behavioral_severity_map = _SEVERITY_MAP
     behavioral_default_vuln = "GoalHijacking"

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
 import os
 import threading
 import time
@@ -41,7 +42,20 @@ except Exception:
 from deepeval.models import OllamaModel
 from deepeval.models.base_model import DeepEvalBaseLLM
 
-# -- Paramètres du profil « dev » (surchargeables par variables d'environnement) -- #
+# -- Profil « dev » : gpt-oss-20b via endpoint OpenAI-compatible -------------- #
+# DÉCISION (2026-08-02) : Ollama local exige un GPU correct pour tenir un 7-8B à un
+# débit utilisable. On bascule le profil dev sur **openai/gpt-oss-20b** servi par un
+# fournisseur OpenAI-compatible (OpenRouter par défaut, offre gratuite). Aucun GPU
+# requis, modèle bien plus fort qu'un 7B local → simulateur moins faible qu'avec
+# Ollama (cf. constat §18 : un simulateur faible produit un faux verdict rassurant).
+# Ollama reste disponible via le profil « ollama » (repli hors-ligne).
+DEV_MODEL = os.environ.get("AUDIT_DEV_MODEL", "openai/gpt-oss-20b:free")
+DEV_BASE_URL = os.environ.get("AUDIT_DEV_BASE_URL", "https://openrouter.ai/api/v1")
+# Débit max vers le fournisseur dev (req/MINUTE). Les offres gratuites plafonnent
+# typiquement à 20/min → on reste sous (15) pour la marge.
+DEV_RPM = int(os.environ.get("AUDIT_DEV_RPM", "15"))
+
+# -- Profil « ollama » : LLM local (repli hors-ligne, exige un GPU correct) ---- #
 OLLAMA_MODEL = os.environ.get("AUDIT_OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
@@ -62,6 +76,22 @@ GEMINI_MODEL = os.environ.get("AUDIT_GEMINI_MODEL", "gemini-flash-lite-latest")
 GEMINI_OPENAI_BASE = os.environ.get(
     "GEMINI_OPENAI_BASE", "https://generativelanguage.googleapis.com/v1beta/openai"
 )
+
+# -- Clés VERTEX AI EXPRESS (préfixe « AQ. ») -------------------------------- #
+# DEUX services Google distincts, et une clé ne marche que sur le sien :
+#   - clé AI Studio « AIza… »  -> generativelanguage.googleapis.com
+#   - clé Vertex Express « AQ.… » -> aiplatform.googleapis.com
+# Vérifié par spike (2026-08-19) : une clé AQ.* sur generativelanguage renvoie
+# 403 API_KEY_SERVICE_BLOCKED sur TOUS les modèles. On route donc vers Vertex.
+# Modèles vérifiés OK sur Vertex : gemini-2.5-flash, gemini-2.5-flash-lite
+# (les alias *-latest et gemini-2.0-* n'existent PAS côté Vertex -> 404).
+VERTEX_PROJECT = os.environ.get("VERTEX_PROJECT", "").strip()
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1").strip()
+
+
+def _is_vertex_key() -> bool:
+    """True si GEMINI_API_KEY est une clé Vertex AI Express (préfixe « AQ. »)."""
+    return os.environ.get("GEMINI_API_KEY", "").strip().startswith("AQ.")
 
 # Débit max autorisé vers Gemini (req/MINUTE). Free-tier flash-lite = 15/min → on
 # reste SOUS (13) pour la marge (le limiteur couvre simulator + evaluation + severity).
@@ -138,6 +168,22 @@ def _rate_limited_gemini_class() -> type:
         from deepeval.models import GeminiModel
 
         class RateLimitedGeminiModel(GeminiModel):  # type: ignore[misc, valid-type]
+            def load_model(self) -> Any:
+                """Construit le client google-genai (appelé par generate/a_generate).
+
+                POURQUOI CETTE SURCHARGE
+                    Le chemin Vertex de deepeval (`use_vertexai=True`) IGNORE l'api_key
+                    et exige des credentials ADC (vérifié : DefaultCredentialsError).
+                    Or le SDK google-genai accepte parfaitement une clé Express via
+                    `Client(vertexai=True, api_key=...)` (vérifié : réponse 200). On
+                    court-circuite donc deepeval uniquement pour ce cas.
+                """
+                if _is_vertex_key():
+                    from google import genai
+
+                    return genai.Client(vertexai=True, api_key=_gemini_api_key())
+                return super().load_model()
+
             def generate(self, *args: Any, **kwargs: Any) -> Any:
                 _GEMINI_LIMITER.acquire()
                 return super().generate(*args, **kwargs)
@@ -148,6 +194,38 @@ def _rate_limited_gemini_class() -> type:
 
         _RL_GEMINI_CLS = RateLimitedGeminiModel
     return _RL_GEMINI_CLS
+
+
+# Limiteur DÉDIÉ au fournisseur dev (indépendant de celui de Gemini).
+_DEV_LIMITER = _RateLimiter(max_calls=DEV_RPM, period=60.0)
+_RL_DEV_CLS: type | None = None
+
+
+def _rate_limited_dev_class() -> type:
+    """Sous-classe de GPTModel passant par le limiteur du profil dev.
+
+    POURQUOI GPTModel ET PAS OpenRouterModel
+        `GPTModel` accepte `base_url` (vérifié par introspection) → il pilote
+        N'IMPORTE QUEL endpoint OpenAI-compatible : OpenRouter, Groq, Together,
+        vLLM local… Un seul chemin de code pour tous les fournisseurs, et deepeval
+        le traite comme un modèle NATIF (`using_native_model=True`) — donc la
+        sortie structurée pydantic (SeverityJudge, verdicts DeepTeam) fonctionne.
+    """
+    global _RL_DEV_CLS
+    if _RL_DEV_CLS is None:
+        from deepeval.models import GPTModel
+
+        class RateLimitedDevModel(GPTModel):  # type: ignore[misc, valid-type]
+            def generate(self, *args: Any, **kwargs: Any) -> Any:
+                _DEV_LIMITER.acquire()
+                return super().generate(*args, **kwargs)
+
+            async def a_generate(self, *args: Any, **kwargs: Any) -> Any:
+                await _DEV_LIMITER.acquire_async()
+                return await super().a_generate(*args, **kwargs)
+
+        _RL_DEV_CLS = RateLimitedDevModel
+    return _RL_DEV_CLS
 
 
 # (simulator, evaluation)
@@ -206,6 +284,27 @@ def _ollama() -> OllamaModel:
     return OllamaModel(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 
 
+def _dev_api_key() -> str:
+    """Clé du fournisseur dev. Cherche dans l'ordre : AUDIT_DEV_API_KEY,
+    OPENROUTER_API_KEY, OPENAI_API_KEY — pour ne pas imposer un nom unique."""
+    for var in ("AUDIT_DEV_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        key = os.environ.get(var, "").strip()
+        if key:
+            return key
+    raise RuntimeError(
+        "Profil 'dev' : aucune clé API trouvée. Définissez AUDIT_DEV_API_KEY "
+        "(ou OPENROUTER_API_KEY / OPENAI_API_KEY).\n"
+        f"  modèle   : {DEV_MODEL}\n  endpoint : {DEV_BASE_URL}\n"
+        "Alternative hors-ligne : AUDIT_LLM_PROFILE=ollama (exige un GPU correct)."
+    )
+
+
+def _dev_llm() -> "DeepEvalBaseLLM":
+    """Instancie le modèle du profil dev (gpt-oss-20b via endpoint OpenAI-compat)."""
+    cls = _rate_limited_dev_class()
+    return cls(model=DEV_MODEL, api_key=_dev_api_key(), base_url=DEV_BASE_URL)
+
+
 def _gemini_api_key() -> str:
     """Retourne GEMINI_API_KEY ou lève une RuntimeError CLAIRE.
 
@@ -259,24 +358,53 @@ def get_pyrit_chat_config(profile: str | None = None) -> dict[str, str]:
         get_judge_models — un seul endroit à changer. Vérifié : constat DVAP (§18)
         que l'adversaire 7B génère des attaques trop faibles → Gemini en 'final'.
 
-    Retour : {"model_name", "endpoint", "api_key"}.
+    Retour : {"model_name", "endpoint", "api_key"} (+ "headers" JSON si Vertex).
         `endpoint` = BASE OpenAI (le SDK openai ajoute lui-même « /chat/completions »,
         exactement comme pour Ollama /v1 — spike §17).
     """
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
 
     if profile == "final":
+        key = _gemini_api_key()
+        if _is_vertex_key():
+            # Vertex REFUSE une clé API en « Authorization: Bearer » (401
+            # API_KEY_SERVICE_BLOCKED) et refuse aussi les DEUX à la fois (401
+            # OVERLOADED_CREDENTIALS). Vérifié : seul `x-goog-api-key` SEUL passe
+            # -> on neutralise l'en-tête Authorization posé par le SDK openai en
+            # l'écrasant par une chaîne vide (None est rejeté par httpx).
+            if not VERTEX_PROJECT:
+                raise RuntimeError(
+                    "Clé Vertex (AQ.*) détectée mais VERTEX_PROJECT absent du .env. "
+                    "Ajoute VERTEX_PROJECT=<numéro de projet> (visible dans la console Google Cloud)."
+                )
+            return {
+                "model_name": f"google/{GEMINI_MODEL}",  # Vertex exige le préfixe éditeur
+                "endpoint": (
+                    f"https://aiplatform.googleapis.com/v1/projects/{VERTEX_PROJECT}"
+                    f"/locations/{VERTEX_LOCATION}/endpoints/openapi"
+                ),
+                "api_key": "unused",
+                "headers": json.dumps({"x-goog-api-key": key, "Authorization": ""}),
+            }
         return {
             "model_name": GEMINI_MODEL,
             "endpoint": GEMINI_OPENAI_BASE,
-            "api_key": _gemini_api_key(),
+            "api_key": key,
         }
 
-    # dev / dry_run / ci → Ollama local (endpoint OpenAI-compat = base + /v1).
+    if profile == "ollama":
+        # Repli hors-ligne : endpoint OpenAI-compat d'Ollama = base + /v1.
+        return {
+            "model_name": OLLAMA_MODEL,
+            "endpoint": OLLAMA_BASE_URL.rstrip("/") + "/v1",
+            "api_key": "ollama",
+        }
+
+    # dev / dry_run / ci → gpt-oss-20b via endpoint OpenAI-compatible.
     return {
-        "model_name": OLLAMA_MODEL,
-        "endpoint": OLLAMA_BASE_URL.rstrip("/") + "/v1",
-        "api_key": "ollama",
+        "model_name": DEV_MODEL,
+        "endpoint": DEV_BASE_URL,
+        "api_key": _dev_api_key(),
     }
 
 
@@ -300,7 +428,14 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
 
     if profile == "dev":
-        # Deux instances du même modèle → un seul chargement VRAM côté Ollama.
+        # gpt-oss-20b via endpoint OpenAI-compatible : aucun GPU local requis, et
+        # simulateur nettement plus fort qu'un 7B (cf. §18 — un simulateur faible
+        # produit un faux verdict rassurant). Deux instances distinctes (une par
+        # rôle) : évite tout état partagé entre simulator et evaluation.
+        return _dev_llm(), _dev_llm()
+
+    if profile == "ollama":
+        # Repli hors-ligne. Deux instances du même modèle → un seul chargement VRAM.
         return _ollama(), _ollama()
 
     if profile in ("dry_run", "dry-run", "ci"):
@@ -315,5 +450,5 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
         return _gemini(), _gemini()
 
     raise ValueError(
-        f"Profil LLM inconnu : {profile!r} (attendu : 'dev', 'dry_run'/'ci', 'final')."
+        f"Profil LLM inconnu : {profile!r} (attendu : 'dev', 'ollama', 'dry_run'/'ci', 'final')."
     )

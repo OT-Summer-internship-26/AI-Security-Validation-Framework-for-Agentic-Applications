@@ -1,0 +1,264 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ══════════════════════════════════════════════════════════════════
+   THÈME CLAIR — mode par défaut du produit.
+   Le rouge Ooredoo (--brand) est réservé au chrome : logo, nav active.
+   Les sévérités n'utilisent JAMAIS ce rouge (Critical = magenta).
+   ══════════════════════════════════════════════════════════════════ */
+:root,
+:root.light {
+  --bg-deep: #F5F7FB;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F2F5FA;
+  --bg-overlay: #E8EDF6;
+
+  --border-base: #DFE5EF;
+  --border-subtle: #EDF1F7;
+  --border-bright: #C3CDDE;
+
+  --text-primary: #0D1424;
+  --text-secondary: #4A5670;
+  --text-muted: #7C879E;
+
+  --brand: #ED1C24;
+
+  /* Critical = magenta franc, jamais confondu avec le rouge de marque */
+  --sev-critical: #C4006B;
+  --sev-high: #C2410C;
+  --sev-medium: #A16207;
+  --sev-low: #047857;
+  --sev-info: #1D4ED8;
+
+  --layer-behavioral: #2563EB;
+  --layer-static: #B45309;
+  --layer-dynamic: #BE123C;
+
+  /* Focus neutre : ni marque, ni sévérité */
+  --focus-ring: #2563EB;
+
+  --shadow-card: 0 1px 2px rgba(13, 20, 36, 0.04), 0 8px 24px rgba(13, 20, 36, 0.06);
+  --shadow-lifted: 0 2px 4px rgba(13, 20, 36, 0.05), 0 16px 40px rgba(13, 20, 36, 0.1);
+
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: #DFE5EF;
+
+  --code-bg: #0D1424;
+  --code-text: #E6EDF9;
+
+  --aurora-1: rgba(237, 28, 36, 0.13);
+  --aurora-2: rgba(37, 99, 235, 0.12);
+  --grid-line: rgba(13, 20, 36, 0.035);
+}
+
+:root.dark {
+  --bg-deep: #0A0E1A;
+  --bg-surface: #131826;
+  --bg-elevated: #1B2233;
+  --bg-overlay: #212840;
+
+  --border-base: #252D42;
+  --border-subtle: #1D2438;
+  --border-bright: #3B4568;
+
+  --text-primary: #E8EDF7;
+  --text-secondary: #98A3BC;
+  --text-muted: #6B7691;
+
+  --sev-critical: #FF3D9A;
+  --sev-high: #FF8C00;
+  --sev-medium: #FFD93D;
+  --sev-low: #00D68F;
+  --sev-info: #4D7CFF;
+
+  --layer-behavioral: #3B82F6;
+  --layer-static: #F59E0B;
+  --layer-dynamic: #FB7185;
+
+  --focus-ring: #60A5FA;
+
+  --shadow-card: 0 2px 20px rgba(0, 0, 0, 0.4);
+  --shadow-lifted: 0 8px 40px rgba(0, 0, 0, 0.55);
+
+  --glass-bg: rgba(19, 24, 38, 0.78);
+  --glass-border: #252D42;
+
+  --code-bg: #060911;
+  --code-text: #E6EDF9;
+
+  --aurora-1: rgba(237, 28, 36, 0.16);
+  --aurora-2: rgba(59, 130, 246, 0.14);
+  --grid-line: rgba(255, 255, 255, 0.03);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Pas d'overflow:hidden — sur 1366x768 le bas des pages doit rester atteignable */
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ─── Fond : aurora visible + grille technique discrète ─── */
+.aurora-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+.aurora-bg::before,
+.aurora-bg::after {
+  content: '';
+  position: absolute;
+  width: 720px;
+  height: 720px;
+  border-radius: 50%;
+  filter: blur(110px);
+}
+.aurora-bg::before {
+  background: var(--aurora-1);
+  top: -260px;
+  right: -160px;
+}
+.aurora-bg::after {
+  background: var(--aurora-2);
+  bottom: -280px;
+  left: -180px;
+}
+
+/* ─── Surfaces ─── */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border);
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-base);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 220ms ease, transform 220ms ease, border-color 220ms ease;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-lifted);
+  transform: translateY(-2px);
+  border-color: var(--border-bright);
+}
+
+/* Blocs de code / payloads : toujours sombres, y compris en thème clair,
+   pour que les charges adverses se lisent comme du terminal. */
+.code-block {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: 10px;
+}
+
+/* ─── Effets de scan (pages Attaques & Live Audit) ─── */
+.scan-frame {
+  position: relative;
+  overflow: hidden;
+}
+.scan-frame::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 42%;
+  top: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--layer-behavioral) 16%, transparent) 50%,
+    transparent 100%
+  );
+  animation: scan-sweep 2.2s ease-in-out infinite;
+}
+
+.scan-line {
+  position: relative;
+  overflow: hidden;
+}
+.scan-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 32%;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--layer-behavioral) 26%, transparent),
+    transparent
+  );
+  animation: scan-sweep-x 1.6s linear infinite;
+}
+
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--text-muted) 18%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+[role='button']:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.terminal-scroll {
+  scrollbar-width: thin;
+}

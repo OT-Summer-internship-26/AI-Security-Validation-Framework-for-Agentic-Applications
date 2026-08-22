@@ -23,7 +23,7 @@ ENV/
 # ---- Logs / artefacts ----
 install_log.txt
 *.log
-reports/
+/reports/
 *.pdf
 
 # ---- Caches d'outils ----
@@ -37,3 +37,11 @@ reports/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Config locale du dashboard (contient la cle d API)
+dashboard/.env.local
+
+# ---- Dependances / build front (dashboard + presentation) ----
+node_modules/
+dist/
+.vite/

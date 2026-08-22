@@ -1,35 +1,154 @@
-# ==============================================================
-# security_audit.yml — GitHub Actions : audit de sécurité avant déploiement
-# PLACEHOLDER Phase 1 — le workflow réel sera complété en Phase 2 / CI-CD.
+# ==============================================================================
+#  Audit de sécurité IA — porte de qualité CI/CD
 #
-# Objectif : lancer le framework d'audit sur l'agent cible et BLOQUER le
-# déploiement si le score global < SCORE_THRESHOLD (défaut 70).
-# ==============================================================
-name: AI Security Audit
+#  CE QUI TOURNE ICI, ET POURQUOI
+#      Uniquement les axes DÉTERMINISTES : Semgrep, pip-audit, Garak, sandbox.
+#      Ils ne consomment aucun appel LLM — donc aucun plafond de débit — et
+#      donnent le même résultat à chaque exécution. Bloquer un développeur sur
+#      un score stochastique (DeepTeam, PyRIT) serait indéfendable : deux runs
+#      identiques ont donné 9,66 et 7,93 sur la même cible.
+#
+#      L'audit comportemental complet tourne la nuit (workflow séparé) et
+#      alimente la baseline, il ne bloque pas.
+#
+#  DÉCISION
+#      `config/gate_policy.json` — versionnée, relue en revue de code.
+#      Tout Critical bloque ; le budget de findings High est réglable.
+# ==============================================================================
+name: Audit de sécurité IA
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      target_url:
+        description: "URL de l'agent à auditer (vide = analyse statique seule)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
-  security-audit:
+  quality-gate:
+    name: Quality Gate
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    timeout-minutes: 15
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      # TODO Phase 2 :
-      #   - installer les dépendances (requirements.txt)
-      #   - lancer l'audit via l'API ou en CLI
-      #   - récupérer le score global
-      #   - échouer le job si score < SCORE_THRESHOLD (gate CI/CD)
-      - name: Placeholder
-        run: echo "PLACEHOLDER — étape d'audit à implémenter en Phase 2"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep pip-audit
+          # Le framework complet n'est pas nécessaire : la CI n'exécute que
+          # les axes déterministes.
+
+      - name: Analyse statique — Semgrep
+        id: semgrep
+        continue-on-error: true
+        run: |
+          semgrep --config p/default --config p/security-audit \
+                  --json --quiet --output semgrep.json . || true
+          python - <<'PY'
+          import json, pathlib
+          d = json.loads(pathlib.Path("semgrep.json").read_text() or "{}")
+          res = d.get("results", [])
+          sev = lambda r: (r.get("extra") or {}).get("severity", "WARNING")
+          print(f"Semgrep : {len(res)} finding(s) — "
+                f"{sum(1 for r in res if sev(r)=='ERROR')} ERROR")
+          for r in res[:10]:
+              print(f"  {sev(r):<8} {r.get('path')}:{(r.get('start') or {}).get('line')} "
+                    f"{str(r.get('check_id','')).split('.')[-1]}")
+          PY
+
+      - name: Dépendances — pip-audit
+        id: pipaudit
+        continue-on-error: true
+        run: |
+          # Code de sortie 1 = CVE trouvées, pas une erreur : on lit toujours le JSON.
+          pip-audit -r requirements.txt --format json --output pipaudit.json || true
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("pipaudit.json")
+          d = json.loads(p.read_text()) if p.exists() else {}
+          cves = [(x["name"], v["id"]) for x in d.get("dependencies", [])
+                  for v in (x.get("vulns") or [])]
+          print(f"pip-audit : {len(cves)} CVE")
+          for name, cid in cves[:15]:
+              print(f"  {name:<24} {cid}")
+          PY
+
+      - name: Audit de la cible — axes déterministes
+        if: inputs.target_url != ''
+        continue-on-error: true
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          pip install -r requirements.txt
+          python scripts/run_agent.py ASI_05 \
+            --target "${{ inputs.target_url }}" \
+            --profile dry_run \
+            --no-deepteam --no-pyrit --no-microsoft \
+            --timeout 120
+
+      - name: Quality Gate — décision
+        id: gate
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python scripts/ci_gate.py --summary gate_summary.md
+          # exit 1 => le job échoue => la PR est bloquée.
+
+      - name: Rapport dans la pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('gate_summary.md')) return;
+            const body = fs.readFileSync('gate_summary.md', 'utf8');
+            const marker = '<!-- ai-security-gate -->';
+
+            // Un seul commentaire, mis à jour — pas un fil qui s'allonge à chaque push.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const mine = comments.find(c => c.body.includes(marker));
+            const payload = marker + '\n' + body;
+
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: mine.id, body: payload,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: payload,
+              });
+            }
+
+      - name: Conserver les artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-results
+          path: |
+            semgrep.json
+            pipaudit.json
+            gate_summary.md
+            data/audit_results/*.json
+          retention-days: 30
+          if-no-files-found: ignore

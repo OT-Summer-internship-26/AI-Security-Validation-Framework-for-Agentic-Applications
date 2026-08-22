@@ -28,6 +28,10 @@ from agents.asi03_identity_abuse import ASI03IdentityAbuseAgent
 from agents.asi04_supply_chain import ASI04SupplyChainAgent
 from agents.asi05_code_execution import ASI05CodeExecutionAgent
 from agents.asi06_memory_poisoning import ASI06MemoryPoisoningAgent
+from agents.asi07_interagent_comms import ASI07InterAgentCommsAgent
+from agents.asi08_cascading_failures import ASI08CascadingFailuresAgent
+from agents.asi09_trust_exploitation import ASI09TrustExploitationAgent
+from agents.asi10_rogue_agents import ASI10RogueAgentsAgent
 from agents.base_agent import build_http_callback
 from workflow.scoring import calculate_global_score, get_risk_level
 from workflow.state import AuditState
@@ -40,6 +44,10 @@ AGENT_REGISTRY: dict[str, type] = {
     "ASI_04": ASI04SupplyChainAgent,
     "ASI_05": ASI05CodeExecutionAgent,
     "ASI_06": ASI06MemoryPoisoningAgent,
+    "ASI_07": ASI07InterAgentCommsAgent,
+    "ASI_08": ASI08CascadingFailuresAgent,
+    "ASI_09": ASI09TrustExploitationAgent,
+    "ASI_10": ASI10RogueAgentsAgent,
 }
 
 

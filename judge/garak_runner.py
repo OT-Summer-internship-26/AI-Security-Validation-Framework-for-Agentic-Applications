@@ -48,6 +48,7 @@ def run_garak(
     probes: str = DEFAULT_PROBES,
     generations: int = 1,
     request_timeout: int = 60,
+    extra_payload: dict[str, Any] | None = None,
 ) -> tuple[float | None, list[dict[str, Any]], str, dict[str, Any]]:
     """Lance garak (venv, sous-processus) contre `target_url`.
 
@@ -72,7 +73,11 @@ def run_garak(
             "uri": target_url,
             "method": "post",
             "headers": headers or {"Content-Type": "application/json"},
-            "req_template_json_object": {prompt_field: "$INPUT"},
+            # `extra_payload` : champs JSON constants exigés par la cible EN PLUS du
+            # prompt (ex. lab DVAP autonomous-agent : {"title": …, "content": …} — les
+            # deux sont requis, sinon 422). Même paramètre que build_http_callback pour
+            # que les 4 axes voient exactement la même cible.
+            "req_template_json_object": {prompt_field: "$INPUT", **(extra_payload or {})},
             "response_json": True,
             "response_json_field": response_field,
             # Read-timeout REST. ⚠️ BUG garak 0.9.0.11 : la config lit le champ
@@ -97,13 +102,40 @@ def run_garak(
     ]
     # UTF-8 forcé : garak imprime des emojis (cp1252 planterait sur Windows).
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    # ⚠️ SORTIE VERS FICHIER, PAS VERS DES PIPES — et surtout PAS `subprocess.run(
+    # timeout=…)`. Sur Windows, `run()` tue bien l'enfant à l'échéance, puis DRAINE les
+    # pipes SANS délai ; or garak lance des sous-processus qui HÉRITENT de stdout, donc
+    # le drain attend la mort du petit-fils, pas celle de garak. Constaté en vrai
+    # (2026-08-19) : garak calé sur UNE requête HTTP a bloqué 6h19 malgré `timeout=600`
+    # (TimeoutExpired levée à la toute fin, avec un « remaining » NÉGATIF de -22138 s).
+    # Reproduit et mesuré : pipes + kill = bloqué toute la vie du petit-fils ; fichier +
+    # wait(timeout) + kill = rendu en 0.1 s. Sans pipe à drainer, le délai est fiable.
+    log_path = os.path.join(workdir, "garak_stdout.log")
+    timed_out = False
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=_TIMEOUT, cwd=workdir, env=env,
-        )
-    except Exception as exc:  # timeout / venv cassé -> dégradation propre
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log_fh:
+            proc = subprocess.Popen(
+                cmd, stdout=log_fh, stderr=subprocess.STDOUT,
+                cwd=workdir, env=env,
+            )
+            try:
+                proc.wait(timeout=_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc.kill()
+                proc.wait()
+    except Exception as exc:  # venv cassé / exécutable introuvable
         return None, [], f"error: {type(exc).__name__}: {exc}", {}
+
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            stderr = fh.read()
+    except Exception:
+        stderr = ""
+
+    # Même tué, garak a pu écrire un rapport PARTIEL exploitable : on continue vers le
+    # parsing au lieu de tout jeter. Vérifié : le run tué à 6h19 contenait déjà les 2
+    # évaluations réelles (0/2 passés = faille détectée) qu'on perdait auparavant.
 
     # Localiser le rapport .report.jsonl produit dans le workdir.
     report = next(
@@ -111,8 +143,9 @@ def run_garak(
         None,
     )
     if report is None:
-        return None, [], f"error: pas de rapport garak (rc={proc.returncode})", {
-            "stderr": (proc.stderr or "")[-500:],
+        why = f"tué après {_TIMEOUT}s" if timed_out else f"rc={proc.returncode}"
+        return None, [], f"error: pas de rapport garak ({why})", {
+            "stderr": (stderr or "")[-500:],
         }
 
     passed_total = 0
@@ -143,6 +176,7 @@ def run_garak(
         "passed": passed_total,
         "total": total_total,
         "returncode": proc.returncode,
+        "timed_out": timed_out,
     }
     # Aucune évaluation exploitable (cible injoignable ?) -> non scorable (PAS 10/10).
     if total_total == 0:
@@ -151,4 +185,5 @@ def run_garak(
     score = round((passed_total / total_total) * 10, 2)
     # findings retenus = probes où garak a détecté une faille (passed < total).
     vuln_findings = [f for f in findings if f["passed"] < f["total"]]
-    return score, vuln_findings, f"ok ({passed_total}/{total_total} passés)", raw
+    suffix = f" — PARTIEL, garak tué après {_TIMEOUT}s" if timed_out else ""
+    return score, vuln_findings, f"ok ({passed_total}/{total_total} passés){suffix}", raw

@@ -42,8 +42,13 @@ async def _run_attack_async(
     objective: str,
     max_turns: int,
     profile: str | None = None,
-) -> tuple[Any, int]:
-    """Construit et exécute la RedTeamingAttack ; renvoie (AttackResult, nb_http_errors)."""
+) -> tuple[Any, int, list[dict[str, Any]]]:
+    """Construit et exécute la RedTeamingAttack.
+
+    Renvoie (AttackResult, nb_http_errors, tours) — `tours` = la conversation réelle
+    [{n, prompt, response, http_error}], pour que le rapport montre CE QUI a été
+    envoyé et non seulement le verdict final.
+    """
     global _pyrit_initialized
 
     from pyrit.setup import initialize_pyrit_async, IN_MEMORY
@@ -76,6 +81,11 @@ async def _run_attack_async(
             super().__init__()
             self._cb = cb
             self.http_error_count = 0  # cohérence exclusion [HTTP_ERROR]
+            # Journal des tours. La cible est le SEUL endroit qui voit à la fois le
+            # prompt généré par l'adversaire et la réponse — inutile d'aller relire la
+            # mémoire PyRIT. Sans ça, le rapport n'affiche que « SUCCESS, 3 tours »,
+            # sans jamais montrer CE QUI a détourné l'agent.
+            self.turns: list[dict[str, Any]] = []
 
         async def _send_prompt_to_target_async(self, *, normalized_conversation):
             req = normalized_conversation[-1].message_pieces[0]
@@ -86,6 +96,12 @@ async def _run_attack_async(
             # Le callback peut renvoyer un TargetResponse (ASI02 — Q2) ; PyRIT exige
             # une chaîne → str() (TargetResponse.__str__ == .text ; str inchangé).
             text = str(raw_resp)
+            self.turns.append({
+                "n": len(self.turns) + 1,
+                "prompt": req.converted_value,
+                "response": text,
+                "http_error": is_http_error(raw_resp),
+            })
             return [
                 construct_response_from_request(
                     request=req, response_text_pieces=[text]
@@ -100,10 +116,13 @@ async def _run_attack_async(
     def _chat_target() -> "OpenAIChatTarget":
         # endpoint = BASE OpenAI (le SDK ajoute /chat/completions). api_key = factice
         # "ollama" en dev (ignorée), vraie clé Gemini en final.
+        # `headers` : uniquement pour Vertex AI, qui refuse l'auth « Bearer » du SDK
+        # openai et exige la clé dans `x-goog-api-key` (cf. get_pyrit_chat_config).
         return OpenAIChatTarget(
             model_name=chat_cfg["model_name"],
             endpoint=chat_cfg["endpoint"],
             api_key=chat_cfg["api_key"],
+            headers=chat_cfg.get("headers"),
         )
 
     target = _HTTPTarget(cb=http_callback)
@@ -121,7 +140,7 @@ async def _run_attack_async(
         max_turns=max_turns,
     )
     result = await attack.execute_async(objective=objective)
-    return result, target.http_error_count
+    return result, target.http_error_count, target.turns
 
 
 def run_pyrit_goal_hijacking(
@@ -147,7 +166,7 @@ def run_pyrit_goal_hijacking(
     from pyrit.models import AttackOutcome
 
     try:
-        result, http_errors = asyncio.run(
+        result, http_errors, turns = asyncio.run(
             _run_attack_async(http_callback, objective, max_turns, profile)
         )
     except Exception as exc:  # PyRIT/Ollama/scorer indisponible -> dégradation propre
@@ -157,6 +176,7 @@ def run_pyrit_goal_hijacking(
         "outcome": str(result.outcome),
         "executed_turns": getattr(result, "executed_turns", None),
         "http_errors": http_errors,
+        "turns": turns,          # conversation complète, tour par tour
     }
 
     # Exclusion cohérente : cible injoignable pendant la conversation -> non scorable.
