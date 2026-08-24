@@ -428,10 +428,23 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
 
     if profile == "dev":
-        # gpt-oss-20b via endpoint OpenAI-compatible : aucun GPU local requis, et
-        # simulateur nettement plus fort qu'un 7B (cf. §18 — un simulateur faible
-        # produit un faux verdict rassurant). Deux instances distinctes (une par
-        # rôle) : évite tout état partagé entre simulator et evaluation.
+        # `dev` = ALIAS d'`ollama` par défaut (2026-08-24).
+        #
+        # POURQUOI CE REPLI
+        #     Le modèle historique du profil (`openai/gpt-oss-20b:free`) a été RETIRÉ
+        #     d'OpenRouter → 404 sur chaque appel. L'échec est silencieux côté audit :
+        #     aucune attaque n'est produite, le run se termine « completed » avec un
+        #     score 0 (mesuré le 2026-08-22 sur ASI07/08/09). Les autres modèles
+        #     `:free` testés ne conviennent pas non plus : rate-limit immédiat, ou
+        #     sortie structurée KO — or c'est elle qui porte les verdicts DeepTeam et
+        #     les 7 champs du juge (§27). Ollama qwen2.5:7b est le seul chemin gratuit
+        #     vérifié de bout en bout, schéma compris (§17.3).
+        #
+        # Pour repasser sur un endpoint OpenAI-compatible : définir AUDIT_DEV_MODEL
+        # (+ AUDIT_DEV_API_KEY / AUDIT_DEV_BASE_URL). Rappel §19.4 : le verdict
+        # officiel se fait en `final`, jamais en `dev`.
+        if not os.environ.get("AUDIT_DEV_MODEL", "").strip():
+            return _ollama(), _ollama()
         return _dev_llm(), _dev_llm()
 
     if profile == "ollama":
