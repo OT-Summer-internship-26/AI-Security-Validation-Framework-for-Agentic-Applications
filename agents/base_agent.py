@@ -415,13 +415,21 @@ class BaseSecurityAgent(ABC):
             raw["deepteam_tests"] = len(getattr(risk_assessment, "test_cases", []) or [])
             # CIBLE INJOIGNABLE (tous tests [HTTP_ERROR]) → PAS 10/10 : couche en erreur.
             if deepteam_score is None:
-                print(
-                    f"[{self.asi_category}] cible injoignable : "
-                    f"{stats['excluded_http_error']} test(s) exclus, 0 scorable."
+                # 0 scorable a DEUX causes distinctes : la cible ne repond pas (tests
+                # exclus [HTTP_ERROR]), ou le simulateur/juge a echoue (aucun test
+                # produit). Les confondre fait accuser une cible saine — vu en reel le
+                # 2026-08-22, modele OpenRouter retire (404) diagnostique "injoignable".
+                reason = (
+                    f"cible injoignable : {stats['excluded_http_error']} test(s) "
+                    f"exclus ([HTTP_ERROR]), 0 scorable"
+                    if stats["excluded_http_error"]
+                    else "aucun test produit : simulateur/juge LLM en erreur "
+                         "(cible non sollicitee)"
                 )
+                print(f"[{self.asi_category}] {reason}.")
                 return LayerResult(
                     layer="behavioral", score=0, applicable=True,
-                    error="cible injoignable : tous les tests exclus ([HTTP_ERROR])",
+                    error=reason,
                     findings=deepteam_findings, raw=raw,
                 )
             raw["deepteam_score"] = deepteam_score

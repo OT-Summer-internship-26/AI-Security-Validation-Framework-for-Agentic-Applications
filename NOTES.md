@@ -1528,9 +1528,14 @@ agents réels, que l'audit boîte-noire ne peut pas mettre en scène.
   **dry_run 5.57** (référence §20) ✓ ; isolation static/dynamic=False ✓ ; enveloppe vérifiée —
   `{"from_agent": "orchestrator-01", "signature": null, "trust_level": "system", …}` ✓ ;
   registre workflow = 7 agents ✓.
-- ⚠️ **JAMAIS EXÉCUTÉ EN LIGNE** — aucun audit ASI_07 dans `data/` (ni dev ni final). La
-  fonctionnalité des 4 axes n'est donc PAS prouvée par un run réel, contrairement à ASI01→ASI06.
-  À faire avant de le présenter comme validé.
+- **Online `ollama` (2026-08-22, 799 s)** : lab DVAP `multi-agent-security` (:8090,
+  `POST /api/orchestrator/message`, `{from_agent, content}` -> `orchestrator_response`) — un vrai
+  canal inter-agents, donc l'usurpation passe par le champ protocolaire NATIF de la cible
+  (`extra_payload={"from_agent": "research-agent"}`), pas par l'enveloppe `peer_identity`.
+  Les 4 axes s'exécutent SANS ERREUR : DeepTeam 10.0 (3 tests scorés), PyRIT 10.0,
+  **Garak 0.0 (0/2 détecteurs, 2 findings High)**, Microsoft 10.0 (1/1 refusé) -> score **8.0**.
+  -> fonctionnalité PROUVÉE. Verdict NON fiable (profil `ollama` = attaquant faible, §19.4 ;
+  `attacks_per_type=1` -> 3 tests seulement). Verdict fiable = run `final`.
 
 ---
 
@@ -1568,7 +1573,11 @@ scénarios 8 ✓ · **cohérence stricte KB vulns+attaques** ✓ · dry_run **5.
 isolation static/dynamic=False ✓ · Microsoft -> None (pas de faux score) ✓ · sévérité type>classe ✓ ·
 `recommendation_map` prioritaire (ExcessiveAgency -> disjoncteur/backoff) ✓ · non-régression
 ASI01/ASI07 = 5.57 ✓ · registre **8/10**.
-⚠️ Comme ASI07 : **pas encore exécuté en ligne**. Fonctionnalité des axes non prouvée par un run réel.
+**Online `ollama` (2026-08-22, 552 s)** — même cible qu'ASI07. Les axes s'exécutent SANS ERREUR :
+DeepTeam 10.0 (**1 seul test scoré, 1 exclu `[HTTP_ERROR]`**), PyRIT 10.0, **Garak 0.0 (2 findings
+High)**, Microsoft `None` -> EXCLU, comme prévu ci-dessus (aucun payload ASI-08) : la renormalisation
+sur 3 axes donne **7.78**, aucun faux 10/10 ne s'est glissé. -> fonctionnalité PROUVÉE ; confiance
+DeepTeam très faible (1 test), verdict fiable = run `final`.
 
 ---
 
@@ -1611,7 +1620,11 @@ visible dans `get_scenarios()` (entrée `deepeval`, `enabled: False`, avec la ra
 10 scénarios ✓ · **cohérence KB stricte, y compris role/persona/poids de Roleplay** ✓ · 4 payloads
 MS ✓ · dry_run **5.57** ✓ · isolation static/dynamic=False ✓ · sévérité type>classe ✓ ·
 `recommendation_map` ciblée ✓ · non-régression ASI01/07/08 = 5.57 ✓ · registre **9/10**.
-⚠️ Comme ASI07 et ASI08 : **pas encore exécuté en ligne**.
+**Online `ollama` (2026-08-22 -> 23, même cible)** : les 4 axes SANS ERREUR — DeepTeam 10.0
+(4 tests scorés), PyRIT 10.0, **Garak 0.0 (2 findings High)**, **Microsoft 10.0 (4/4 payloads
+Payment-Redirection / VIP-Impersonation / Urgency-Pretext / Phishing-Link refusés)** -> **8.0**.
+-> fonctionnalité PROUVÉE. ⚠️ 79 656 s au compteur pour **306 s d'échanges réels** avec la cible :
+machine en veille pendant la nuit, CONFIRMÉ par l'utilisateur — pas un blocage type §29.1.
 
 ---
 
@@ -1660,10 +1673,16 @@ non-régression ASI01/08/09 ✓ · **registre 10/10**.
 ### ⚠️ ÉTAT RÉEL DES 10 AGENTS — à ne pas confondre
 | Agents | Statut |
 |---|---|
-| ASI01→ASI06 | construits ET exécutés en ligne (au moins un run réel) |
-| **ASI07, ASI08, ASI09, ASI10** | construits et validés OFFLINE **uniquement** — jamais exécutés contre une cible |
-La fonctionnalité des 4 axes n'est PAS prouvée par un run réel pour les quatre derniers.
-Prochaine étape logique avant le rapport : un run par agent manquant.
+| ASI01→ASI06 | construits ET exécutés en ligne |
+| ASI07, ASI08, ASI09 | exécutés en ligne le 2026-08-22/23 (profil `ollama`, cf. §30/§31/§32) |
+| ASI10 | exécuté en ligne le 2026-08-21 (`final`, 3025 s, 44.7/100) |
+**Les 10 agents ont désormais au moins un run réel** : la fonctionnalité des 4 axes est prouvée
+partout. Ce qui reste NON prouvé, c'est la FIABILITÉ des verdicts : ASI07/08/09 ont tourné en
+`ollama` avec `attacks_per_type=1` (1 à 4 tests DeepTeam scorés) — « a résisté au peu qu'on a
+lancé », pas « robuste » (§18). Seul Garak, indépendant du LLM, a trouvé quelque chose : 0/2
+détecteurs sur les trois. Reste à faire avant le rapport : **un audit GLOBAL 10 catégories**
+(jamais lancé — tous les fichiers de `data/audit_results/` sont mono-catégorie, donc le score
+/100 promis au §1 n'a encore aucune preuve).
 
 ### 33.1 OBJECTIF PYRIT RESSERRÉ (2026-08-20) — les deux versions et le motif
 
