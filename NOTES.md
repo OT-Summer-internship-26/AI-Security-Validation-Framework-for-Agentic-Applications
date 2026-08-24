@@ -1307,7 +1307,20 @@ Relevé réel : plusieurs modules du §3/§5/§7 sont des STUBS, pas juste « à
 
 - **judge/ (LLM-as-Judge 3 couches, §5) — 1/3 fait** :
   - `severity_judge.py` ✅ (gravité contextuelle, utilisé par le socle).
-  - `cross_validation.py` ❌ STUB — **double jugement pour les cas ambigus (confidence < 80 %)**. À construire.
+  - `cross_validation.py` ✅ **CONSTRUIT (2026-08-24)** — second avis sur les verdicts ambigus.
+    **DEUX déclencheurs, pas un** : (1) `confidence < 80` ; (2) **désaccord entre le verdict du
+    LLM et `behavioral_severity_map`**. Le second a été ajouté sur une MESURE : `qwen2.5:7b`
+    répond **95 % de confiance sur tout**, y compris un cas manifestement ambigu, et continue
+    après qu'on lui ait explicitement expliqué quand douter (prompt corrigé, re-testé) → avec le
+    seul déclencheur d'origine le module ne se serait JAMAIS activé en profil `dev`. Le désaccord
+    LLM ↔ mapping est un signal OBJECTIF, gratuit (les deux gravités sont déjà côte à côte).
+    **Arbitrage dépendant du déclencheur** : confiance basse → le verdict le plus sûr gagne ;
+    désaccord → la gravité la plus élevée gagne (on ne laisse pas un chiffre plat arbitrer).
+    Le verdict n'est JAMAIS perdu : modèle absent / second passage en échec → verdict d'origine
+    conservé + note « à confirmer manuellement ». Stats dans `deepteam_stats["cross_validation"]`.
+    Auto-test : `python -m judge.cross_validation` (6 chemins). Vérifié en ligne (Ollama) : le
+    déclencheur « désaccord » se déclenche et tranche.
+    Effet de bord : `structured()` factorisé dans `severity_judge` (3 appelants, 1 seul repli JSON).
   - `recommendation_engine.py` ❌ STUB — **recommandations intelligentes générées par LLM** (au-delà des
     guidelines KB statiques). À construire. (Complète recommendation_map/#5 par une reco LLM contextuelle.)
 - **reporting/ — ENTIÈREMENT STUB** (pas « à vérifier ») :

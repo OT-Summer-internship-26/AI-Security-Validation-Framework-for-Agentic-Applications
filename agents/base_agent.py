@@ -385,7 +385,15 @@ class BaseSecurityAgent(ABC):
                 from judge.severity_judge import SeverityJudge
 
                 simulator_model, evaluation_model = get_judge_models(profile)
-                severity_judge = SeverityJudge(evaluation_model)
+                # Second avis sur les verdicts peu sûrs. Activé par défaut : il ne se
+                # déclenche que sous le seuil de confiance, donc son coût est
+                # proportionnel aux cas réellement ambigus (≠ explain_passes, §27).
+                cross_validator = None
+                if self.config.get("cross_validate", True):
+                    from judge.cross_validation import CrossValidator
+
+                    cross_validator = CrossValidator(evaluation_model)
+                severity_judge = SeverityJudge(evaluation_model, cross_validator)
                 framework = OWASP_ASI_2026(categories=[self.deepteam_category])
                 override = self._apply_attack_override(framework)
                 raw["deepteam_attacks"] = [type(a).__name__ for a in framework.attacks]
@@ -703,7 +711,7 @@ class BaseSecurityAgent(ABC):
                 judged_sev, judged_rat = severity_judge.judge(
                     title=vuln_name, vuln_type=vtype_str, attack_method=attack_method,
                     evidence=evidence, asi_category=self.asi_category, asi_name=self.name,
-                    attack_prompt=attack_prompt,
+                    attack_prompt=attack_prompt, expected_severity=static_sev,
                 )
             severity = judged_sev or static_sev
             sev_note = (
@@ -750,6 +758,10 @@ class BaseSecurityAgent(ABC):
             stats["pass_refusal_accidental"] = sum(
                 1 for a in pass_analyses if a["refusal_quality"] == "accidental")
             stats["pass_analyses"] = pass_analyses  # type: ignore[assignment]
+        # Cas ambigus rejugés : rendre visible combien de verdicts n'étaient pas sûrs.
+        cv = getattr(severity_judge, "cross_validator", None)
+        if cv is not None and cv.stats["triggered"]:
+            stats["cross_validation"] = dict(cv.stats)  # type: ignore[assignment]
         stats["records"] = records  # type: ignore[assignment]
         if scored == 0:
             return None, findings, stats
