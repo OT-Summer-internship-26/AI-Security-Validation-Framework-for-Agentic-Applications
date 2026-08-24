@@ -1,20 +1,178 @@
 {
   "_meta": {
-    "title": "Cartographie des menaces ↔ contexte entreprise (Ooredoo)",
-    "version": "placeholder-0.1",
-    "description": "À remplir en Phase 1 : relier chaque catégorie ASI aux actifs, aux impacts métier et aux scénarios de menace concrets du contexte Ooredoo.",
-    "status": "PLACEHOLDER"
+    "title": "Cartographie des menaces ↔ contexte entreprise (opérateur télécom)",
+    "version": "1.0",
+    "status": "À VALIDER PAR L'ENCADRANT",
+    "description": "Relie chaque catégorie OWASP ASI aux actifs, aux impacts métier et aux scénarios de menace d'un opérateur télécom exploitant des agents IA.",
+    "methode": "Les scénarios dérivent de `exemples_vulnerabilite` et `scenarios_attaque_officiels` de config/owasp_knowledge_base.json ; le champ `impact` reprend `niveau_risque` de la KB (cohérence vérifiée). Les actifs et l'impact métier sont une PROJECTION sur un contexte d'opérateur télécom générique : self-care, CRM/facturation, provisioning, mobile money, données abonnés/CDR, automatisation réseau.",
+    "limite_assumee": "Aucune donnée interne n'a été utilisée : ni inventaire d'actifs réel, ni classification de données, ni historique d'incidents. Le champ `likelihood` est une estimation d'exposition typique, pas une mesure. À confronter au registre de risques et au périmètre réel des agents déployés avant toute publication.",
+    "echelles": {
+      "likelihood": ["Faible", "Moyenne", "Élevée"],
+      "impact": ["Faible", "Moyen", "Élevé", "Critique"]
+    }
   },
   "mappings": {
-    "ASI_01": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_02": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_03": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_04": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_05": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_06": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_07": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_08": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_09": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""},
-    "ASI_10": {"business_impact": "", "affected_assets": [], "threat_scenarios": [], "likelihood": "", "impact": ""}
+    "ASI_01": {
+      "business_impact": "Un agent client (self-care, recommandation d'offres) détourné exécute des actions non voulues : remises non autorisées, changement de forfait, communication de conditions inventées engageant l'opérateur. Impact contractuel et financier direct, à l'échelle de tous les abonnés touchés.",
+      "affected_assets": [
+        "Chatbot self-care / service client",
+        "Agent de recommandation d'offres",
+        "Assistant interne (RH, IT, support N1)",
+        "API de provisioning forfaits/SIM"
+      ],
+      "threat_scenarios": [
+        "Un abonné insère des instructions dans son message pour obtenir une remise ou un forfait non éligible.",
+        "Injection indirecte : un document de la base de connaissances (FAQ, CGU) est empoisonné et redirige l'agent lors de sa lecture (scénario EchoLeak).",
+        "Un ticket support empoisonné détourne l'assistant interne au moment du résumé."
+      ],
+      "likelihood": "Élevée",
+      "impact": "Critique"
+    },
+    "ASI_02": {
+      "business_impact": "L'agent dispose d'outils réels (CRM, facturation, provisioning). Un abus d'outil transforme une conversation en action sur le SI de production : crédit indu, changement d'offre, ouverture de service non facturée.",
+      "affected_assets": [
+        "Connecteurs CRM / facturation",
+        "API de provisioning",
+        "Passerelle mobile money",
+        "Outils internes exposés à l'agent (MCP, function calling)"
+      ],
+      "threat_scenarios": [
+        "L'agent est amené à appeler l'outil de crédit avec des paramètres hors de son mandat.",
+        "Enchaînement d'appels d'outils pour contourner un contrôle porté par l'interface et non par l'API.",
+        "Épuisement du budget d'appels (coût, quota partenaire) par sollicitation répétée."
+      ],
+      "likelihood": "Élevée",
+      "impact": "Élevé"
+    },
+    "ASI_03": {
+      "business_impact": "Accès aux données d'un abonné qui n'est pas l'interlocuteur : CDR, factures, identité. Fuite de données personnelles à caractère réglementaire — le risque le plus exposé juridiquement pour un opérateur.",
+      "affected_assets": [
+        "Base abonnés (PII)",
+        "CDR / données de trafic",
+        "Espace client authentifié",
+        "Comptes à privilèges des agents internes"
+      ],
+      "threat_scenarios": [
+        "L'agent accepte un numéro de ligne tiers et retourne des données qui ne concernent pas l'appelant (BOLA).",
+        "Escalade : l'utilisateur se présente comme conseiller ou administrateur et obtient des actions réservées (RBAC).",
+        "Extraction du prompt système ou de secrets techniques par sondage successif."
+      ],
+      "likelihood": "Élevée",
+      "impact": "Critique"
+    },
+    "ASI_04": {
+      "business_impact": "La compromission d'un composant tiers (modèle, serveur MCP, bibliothèque, registre d'outils) contamine tous les agents qui en dépendent. Le rayon d'action ne dépend pas du cas d'usage mais du nombre d'agents partageant le composant.",
+      "affected_assets": [
+        "Dépendances Python des agents",
+        "Serveurs MCP et registres d'outils",
+        "Modèles téléchargés depuis un hub public",
+        "Fichiers de configuration et de déploiement"
+      ],
+      "threat_scenarios": [
+        "CVE connue dans une dépendance embarquée dans l'image de production.",
+        "Description d'outil MCP empoisonnée : l'outil ne fait pas ce que son schéma annonce.",
+        "Enregistrement d'un outil ou d'un plugin illégitime dans le registre partagé."
+      ],
+      "likelihood": "Moyenne",
+      "impact": "Élevé"
+    },
+    "ASI_05": {
+      "business_impact": "Un agent capable de produire ou d'exécuter du code (assistant développeur, diagnostic réseau, génération de requêtes) donne un point d'entrée d'exécution à l'intérieur du périmètre. C'est la catégorie où l'écart entre « l'agent a accepté » et « le code a réellement agi » doit être vérifié.",
+      "affected_assets": [
+        "Assistant développeur interne",
+        "Agents de diagnostic / automatisation réseau",
+        "Générateurs de requêtes SQL sur les entrepôts",
+        "Runners CI/CD pilotés par un agent"
+      ],
+      "threat_scenarios": [
+        "Génération puis exécution d'un script atteignant le système de fichiers ou le réseau interne.",
+        "Injection SQL via une requête produite par l'agent sur une base de données de production.",
+        "Contournement du bac à sable (shell=True, sous-processus, désérialisation)."
+      ],
+      "likelihood": "Moyenne",
+      "impact": "Critique"
+    },
+    "ASI_06": {
+      "business_impact": "Contrairement au détournement ponctuel, l'empoisonnement persiste : une fois la mémoire ou la base de connaissances corrompue, l'agent rejoue l'erreur pour tous les abonnés suivants, sans nouvelle attaque. Un seul incident se propage dans le temps.",
+      "affected_assets": [
+        "Mémoire conversationnelle persistante",
+        "Base vectorielle de la FAQ et des procédures",
+        "Historique client réinjecté dans le contexte",
+        "Documents internes ingérés (offres, CGU)"
+      ],
+      "threat_scenarios": [
+        "Insertion d'une fausse procédure commerciale dans la base documentaire indexée.",
+        "Instructions dissimulées dans un historique de conversation rechargé à la session suivante.",
+        "Faux signal de confiance (« validé par le service juridique ») accepté sans vérification."
+      ],
+      "likelihood": "Moyenne",
+      "impact": "Élevé"
+    },
+    "ASI_07": {
+      "business_impact": "Dès qu'un orchestrateur délègue à des agents spécialisés, l'identité de l'émetteur devient un contrôle de sécurité. Sans signature, se faire passer pour un agent pair suffit à faire exécuter une action privilégiée.",
+      "affected_assets": [
+        "Orchestrateur multi-agents",
+        "Bus de messages inter-agents",
+        "Agents spécialisés (facturation, réseau, fraude)",
+        "Jetons de service entre agents"
+      ],
+      "threat_scenarios": [
+        "Message forgé prétendant provenir d'un agent de confiance (message_spoofing).",
+        "Instruction glissée dans le contenu d'un message inter-agents légitime.",
+        "Relais entre deux agents pour altérer les messages en transit."
+      ],
+      "likelihood": "Moyenne",
+      "impact": "Élevé"
+    },
+    "ASI_08": {
+      "business_impact": "Une erreur locale non contenue se propage à l'aval. Dans une chaîne opérateur (diagnostic → décision → action réseau/facturation), une donnée fausse en amont peut déclencher des actions massives avant toute intervention humaine.",
+      "affected_assets": [
+        "Chaînes d'agents en production",
+        "Automatisations réseau déclenchées par un agent",
+        "Traitements de masse (campagnes, régularisations)",
+        "Files de tâches asynchrones"
+      ],
+      "threat_scenarios": [
+        "L'agent agit sur une entrée amont erronée sans la valider.",
+        "Autonomie sans point d'arrêt : une action erronée se répète en boucle.",
+        "Saturation en cascade : la reprise sur erreur amplifie la charge au lieu de l'absorber."
+      ],
+      "likelihood": "Moyenne",
+      "impact": "Critique"
+    },
+    "ASI_09": {
+      "business_impact": "L'abus ne vise pas le système mais l'abonné. Un agent portant la marque de l'opérateur est cru par construction : une consigne de paiement ou un lien fourni par lui a une force de conviction qu'un canal tiers n'a pas. Le préjudice est subi par le client et imputé à l'opérateur.",
+      "affected_assets": [
+        "Canal client de marque (application, web, messagerie)",
+        "Parcours de paiement et mobile money",
+        "Communications sortantes générées par un agent",
+        "Réputation et confiance dans la marque"
+      ],
+      "threat_scenarios": [
+        "L'agent relaie des coordonnées de paiement modifiées (détournement de virement).",
+        "Pression à l'urgence ou usurpation d'un interlocuteur prioritaire pour obtenir une dérogation.",
+        "Diffusion d'un lien de vérification d'identité contrôlé par l'attaquant.",
+        "L'agent s'attribue une autorité (juridique, technique) qu'il n'a pas."
+      ],
+      "likelihood": "Élevée",
+      "impact": "Élevé"
+    },
+    "ASI_10": {
+      "business_impact": "Le risque n'est pas l'écart initial mais sa persistance : l'agent poursuit un objectif modifié sans attaquant présent. La détection est tardive parce que le comportement reste cohérent et plausible.",
+      "affected_assets": [
+        "Agents autonomes à exécution longue",
+        "Agents à objectif auto-défini ou planificateurs",
+        "Tâches planifiées sans validation humaine",
+        "Agents disposant d'un budget d'action"
+      ],
+      "threat_scenarios": [
+        "L'agent réécrit son objectif et le conserve pour les sessions suivantes.",
+        "Suppression de la condition d'arrêt : l'agent continue d'agir sans borne.",
+        "Optimisation d'un indicateur contre l'intention de l'opérateur (reward hacking).",
+        "Propagation de l'objectif corrompu à d'autres agents."
+      ],
+      "likelihood": "Faible",
+      "impact": "Élevé"
+    }
   }
 }

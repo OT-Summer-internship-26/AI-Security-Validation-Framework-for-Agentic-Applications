@@ -510,16 +510,16 @@ Toute décision non évidente doit être commentée directement dans le code :
 
 | # | Livrable | Fichier(s) | Statut |
 |---|---|---|---|
-| 1 | Étude OWASP Top 10 Agentic 2026 | config/owasp_knowledge_base.json | ⬜ |
-| 2 | Cartographie des menaces | config/threat_mapping.json | ⬜ |
-| 3 | Base de connaissances structurée | config/owasp_knowledge_base.json | ⬜ |
-| 4 | Framework d'audit réutilisable | api/ + workflow/ + docker-compose.yml | ⬜ |
-| 5 | 10 agents spécialisés OWASP | agents/asi01 → asi10 | ⬜ |
-| 6 | Jeux de tests et scénarios d'attaque | Tests validés sur DVAP | ⬜ |
-| 7 | Système de scoring des risques | workflow/scoring.py | ⬜ |
-| 8 | Rapports de sécurité automatisés | reporting/ | ⬜ |
-| 9 | Catalogue de recommandations | docs/security_best_practices.md | ⬜ |
-| 10 | Documentation complète | README.md + docs/ + CI/CD | ⬜ |
+| 1 | Étude OWASP Top 10 Agentic 2026 | config/owasp_knowledge_base.json + docs/agentic_architecture_analysis.md | ✅ |
+| 2 | Cartographie des menaces | config/threat_mapping.json | ✅ (à valider par l'encadrant) |
+| 3 | Base de connaissances structurée | config/owasp_knowledge_base.json | ✅ |
+| 4 | Framework d'audit réutilisable | api/ + workflow/ + scripts/run_audit_global.py | ✅ |
+| 5 | 10 agents spécialisés OWASP | agents/asi01 → asi10 | ✅ (chacun ≥ 1 run réel) |
+| 6 | Jeux de tests et scénarios d'attaque | runs DVAP dans data/audit_results/ | ⬜ suite pytest absente |
+| 7 | Système de scoring des risques | workflow/scoring.py | ✅ |
+| 8 | Rapports de sécurité automatisés | reporting/ + dashboard/ | ✅ |
+| 9 | Catalogue de recommandations | docs/security_best_practices.md (généré) | ✅ |
+| 10 | Documentation complète | README.md + docs/integration_guide.md + .github/workflows/ | ✅ |
 
 ---
 
