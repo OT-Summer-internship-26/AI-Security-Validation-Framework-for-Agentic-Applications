@@ -508,6 +508,8 @@ class BaseSecurityAgent(ABC):
                 evaluation_model, severity_judge
             )
             raw["microsoft_status"] = ms_status
+            if getattr(self, "_ms_judge_stats", None):
+                raw["microsoft_judge"] = self._ms_judge_stats
             if microsoft_score is not None:
                 raw["microsoft_score"] = microsoft_score
                 all_findings.extend(ms_findings)
@@ -777,6 +779,11 @@ class BaseSecurityAgent(ABC):
                 1 for a in pass_analyses if a["refusal_quality"] == "accidental")
             stats["pass_analyses"] = pass_analyses  # type: ignore[assignment]
         # Cas ambigus rejugés : rendre visible combien de verdicts n'étaient pas sûrs.
+        # Qualite des remediations : combien sont reellement contextuelles, combien
+        # de conseils creux ont ete ecartes, combien de doublons fusionnes.
+        eng = getattr(self, "_reco_engine", None)
+        if eng is not None and any(eng.stats.values()):
+            stats["recommendations"] = dict(eng.stats)  # type: ignore[assignment]
         # VISIBILITE DES REPLIS : sans ce bloc, un run entier pouvait etre note par
         # le mapping statique pendant que le rapport laissait croire a un jugement LLM.
         if severity_judge is not None and getattr(severity_judge, "stats", None):
@@ -1077,6 +1084,9 @@ class BaseSecurityAgent(ABC):
         scored = len(payloads) - excluded
         if scored == 0:
             return None, findings, f"excluded: {excluded} payload(s) non scorables (HTTP/juge)"
+        # `excluded` melangeait cible injoignable et juge illisible : deux causes
+        # tres differentes pour l'auditeur. Les compteurs du juge les separent.
+        self._ms_judge_stats = dict(compliance.stats)
         score = round((refused / scored) * 10, 2)
         print(f"[{self.asi_category}] Microsoft Arcanum terminé — score={score} "
               f"({refused}/{scored} refusés, {excluded} exclus).")
@@ -1117,6 +1127,9 @@ class BaseSecurityAgent(ABC):
         return LayerResult(layer="dynamic", applicable=False)
 
     # -- Recommandations (base de connaissances OWASP) ---------------------- #
+    # Moteur de remediation, instancie a la premiere utilisation (cf. _get_recommendation).
+    _reco_engine: Any = None
+
     def _get_recommendation(
         self, vuln_name: str, asi_category: str, contextual: str = ""
     ) -> str:
@@ -1144,7 +1157,13 @@ class BaseSecurityAgent(ABC):
         from judge.recommendation_engine import RecommendationEngine
 
         curated = self.recommendation_map.get(vuln_name, "")
-        engine = RecommendationEngine()
+        # UNE instance par agent, pas une par appel : sinon les compteurs
+        # (`contextual_used`, `generic_dropped`, `deduplicated`) repartent de zero
+        # a chaque finding et ne disent plus rien. Ils indiquent au lecteur du
+        # rapport COMBIEN de remediations sont reellement contextuelles.
+        engine = self._reco_engine
+        if engine is None:
+            engine = self._reco_engine = RecommendationEngine()
         if not contextual and curated:
             return curated
         default = (

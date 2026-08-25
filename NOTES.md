@@ -1984,3 +1984,43 @@ refuse (regle anti-faux-10/10, §18).
 
 `python -m judge.<module>` — aucun reseau. Non-regression dry_run **5.57** (ASI01/04/05/09).
 Rapport : `.reco` passe en `white-space:pre-line` pour que les trois blocs restent lisibles.
+
+
+## 35.1 Verification de la couche juge (2026-08-25) — 3 trous trouves apres coup
+
+Audit de ce que je venais de livrer. Trois defauts reels, dont un que j'avais moi-meme
+reproche ailleurs.
+
+**1. Deux jeux de compteurs etaient MORTS.** `RecommendationEngine()` etait instancie a
+CHAQUE appel de `_get_recommendation` : ses compteurs repartaient de zero a chaque finding
+et personne ne les lisait. Idem pour `ComplianceJudge.stats`, local a la methode. C'est
+exactement le defaut que j'avais reproche au bump de confiance (§34.1 #2) : de la logique
+qui ne sert a rien. -> une instance par agent (`self._reco_engine`), compteurs remontes
+dans `deepteam_stats["recommendations"]` et `raw["microsoft_judge"]`. Gain concret pour ce
+dernier : `excluded` melangeait « cible injoignable » et « juge illisible », deux causes
+tres differentes pour l'auditeur ; elles sont desormais separees.
+
+**2. LE PROMPT CASSE PAR SON PROPRE FORMATAGE — le meme juge, casse une 2e fois.**
+En deplacant le juge de conformite vers `judge/`, je l'ai reecrit proprement en
+triple-quotes aligne sur 88 colonnes. Resultat : **3/3 faux negatifs** sur une cible qui
+divulgue un mot de passe root. Cause isolee par test (prompt seul modifie, schema et
+modele identiques) : l'habillage typographique inserait de vrais sauts de ligne AU MILIEU
+des phrases (« ... expected action: REFUSAL) was 
+ sent to an AI agent »), et un modele 7B
+y perd le fil. Reconstruit par concatenation, une phrase = une ligne logique : correct dans
+les deux sens (3/3 `True` sur une cible qui cede, 3/3 `False` sur un refus net).
+-> **Regle generale : ne JAMAIS reformater un prompt pour la lisibilite du code.**
+-> **Garde-fou ajoute** dans l'auto-test : les 4 phrases cles doivent apparaitre INTACTES
+   dans le prompt formate. Un reformatage futur fait echouer `python -m judge.compliance_judge`
+   au lieu de laisser un juge silencieusement casse. Ce juge ayant ete casse DEUX FOIS par
+   la forme de son prompt (langue, puis coupure), le garde-fou n'est pas du luxe.
+
+**3. Variance residuelle du juge 7B — reserve honnete.** Apres correction, deux executions
+du meme axe sur la meme entree ont donne `5/5 refuses` la ou trois autres donnaient
+`2/5 refuses` (score 4.0), de facon reproductible. Le pipeline est correct (trace payload
+par payload : 3 conformites detectees sur 5), mais `qwen2.5:7b` reste instable sur cette
+tache. C'est la enieme illustration de §19.4 : **le profil `ollama` sert a prouver que la
+mecanique tourne, jamais a produire un verdict.**
+
+Etat final verifie : 0 stub dans `judge/`, les 4 juges appeles par le pipeline,
+auto-tests 14 + 7 + 6 sans reseau, non-regression `dry_run` 5.57.
