@@ -8,6 +8,7 @@ import { API_BASE } from '@/data/api'
 import { inferMode, targetOf, MODE_LABEL, axesUsed } from '@/data/insights'
 import { evaluateGate, VERDICT_META } from '@/data/gate'
 import { ScoreBar } from '@/components/ScoreBar'
+import { JudgeReliability } from '@/components/JudgeReliability'
 import { RiskBadge, SeverityBadge, ConfidenceBadge } from '@/components/Badges'
 import { AsioRadarChart } from '@/charts/AsioRadarChart'
 import { CategoryBarChart } from '@/charts/CategoryBarChart'
@@ -435,6 +436,10 @@ function AuditDrawer({ audit, onClose }: { audit: Audit; onClose: () => void }) 
             </Section>
           )}
 
+          {/* Fiabilité de la chaîne de jugement : d'où viennent ces gravités,
+              et ce qu'elles valent. Mêmes chiffres que le rapport HTML. */}
+          <JudgeReliability summary={audit.judge_summary} />
+
           {/* Vulnérabilités avec preuve et remédiation */}
           <Section title={`Vulnérabilités (${vulns.length})`}>
             <div className="space-y-2.5">
@@ -447,6 +452,45 @@ function AuditDrawer({ audit, onClose }: { audit: Audit; onClose: () => void }) 
                       {v.asi_category} · {v.layer}
                     </span>
                   </div>
+                  {/* Analyse structurée du juge : la gravité seule ne dit pas CE QUI
+                      s'est passé, ni si le verdict est sûr. */}
+                  {v.judge_detail && (v.judge_detail.agent_behavior || v.judge_detail.fallback) && (
+                    <div className="mt-2.5 rounded-lg border border-border bg-bg-base p-2.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[10px] uppercase tracking-wide text-text-muted">
+                          Analyse du juge
+                        </span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                          v.confidence == null || v.confidence < 80
+                            ? 'bg-red-500/15 text-red-500'
+                            : 'bg-slate-500/15 text-text-muted'}`}>
+                          {v.confidence == null ? 'confiance non annoncée' : `confiance ${v.confidence}%`}
+                        </span>
+                      </div>
+                      {v.judge_detail.fallback ? (
+                        <p className="text-[11px] text-text-muted">
+                          Juge indisponible ({v.judge_detail.fallback}) — gravité issue du
+                          barème statique de la catégorie, non contextualisée.
+                        </p>
+                      ) : (
+                        <dl className="text-[11px] space-y-1">
+                          {([
+                            ["Ce que l'attaque visait", v.judge_detail.attack_intent],
+                            ["Ce que l'agent a fait", v.judge_detail.agent_behavior],
+                            ['Défense en cause', v.judge_detail.guardrail],
+                            ['Impact en production', v.judge_detail.impact],
+                          ] as [string, string | undefined][])
+                            .filter(([, val]) => val)
+                            .map(([k, val]) => (
+                              <div key={k} className="flex gap-2">
+                                <dt className="shrink-0 text-text-muted w-40">{k}</dt>
+                                <dd className="text-text-primary">{val}</dd>
+                              </div>
+                            ))}
+                        </dl>
+                      )}
+                    </div>
+                  )}
                   {v.evidence && (
                     <pre className="code-block p-2.5 mt-2.5 text-[11px] font-mono
                                     whitespace-pre-wrap break-words max-h-28 overflow-auto">

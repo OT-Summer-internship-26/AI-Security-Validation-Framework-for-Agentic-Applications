@@ -214,6 +214,89 @@
       l'étendue du jeu d'attaques. La section 6 recense les angles morts de cette
       évaluation.
     </div>
+
+    {# Fiabilité des verdicts : ce que les juges disent d'EUX-MÊMES. Sans ce bloc,
+       un verdict de modèle se lit comme un fait établi. #}
+    {% set js = judge_summary %}
+    {% if js %}
+    <h3>Fiabilité des verdicts</h3>
+    <p class="small muted">
+      Les gravités de ce rapport sont établies par un juge LLM, puis confrontées à un
+      second passage et au barème curé de la catégorie. Voici ce que cette chaîne dit
+      de sa propre solidité.
+    </p>
+    <table>
+      <thead><tr><th style="width:230px">Contrôle</th><th style="width:110px">Résultat</th>
+        <th>Ce que cela implique</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Gravités établies par le juge</b></td>
+          <td class="num">{{ js.judged }} / {{ js.judged + js.fallbacks }}</td>
+          <td class="muted">
+            {% if js.fallbacks %}
+              {{ js.fallback_pct }} % ont dû retomber sur le barème statique : ces
+              gravités ignorent l'échange observé.
+            {% else %}
+              Toutes les gravités tiennent compte de l'échange réellement observé.
+            {% endif %}
+          </td>
+        </tr>
+        {% if js.cross_validation.triggered %}
+        <tr>
+          <td><b>Verdicts rejugés</b></td>
+          <td class="num">{{ js.cross_validation.triggered }}</td>
+          <td class="muted">
+            {{ js.cross_validation.agreed }} confirmé(s),
+            {{ js.cross_validation.changed }} corrigé(s)
+            {%- if js.cross_validation.unavailable %},
+            {{ js.cross_validation.unavailable }} sans second avis{% endif %}.
+            Déclenché par une confiance basse ou un désaccord avec le barème curé.
+          </td>
+        </tr>
+        {% endif %}
+        {% if js.refusal.robust or js.refusal.partial or js.refusal.accidental %}
+        <tr>
+          <td><b>Qualité des refus</b></td>
+          <td class="num">{{ js.refusal.accidental }} accidentel(s)</td>
+          <td class="muted">
+            {{ js.refusal.robust }} refus de principe · {{ js.refusal.partial }} partiel(s).
+            Un refus accidentel signale une défense fragile qu'une variante mieux
+            formée contournerait.
+          </td>
+        </tr>
+        {% endif %}
+        {% if js.recommendations.contextual_used %}
+        <tr>
+          <td><b>Remédiations contextuelles</b></td>
+          <td class="num">{{ js.recommendations.contextual_used }}</td>
+          <td class="muted">
+            Correctifs déduits de l'échange observé plutôt que du catalogue générique
+            {%- if js.recommendations.generic_dropped %} ·
+            {{ js.recommendations.generic_dropped }} conseil(s) creux écarté(s){% endif %}.
+          </td>
+        </tr>
+        {% endif %}
+        {% if js.microsoft.complied or js.microsoft.refused or js.microsoft.unreadable %}
+        <tr>
+          <td><b>Payloads Arcanum jugés</b></td>
+          <td class="num">{{ js.microsoft.complied }} acceptés</td>
+          <td class="muted">
+            {{ js.microsoft.refused }} refusé(s)
+            {%- if js.microsoft.unreadable %} · {{ js.microsoft.unreadable }} verdict(s)
+            illisible(s), exclus du score plutôt que comptés comme refus{% endif %}.
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+    {% if js.warnings %}
+    <div class="note" style="margin-top:14px">
+      <b>Réserve sur la contre-validation.</b>
+      {% for w in js.warnings %}<div>{{ w }}</div>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="reading"><b>Lecture.</b> {{ js.reading }}</div>
+    {% endif %}
   </section>
 
   <section>

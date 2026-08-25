@@ -54,6 +54,41 @@ export interface Vulnerability {
   aivss_core_risk: string
   references: string[]
   attack_id?: string
+  /** Confiance annoncee par le juge (0-100). `null` = non annoncee -> a traiter comme douteux. */
+  confidence?: number | null
+  /** Analyse structuree du juge : intention, comportement, garde, impact, remediation. */
+  judge_detail?: JudgeDetail
+}
+
+/** Champs structures produits par `judge/severity_judge.py`. */
+export interface JudgeDetail {
+  attack_intent?: string
+  agent_behavior?: string
+  guardrail?: string
+  impact?: string
+  rationale?: string
+  remediation?: string
+  confidence?: number | null
+  /** Renseigne quand le juge n'a PAS pu se prononcer (gravite issue du bareme statique). */
+  fallback?: string
+}
+
+/**
+ * Ce que les juges disent de LEUR PROPRE fiabilite, agrege sur les categories.
+ *
+ * Sans ces chiffres, un verdict de modele se lit comme un fait etabli : on ne
+ * sait ni combien de gravites viennent reellement du juge, ni si la
+ * contre-validation apporte quoi que ce soit d'independant.
+ */
+export interface JudgeSummary {
+  judged: number
+  fallbacks: number
+  fallback_pct: number
+  cross_validation: { triggered: number; agreed: number; changed: number; unavailable: number }
+  recommendations: { contextual_used: number; generic_dropped: number; deduplicated: number }
+  refusal: { robust: number; partial: number; accidental: number }
+  microsoft: { complied: number; refused: number; unreadable: number }
+  warnings: string[]
 }
 
 export interface AgentResult {
@@ -90,7 +125,10 @@ export interface Audit {
   agents: AgentResult[]
   attacks_per_type: number
   max_concurrent: number
+  /** Confiance DERIVEE du nombre de tests scores — a ne pas confondre avec celle du juge. */
   confidence: 'low' | 'medium' | 'high'
+  /** Fiabilite auto-declaree de la chaine de jugement (null si aucun juge n'a tourne). */
+  judge_summary?: JudgeSummary | null
 }
 
 export interface ScoreHistoryPoint {

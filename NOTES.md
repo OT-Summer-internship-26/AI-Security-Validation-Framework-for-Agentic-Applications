@@ -2024,3 +2024,45 @@ mecanique tourne, jamais a produire un verdict.**
 
 Etat final verifie : 0 stub dans `judge/`, les 4 juges appeles par le pipeline,
 auto-tests 14 + 7 + 6 sans reseau, non-regression `dry_run` 5.57.
+
+
+## 35.2 Les resultats des juges arrivent enfin a l'ecran (2026-08-25)
+
+Verification demandee : « est-ce que tout ce que produisent les juges est dans le rapport
+et le dashboard ? » Reponse mesuree : **non**. Le detail PAR FINDING arrivait au rapport,
+mais tout ce que les juges disent de LEUR PROPRE FIABILITE n'allait nulle part.
+
+| Signal | Rapport avant | Dashboard avant | Maintenant |
+|---|---|---|---|
+| `judge_detail` (7 champs) + `remediation` | oui | **non** | les deux |
+| `confidence` du juge | oui | **non** | les deux |
+| Taux de repli sur le bareme statique | **non** | **non** | les deux |
+| Contre-validation + avertissement d'independance | **non** | **non** | les deux |
+| Compteurs du juge de conformite | **non** | **non** | les deux |
+| Qualite des refus | **non** | oui | les deux |
+
+⚠️ Le `confidence` du dashboard etait un AUTRE calcul (heuristique sur le nombre de tests
+scores) : rien n'affichait la confiance du juge. Les deux coexistent desormais, le type le
+documente pour qu'on ne les confonde plus.
+
+**Pourquoi ca comptait.** Une gravite peut venir du juge (elle tient compte de l'echange
+reel) ou du bareme statique de la categorie (elle l'ignore) — et rien ne les distinguait a
+l'ecran. Un verdict de modele se lisait donc comme un fait etabli, exactement l'anti-pattern
+du §18, sur les chiffres memes qui devaient servir a s'en premunir.
+
+**Ce qui a ete construit**
+· `reporting/report_generator.py` -> `build_judge_summary()` agrege les compteurs de toutes
+  les categories + `_judge_reading()` produit la phrase d'interpretation (un chiffre sans
+  lecture ne sert a rien dans un rapport lu par quelqu'un qui n'a pas lu le code).
+· Template : bloc **« Fiabilite des verdicts »** en section 2 (methodologie) — 5 lignes
+  conditionnelles, l'avertissement d'independance en encart, la lecture en bas.
+· Dashboard : type `JudgeSummary` + `JudgeDetail`, `buildJudgeSummary()` dans l'adaptateur
+  (**miroir exact** de la fonction Python — les deux surfaces doivent afficher les MEMES
+  chiffres, sinon l'auditeur ne sait plus laquelle croire), composant `JudgeReliability.tsx`,
+  et l'analyse du juge sous chaque vulnerabilite avec badge de confiance rouge sous 80 %.
+
+Un bloc absent DISPARAIT au lieu d'afficher des zeros trompeurs (les deux implementations
+renvoient vide/null si aucun juge n'a tourne).
+
+Verifie : rendu du rapport (7 marqueurs), `tsc --noEmit` propre, `vite build` OK,
+auto-tests 14 + 7 + 6, non-regression dry_run 5.57.
