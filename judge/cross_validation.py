@@ -242,12 +242,19 @@ class CrossValidator:
         Le verdict n'est jamais PERDU : rien ne déclenche, modèle absent ou second
         passage illisible → verdict d'origine renvoyé tel quel.
         """
-        low_confidence = primary.confidence < self.threshold
+        # `confidence is None` = le modèle n'a rien annoncé. Traité comme DOUTEUX,
+        # jamais comme certain : c'est le sens de sécurité correct, et c'est ce qui
+        # rend ce déclencheur utile face à un modèle qui omet le champ.
+        conf = primary.confidence
+        low_confidence = conf is None or conf < self.threshold
         if self.model is None or not (low_confidence or force):
             return primary, None
 
-        trigger = (f"confiance {primary.confidence}% < {self.threshold}%" if low_confidence
-                   else "désaccord décisionnel avec le mapping curé")
+        if low_confidence:
+            trigger = ("confiance non annoncée" if conf is None
+                       else f"confiance {conf}% < {self.threshold}%")
+        else:
+            trigger = "désaccord décisionnel avec le mapping curé"
         self.stats["triggered"] += 1
         self.stats["by_confidence" if low_confidence else "by_disagreement"] += 1
 

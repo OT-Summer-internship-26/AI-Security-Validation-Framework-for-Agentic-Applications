@@ -73,6 +73,13 @@
   pre{background:var(--panel);border:1px solid var(--line);border-radius:4px;
       padding:11px 13px;font-size:12.5px;line-height:1.5;white-space:pre-wrap;
       word-break:break-word;margin:4px 0 0;max-height:240px;overflow:auto}
+  /* Analyse structuree du juge : une ligne par question, libelle a gauche. */
+  table.judge{width:100%;border-collapse:collapse;margin:6px 0;font-size:13px}
+  table.judge th{text-align:left;vertical-align:top;padding:4px 12px 4px 0;
+                 white-space:nowrap;color:var(--muted);font-weight:600;width:1%;
+                 text-transform:none;letter-spacing:0;font-size:12.5px;border:0}
+  table.judge td{padding:4px 0;vertical-align:top;border:0}
+
   .reco{background:#eaf4ed;border-left:3px solid var(--ok);padding:11px 14px;
         border-radius:0 4px 4px 0;margin-top:12px;font-size:13.5px}
 
@@ -319,6 +326,47 @@
       </div>
       {% if f.evidence %}
       <div class="kv"><div class="k">Preuve observée</div><pre>{{ f.evidence }}</pre></div>
+      {% endif %}
+      {# Analyse structurée du juge : les 4 questions auxquelles un rapport doit
+         répondre. Ces champs existaient déjà côté modèle mais étaient recollés en
+         une phrase ; ils sont désormais affichés séparément, et chacun renvoie au
+         texte réel de l'échange. #}
+      {% set jd = f.judge_detail %}
+      {% if jd and (jd.attack_intent or jd.agent_behavior or jd.guardrail or jd.impact) %}
+      <div class="kv">
+        <div class="k">
+          Analyse du juge
+          {% if f.confidence is not none %}
+            <span class="badge" style="background:{{ '#b91c1c' if f.confidence < 80 else '#64748b' }}">
+              confiance {{ f.confidence }}%</span>
+          {% else %}
+            <span class="badge" style="background:#b91c1c">confiance non annoncée</span>
+          {% endif %}
+        </div>
+        <table class="judge">
+          {% if jd.attack_intent %}
+          <tr><th>Ce que l'attaque visait</th><td>{{ jd.attack_intent }}</td></tr>{% endif %}
+          {% if jd.agent_behavior %}
+          <tr><th>Ce que l'agent a fait</th><td>{{ jd.agent_behavior }}</td></tr>{% endif %}
+          {% if jd.guardrail %}
+          <tr><th>Défense en cause</th><td>{{ jd.guardrail }}</td></tr>{% endif %}
+          {% if jd.impact %}
+          <tr><th>Impact en production</th><td>{{ jd.impact }}</td></tr>{% endif %}
+          {% if jd.rationale %}
+          <tr><th>Motif de la gravité</th><td>{{ jd.rationale }}</td></tr>{% endif %}
+        </table>
+        {% if f.confidence is none or f.confidence < 80 %}
+        <div class="small muted">
+          Verdict peu sûr : à confirmer manuellement avant d'en tirer une décision.
+        </div>
+        {% endif %}
+      </div>
+      {% elif jd and jd.fallback %}
+      {# Le juge ne s'est pas prononcé : la gravité vient du mapping statique. Le
+         dire explicitement, sinon le lecteur croit à une analyse contextuelle. #}
+      <div class="kv"><div class="k">Analyse du juge</div>
+        <div class="small muted">Indisponible ({{ jd.fallback }}) — gravité issue du
+          mapping statique de la catégorie, non contextualisée.</div></div>
       {% endif %}
       {% if f.recommendation %}
       <div class="reco"><b>Remédiation.</b> {{ f.recommendation }}</div>

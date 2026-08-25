@@ -1881,3 +1881,47 @@ Verifie : tolerance de `_normalize` sur 6 cas ; juge en panne -> `fallback` rens
 compteur incremente, log capture ; run reel Ollama sur cible qui cede -> les 7 champs arrivent
 dans `judge_detail`, `confidence=95`, gravite **Critical** (le juge, plus le `High` en dur) ;
 auto-test cross_validation 14/14 ; non-regression dry_run 5.57 (ASI01/ASI05).
+
+
+## 34.4 `severity_judge` — 4 defauts restants corriges (2026-08-25)
+
+Revue honnete apres 34.3 : la partie n'etait pas finie. Quatre defauts, dont un de ma
+propre correction precedente.
+
+**1. `judge_detail` n'etait lu par PERSONNE — correction 34.3 livree a moitie.**
+`grep judge_detail` dans `reporting/ dashboard/ api/` = 0 resultat. J'avais libere les
+7 champs jusqu'au JSON... et ils s'arretaient la : le rapport affichait toujours la
+phrase recollee. J'avais DEPLACE la perte d'information d'un cran en aval, pas supprimee.
+-> `report_template.html` rend desormais un tableau « Analyse du juge » (ce que l'attaque
+visait / ce que l'agent a fait / defense en cause / impact en production / motif de la
+gravite), avec un badge de confiance (rouge sous 80 %) et la mention « a confirmer
+manuellement ». Quand le juge ne s'est pas prononce, le rapport DIT que la gravite vient
+du mapping statique au lieu de laisser croire a une analyse contextuelle.
+
+**2. `confidence` valait 100 par defaut — mauvais sens de securite.**
+Un modele qui OMET le champ etait repute certain a 100 % : l'absence de signal devenait
+le signal le plus fort possible, et le verdict echappait en silence au premier
+declencheur de la contre-validation. -> defaut `None` (= « non annoncee »), traite comme
+DOUTEUX par `cross_validation` (donc reconciliation declenchee), et affiche comme tel.
+Ajout d'un `field_validator` qui BORNE a [0, 100] au lieu de rejeter le verdict entier
+(150 -> 100, -20 -> 0) : un chiffre aberrant ne doit pas faire perdre une analyse
+correcte par ailleurs.
+
+**3. La troncature coupait la FIN — la ou se cachent les fuites.**
+Le juge ne voyait que les 900 premiers caracteres. Une reponse qui refuse poliment sur
+trois paragraphes puis lache une cle en derniere ligne etait jugee sur sa partie
+inoffensive. Incoherent en plus : 1500 sur le chemin Microsoft, 900 sur celui de
+DeepTeam. -> `excerpt()` garde TETE + QUEUE avec la coupure signalee, `EXCERPT_CHARS=1200`
+uniforme pour les deux chemins. Verifie : 2142 car. -> 1233, debut ET fin conserves.
+
+**4. Une qualite de refus inconnue devenait « partial » en silence.**
+`partial` n'est pas une valeur neutre : c'est une AFFIRMATION (« a refusé mais a laissé
+fuir quelque chose »). Un echec de lecture etait donc transforme en constat de securite,
+sans compteur — meme vice que le defaut 3 de 34.3. -> on ne conclut plus (`None`), on
+compte et on logge. Et `passes_analyzed` n'est incremente qu'APRES validation : une
+analyse rejetee n'est pas une analyse.
+
+Verifie : rendu du rapport sur 3 cas (verdict sur / verdict a 45 % / juge indisponible)
+— 9 marqueurs presents ; confiance omise -> None -> reconciliation declenchee ; bornage
+150/-20 ; `excerpt` conserve les deux extremites ; qualite hors echelle -> None + compteur ;
+cross_validation 14/14 ; dry_run 5.57 (ASI01/05/09) ; registre 10/10 ; 0 `print` restant.
