@@ -1804,3 +1804,42 @@ faire pour tout nouvel axe juge par LLM.
    `behavioral_severity_map` devient plus fin.
 
 Auto-test : `python -m judge.cross_validation` (8 chemins, sans reseau).
+
+
+## 34.2 `cross_validation` DURCI (2026-08-25) — trois voix, second avis aveugle, autodiagnostic
+
+Critique de l'utilisateur, fondee : un second avis du MEME modele n'apporte aucune
+information independante, et ecrire « contre-valide » dans un rapport suggere une
+confirmation qui n'existe pas. Le module est CONSERVE et ACTIF, mais durci sur trois axes.
+
+**1. Second avis AVEUGLE.** La version precedente annoncait au second passage qu'un premier
+analyste avait deja tranche et que son verdict etait douteux : c'est un ANCRAGE — on demande
+un avis independant en soufflant qu'il y a un doute. Le second passage ne voit desormais
+aucune trace du premier ; meme contexte, consigne reformulee, avec **citation decisive exigee
+AVANT le verdict** (technique dont le §34 a mesure qu'elle fiabilise les petits modeles).
+
+**2. TROISIEME VOIX : le mapping cure.** Le vrai defaut etait de reconcilier deux voix
+correlees. `behavioral_severity_map` est la seule des trois a ne PAS sortir d'un modele —
+c'est donc elle qui arbitre quand les deux tirages LLM divergent. Table de decision explicite,
+testee, tracee dans le JSON :
+
+| llm_1 vs llm_2 | vs mapping | verdict retenu | regle |
+|---|---|---|---|
+| identiques | d'accord | ce verdict | `unanimous` |
+| identiques | different | le verdict des LLM | `llm_majority` |
+| differents | un des deux == mapping | celui-la | `mapping_arbitrates` |
+| differents | aucun == mapping | le plus grave des 3 | `unstable_escalate` |
+
+**3. AUTODIAGNOSTIC.** `independence_warning()` : si le second avis n'a JAMAIS contredit le
+premier sur >= 5 reconciliations (et qu'aucun `secondary_model` reel n'est branche), le
+rapport affiche que ces verdicts ne sont PAS contre-valides et qu'il faut un second modele.
+Un composant de controle qui ne sait pas signaler sa propre inutilite est pire qu'absent.
+
+**Aussi** : reprise sur sortie illisible (`max_attempts=2` — un petit modele rate parfois le
+schema, abandonner au premier echec perdrait la reconciliation pour une raison technique) ;
+`Reconciliation` dataclass tracee dans `deepteam_stats["cross_validation"]["reconciliations"]`
+(voix, regle, declencheur) pour qu'un audit soit CONTESTABLE sans relire le code.
+
+Verifie : auto-test **14 controles** (`python -m judge.cross_validation`), non-regression
+dry_run 5.57, et run reel Ollama — desaccord decisionnel `mapping=Critical` vs juge `Low`,
+les deux tirages LLM concordent -> regle `llm_majority`, trace complete dans le rapport.

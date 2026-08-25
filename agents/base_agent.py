@@ -763,7 +763,17 @@ class BaseSecurityAgent(ABC):
         # Cas ambigus rejugés : rendre visible combien de verdicts n'étaient pas sûrs.
         cv = getattr(severity_judge, "cross_validator", None)
         if cv is not None and cv.stats["triggered"]:
-            stats["cross_validation"] = dict(cv.stats)  # type: ignore[assignment]
+            block: dict[str, Any] = dict(cv.stats)
+            # Trace rejouable : un lecteur doit pouvoir recompter la decision sans
+            # relire le code (quelles voix, quelle regle, quel declencheur).
+            block["reconciliations"] = cv.reconciliations
+            # AUTODIAGNOSTIC : si le second avis n'a jamais rien contredit, il ne
+            # mesure rien d'independant. Le rapport doit le dire, sinon
+            # "contre-valide" suggere une confirmation qui n'existe pas.
+            warning = cv.independence_warning()
+            if warning:
+                block["independence_warning"] = warning
+            stats["cross_validation"] = block  # type: ignore[assignment]
         stats["records"] = records  # type: ignore[assignment]
         if scored == 0:
             return None, findings, stats

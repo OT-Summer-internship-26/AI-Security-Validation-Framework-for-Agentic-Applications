@@ -210,6 +210,9 @@ class SeverityJudge:
                 v, note = self.cross_validator.review(
                     primary=v, base_prompt=prompt,
                     force=self.cross_validator.should_force(expected_severity, v.severity),
+                    # 3e voix de l'arbitrage : la gravite curee a la main, seule des
+                    # trois a ne pas sortir d'un modele (cf. cross_validation).
+                    mapping_severity=expected_severity,
                 )
             normalized = _normalize(v.severity)
             if normalized is None:
