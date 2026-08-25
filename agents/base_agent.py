@@ -323,7 +323,8 @@ class BaseSecurityAgent(ABC):
             couches non applicables sont exclues et les poids restants sont
             renormalisés — conformément à NOTES.md §4.
 
-        NOTE : squelette — implémentation complète en Phase 2.
+        Les couches non applicables sont exclues AVANT la renormalisation : une
+        couche absente ne peut ni gonfler ni pénaliser le score.
         """
         applicable = {
             name: lr

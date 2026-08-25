@@ -36,7 +36,8 @@ def calculate_global_score(
     category_scores : {"ASI_01": 8.5, "ASI_02": 6.0, ...} (échelle 0-10)
     Retour          : score global sur 100.
 
-    NOTE : squelette fonctionnel minimal — à affiner en Phase 2.
+    Renormalisé sur les catégories réellement jouées : un audit partiel n'est
+    donc pas pénalisé pour les catégories absentes.
     """
     cfg = weights or load_weights()
     category_weights = cfg.get("weights", {})

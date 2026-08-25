@@ -62,7 +62,8 @@ def verdict(severity="High", confidence=95, **kw):
 
 @pytest.mark.parametrize("module", [
     "judge.cross_validation", "judge.recommendation_engine",
-    "judge.compliance_judge", "judge.summary",
+    "judge.compliance_judge", "judge.summary", "judge.tracing",
+    "reporting.comparison",
 ])
 def test_module_self_check(module):
     """Rejoue le `demo()` de chaque module — il ne doit lever aucune assertion.

@@ -276,6 +276,12 @@ def main() -> int:
     # Fiabilite de la chaine de jugement, calculee UNE fois et ecrite dans le JSON.
     # Le rapport et le dashboard la LISENT : aucun des deux ne la recalcule, donc
     # ils ne peuvent pas afficher des chiffres differents sur la meme donnee.
+    # Vide la file LangFuse : sans flush, les dernieres observations meurent avec
+    # le processus. Inerte si le tracage n'est pas configure.
+    from judge.tracing import flush as _flush_traces
+
+    _flush_traces()
+
     from judge.summary import build_judge_summary
 
     judge_summary = build_judge_summary(record["agents"])

@@ -113,9 +113,12 @@ ai_security_framework/
 │   └── asi10_rogue_agents.py          ← Couche comportementale uniquement
 │
 ├── sandbox/                           ← Module d'exécution isolée (pour ASI05)
-│   ├── Dockerfile                     ← Image minimale, non-root, réseau désactivable
-│   ├── executor.py                    ← Wrapper Python — exécute du code dans conteneur éphémère
-│   └── policies.py                    ← Limites : timeout, mémoire, filesystem, réseau
+│   ├── docker_provider.py             ← Conteneur éphémère : --network none, read-only,
+│   │                                     non-root, limites CPU/RAM/PIDs, timeout (§23.1)
+│   ├── sandbox_provider.py            ← ABC + repli sous-processus (base Microsoft AGT)
+│   └── security_skills.py             ← 11 contrôles de scan statique (Microsoft AGT)
+│       (pas de Dockerfile : l'image `python:3.11-slim` est utilisée telle quelle,
+│        les limites sont des drapeaux `docker run` — rien à construire)
 │
 ├── workflow/
 │   ├── __init__.py
@@ -133,7 +136,7 @@ ai_security_framework/
 │   ├── __init__.py
 │   ├── report_generator.py            ← Génère rapport HTML et PDF depuis les résultats
 │   ├── charts.py                      ← Radar chart + bar charts des 10 catégories ASI
-│   ├── comparison.py                  ← Mode comparatif avant/après (amélioration optionnelle)
+│   ├── comparison.py                  ← Mode comparatif avant/après (+ scripts/compare_audits.py)
 │   └── templates/
 │       └── report_template.html       ← Template Jinja2 avec Chart.js intégré
 │
@@ -2115,3 +2118,77 @@ avant Semgrep. Livrable §12 #6 partiellement rempli au passage.
 Verifie : 29 tests passes, `tsc --noEmit` propre, `vite build` OK, une seule definition de
 `build_judge_summary` dans tout le depot, rapport qui lit le champ stocke, et vieux JSON
 qui n'affiche pas le bloc (plutot que des zeros rassurants).
+
+
+## 36. LES PIECES ANNONCEES ET MANQUANTES SONT CONSTRUITES (2026-08-25)
+
+Objectif : TERMINER ce que la doc annonce, avant toute amelioration. Inventaire du §3
+confronte au disque, puis construction des quatre manques reels.
+
+### 36.1 `reporting/comparison.py` — mode avant / apres (seul module absent du §3)
+`compare_audits(avant, apres)` classe chaque vulnerabilite en **corrigee / persistante /
+nouvelle / aggravee / attenuee**. Les fondre en un « -3 vulnerabilites » masquerait le cas
+qui compte : 4 corrigees + 1 nouvelle donnent le meme solde que 3 corrigees, alors que la
+seconde situation est une REGRESSION. Cle d'appariement `(categorie, titre)` : la preuve et
+la formulation du juge changent a chaque run, le titre non.
+
+**Le module refuse de conclure sur du bruit.** Deux runs sur la meme cible inchangee ont
+donne 9,66 et 7,93 (§18) : sous `NOISE_THRESHOLD = 1.8/10`, le verdict dit « ecart
+INFERIEUR au bruit — non concluant », au lieu de presenter du hasard comme un progres.
+Il calcule aussi une **confiance** : `haute` uniquement si SEULS des axes deterministes
+(Garak, statique, sandbox) ont tourne ; sinon `limitee`, avec renvoi vers `judge/replay.py`
+qui rejoue les MEMES attaques.
+CLI : `python scripts/compare_audits.py [AVANT.json APRES.json] [--category ASI_05]`,
+rendu HTML autonome. Auto-test 8 controles.
+
+### 36.2 LangGraph : DEUX VAGUES PARALLELES (§7), enfin conforme
+Le graphe etait sequentiel et son docstring l'assumait comme « optimisation Phase 2 ».
+Fait : ASI01-05 en eventail depuis START, ASI06-10 apres convergence de TOUTE la vague 1,
+puis consolidation.
+· **Pourquoi deux vagues et pas dix noeuds** : le goulot n'est ni le CPU ni le reseau, c'est
+  la CIBLE (~20 s par reponse) et le quota du juge. Dix agents simultanes la saturent, les
+  reponses lentes reviennent en `[HTTP_ERROR]` — donc des tests EXCLUS du scoring. On
+  perdrait en couverture ce qu'on gagnerait en horloge.
+· **Merge concurrent** : `AuditState` porte desormais des reducers (`Annotated` +
+  `_merge_dicts` / `operator.add`). Sans eux, cinq ecritures simultanees sur `results` n'en
+  laisseraient qu'UNE : quatre agents disparaitraient silencieusement du rapport.
+· **Verifie en execution reelle** (dry_run, 10 agents) : `results` 10/10, `scores` 10/10,
+  35 vulnerabilites agregees, score global 55.7/100 — aucune ecriture perdue.
+
+### 36.3 Retry + backoff exponentiel (§7)
+`_run_one` retente `AUDIT_MAX_ATTEMPTS` fois (defaut 2) avec une pause qui DOUBLE
+(`AUDIT_BACKOFF_SECONDS`, defaut 5 s). Motif : un audit dure des heures et la plupart des
+echecs sont TRANSITOIRES (cible saturee, quota atteint sur une minute, coupure reseau) —
+abandonner une categorie entiere sur un incident de quelques secondes coute bien plus cher
+qu'attendre. Le backoff double pour ne pas aggraver une saturation qu'on vient peut-etre de
+provoquer. L'echec definitif reste FAIL-SAFE : score 0, l'audit continue.
+
+### 36.4 Observabilite LangFuse (§2 / §7) — annoncee depuis le debut, 0 ligne de code
+`judge/tracing.py` : chaque appel des juges devient une observation (modele, prompt,
+reponse, duree, role). **Branche a UN SEUL endroit** — `severity_judge.structured()`, par
+ou passent les trois juges : un nouveau juge en beneficie sans rien ajouter.
+**Totalement optionnel et silencieux** : sans `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY`, le module
+est inerte et le framework se comporte exactement comme avant. `auth_check()` au demarrage
+evite d'accumuler des heures d'appels vers un serveur injoignable pour les decouvrir perdus
+a la fin ; `flush()` en fin d'audit, sinon les dernieres observations meurent avec le
+processus. Le traceur n'avale JAMAIS une exception applicative (teste).
+Justification : les deux enquetes de la semaine (juge repondant `False` a tout, prompt casse
+par son formatage) ont du etre menees en rejouant des appels a la main. Tracees, elles se
+lisaient dans un tableau de bord.
+
+### 36.5 Ecarts doc/code corriges
+· §3 annoncait `sandbox/Dockerfile`, `executor.py`, `policies.py` : ces fichiers n'ont jamais
+  existe sous ce nom, mais leur FONCTION est dans `docker_provider.py` (+ `sandbox_provider.py`,
+  `security_skills.py`). Structure corrigee plutot que fichiers vides crees pour faire nombre.
+  Pas de Dockerfile : `python:3.11-slim` est utilisee telle quelle, les limites sont des
+  drapeaux `docker run` — il n'y a rien a construire.
+· `calculate_score` et `calculate_global_score` portaient encore « squelette — Phase 2 »
+  alors que le code est fini : un lecteur aurait cru le scoring inacheve.
+
+**Verifie** : 31 tests pytest, auto-tests 14+7+6+5+4+8, graphe parallele execute de bout en
+bout, CLI de comparaison lancee sur deux audits reels, `dry_run` 5.57 inchange.
+
+### RESTE (dans l'ordre, apres cette etape)
+1. **Audit global 10 categories sur cible reelle** — bloque par la cle Gemini, pas par le code.
+2. Tests hors couche juge : sandbox, scoring, `base_agent` (regles anti-faux-10/10).
+3. Etude de validation DVAP : precision / rappel sur les 15 labs (§26 #4).

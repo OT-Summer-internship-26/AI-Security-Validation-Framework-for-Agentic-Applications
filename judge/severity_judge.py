@@ -209,26 +209,44 @@ def structured(model: Any, prompt: str, schema: type[BaseModel]) -> Any:
 
     Ne lève JAMAIS : toute erreur → None, l'appelant décide du repli.
     """
-    try:
-        resp, _cost = model.generate(prompt, schema=schema)
-        if isinstance(resp, schema):
-            return resp
-        # Le modèle a répondu en texte : extraire le premier objet JSON.
-        import json
-        import re
+    # TRACAGE : branche ICI et nulle part ailleurs. Les trois juges passent par
+    # cette fonction, donc instrumenter ce seul point les couvre tous — et un
+    # nouveau juge en beneficie sans rien ajouter. Inerte sans LangFuse configure.
+    from judge.tracing import timed
 
-        match = re.search(r"\{.*\}", str(resp), re.DOTALL)
-        if not match:
+    with timed(_trace_role(schema), model, prompt) as span:
+        try:
+            resp, _cost = model.generate(prompt, schema=schema)
+            span.response = resp
+            return _parse_structured(resp, schema)
+        except Exception as exc:  # jamais bloquant
+            logger.warning("sortie structurée indisponible (%s) : %s", schema.__name__, exc)
             return None
-        data = json.loads(match.group(0))
-        # Seuls les champs du schéma sont retenus (un modèle bavard en ajoute).
-        return schema(**{k: v for k, v in data.items() if k in schema.model_fields})
-    except Exception as exc:  # jamais bloquant
-        # LOGGER et non print : au milieu des centaines de lignes de DeepTeam, un
-        # print se noie — et surtout l'API et le dashboard ne lisent que le JSON,
-        # donc ils ne voyaient JAMAIS ces échecs. L'appelant les compte en plus.
-        logger.warning("sortie structurée indisponible (%s) : %s", schema.__name__, exc)
+
+
+def _trace_role(schema: type[BaseModel]) -> str:
+    """Nom lisible du role du juge, pour retrouver l'appel dans le tableau de bord."""
+    return {"SeverityVerdict": "severity", "PassAnalysis": "pass_analysis",
+            "ComplianceVerdict": "compliance"}.get(schema.__name__, schema.__name__)
+
+
+def _parse_structured(resp: Any, schema: type[BaseModel]) -> Any:
+    """Convertit la réponse du modèle en instance du schéma, ou None.
+
+    Le repli JSON existe parce qu'un modèle ignore parfois la sortie structurée et
+    répond en texte libre : abandonner là perdrait un verdict pourtant lisible.
+    """
+    if isinstance(resp, schema):
+        return resp
+    import json
+    import re
+
+    match = re.search(r"\{.*\}", str(resp), re.DOTALL)
+    if not match:
         return None
+    data = json.loads(match.group(0))
+    # Seuls les champs du schéma sont retenus (un modèle bavard en ajoute).
+    return schema(**{k: v for k, v in data.items() if k in schema.model_fields})
 
 
 class SeverityJudge:

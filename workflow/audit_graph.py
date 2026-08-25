@@ -8,10 +8,10 @@ agrège toutes les vulnérabilités, et renvoie un `AuditState`.
 
 FAIL-SAFE : un agent qui plante → score 0 pour sa catégorie, les autres continuent.
 
-`build_audit_graph()` construit le StateGraph LangGraph équivalent (nœuds séquentiels →
-consolidation) pour l'intégration workflow (§7). Le parallélisme 2-vagues reste une
-optimisation Phase 2 (nécessite des reducers d'état concurrents ; le séquentiel est
-correct et suffisant, et limite la charge simultanée sur la cible + les LLM-as-Judge).
+`build_audit_graph()` construit le StateGraph LangGraph en DEUX VAGUES PARALLÈLES
+(§7) : ASI01-05, puis ASI06-10, puis consolidation. Le merge concurrent repose sur les
+reducers d'`AuditState`. `run_audit()` reste le point d'entrée séquentiel recommandé
+quand la cible ne supporte pas cinq conversations simultanées.
 
 REGISTRE : seuls les agents PRODUCTION-READY sont enregistrés (ASI01→ASI05).
 ASI06→ASI10 seront ajoutés à leur construction (une ligne dans AGENT_REGISTRY).
@@ -19,6 +19,8 @@ ASI06→ASI10 seront ajoutés à leur construction (une ligne dans AGENT_REGISTR
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -65,21 +67,48 @@ def _build_callback(target_url: str, cfg: dict[str, Any]):
     )
 
 
+# Reprise sur échec (NOTES.md §7). Deux tentatives, pause doublée entre chaque.
+MAX_ATTEMPTS = int(os.environ.get("AUDIT_MAX_ATTEMPTS", "2"))
+BACKOFF_SECONDS = float(os.environ.get("AUDIT_BACKOFF_SECONDS", "5"))
+
+
 def _run_one(category: str, target_callback, agent_config: dict[str, Any]) -> Any:
-    """Exécute UN agent de façon fail-safe → AgentResult (jamais d'exception propagée)."""
+    """Exécute UN agent de façon fail-safe → AgentResult (jamais d'exception propagée).
+
+    REPRISE SUR ÉCHEC
+        Un audit dure des heures et la plupart des échecs sont TRANSITOIRES : cible
+        momentanément saturée, quota LLM atteint sur une minute, coupure réseau.
+        Abandonner une catégorie entière sur un incident de quelques secondes coûte
+        beaucoup plus cher que d'attendre. On retente donc `MAX_ATTEMPTS` fois avec
+        un backoff exponentiel — la pause double à chaque essai, pour ne pas
+        aggraver une saturation qu'on vient peut-être de provoquer.
+
+        L'échec définitif reste FAIL-SAFE : score 0 pour cette catégorie, l'audit
+        continue. Un agent ne peut jamais emporter les autres (§7).
+    """
     from agents.base_agent import AgentResult
 
     cls = AGENT_REGISTRY.get(category)
     if cls is None:
         return AgentResult(asi_category=category, name=category,
                            status="failed", error="catégorie non enregistrée")
-    try:
-        agent = cls(target_callback=target_callback, config=agent_config)
-        return agent.run()
-    except Exception as exc:  # fail-safe : un agent ne crashe jamais l'audit global
-        print(f"[workflow] {category} a échoué : {exc}")
-        return AgentResult(asi_category=category, name=getattr(cls, "name", category),
-                           score=0.0, status="failed", error=str(exc))
+
+    last_error = ""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            agent = cls(target_callback=target_callback, config=agent_config)
+            return agent.run()
+        except Exception as exc:  # fail-safe : un agent ne crashe jamais l'audit
+            last_error = str(exc)
+            print(f"[workflow] {category} a échoué (tentative {attempt}/{MAX_ATTEMPTS}) : {exc}")
+            if attempt < MAX_ATTEMPTS:
+                pause = BACKOFF_SECONDS * (2 ** (attempt - 1))
+                print(f"[workflow] nouvelle tentative dans {pause:.0f}s…")
+                time.sleep(pause)
+
+    return AgentResult(asi_category=category, name=getattr(cls, "name", category),
+                       score=0.0, status="failed",
+                       error=f"{last_error} (après {MAX_ATTEMPTS} tentatives)")
 
 
 def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
@@ -152,9 +181,31 @@ def build_audit_graph():
         graph.add_node(cat, _make_node(cat))
     graph.add_node("consolidate", _consolidate)
 
-    graph.add_edge(START, cats[0])
-    for a, b in zip(cats, cats[1:]):
-        graph.add_edge(a, b)
-    graph.add_edge(cats[-1], "consolidate")
+    # DEUX VAGUES PARALLÈLES (NOTES.md §7), et pas dix nœuds en parallèle.
+    #
+    # POURQUOI DEUX VAGUES ET NON TOUT D'UN COUP
+    #     Le goulot d'étranglement n'est ni le CPU ni le réseau : c'est la CIBLE
+    #     (un agent LLM qui répond en ~20 s) et le quota du juge. Lancer dix agents
+    #     ensemble sature la cible, fait exploser les timeouts, et les réponses
+    #     lentes reviennent en `[HTTP_ERROR]` — donc des tests EXCLUS du scoring.
+    #     On y perdrait en couverture ce qu'on gagnerait en horloge. Deux vagues de
+    #     cinq gardent la charge tenable tout en divisant la durée.
+    #
+    #     La barrière entre les deux vagues est implicite : `consolidate` (et la
+    #     vague 2) n'attendent pas un ordre, mais la CONVERGENCE des arêtes —
+    #     LangGraph ne déclenche un nœud que lorsque tous ses prédécesseurs ont fini.
+    #
+    #     Le merge concurrent est assuré par les reducers d'`AuditState`
+    #     (`workflow/state.py`) : sans eux, cinq écritures simultanées sur `results`
+    #     n'en laisseraient qu'une, et quatre agents disparaîtraient du rapport.
+    wave1, wave2 = cats[:5], cats[5:]
+
+    for cat in wave1:
+        graph.add_edge(START, cat)          # la vague 1 démarre en éventail
+    for cat in wave2:
+        for previous in wave1:
+            graph.add_edge(previous, cat)   # la vague 2 attend TOUTE la vague 1
+    for cat in (wave2 or wave1):
+        graph.add_edge(cat, "consolidate")  # consolidation après la dernière vague
     graph.add_edge("consolidate", END)
     return graph
