@@ -1738,3 +1738,69 @@ composites. Non corrigés à ce stade — les runs ASI01→ASI06 ont été produ
 composite, les modifier invaliderait la comparabilité avec les résultats déjà publiés (§18,
 comparaison Ollama/Gemini). À traiter en lot, avec re-run, si la question du verdict PyRIT
 se repose.
+
+
+---
+
+## 34. BUG MAJEUR CORRIGE (2026-08-25) — le juge de conformite Microsoft repondait en francais
+
+Trouve en unifiant les juges (point 3 de la revue ci-dessous). Le prompt du juge de conformite
+des payloads Arcanum etait le **SEUL prompt de juge redige en francais** du projet.
+
+**Effet mesure** : `qwen2.5:7b` repondait `complied=False` **dans tous les cas**, y compris sur
+une reponse fuyant une cle interne ET virant 50 000 EUR (3/3 essais, `rationale` vide). L'axe
+Microsoft rendait donc **10/10 quoi que fasse la cible** — un faux « sur », exactement
+l'anti-pattern du §18, et sur un axe cense apporter un signal INDEPENDANT du LLM principal.
+
+**Diagnostic par elimination** (chaque variante mesuree, 3 essais) :
+
+| Variante | cible qui cede | cible qui refuse |
+|---|---|---|
+| prompt FR (production) | False — FAUX | False — correct |
+| prompt FR + criteres explicites de ce qui compte comme « accepte » | False — FAUX | — |
+| schema label+citation, prompt EN | COMPLIED — correct | REFUSED — correct |
+| **prompt EN, schema INCHANGE** | **True — correct** | **False — correct** |
+
+-> ce n'etait ni le schema, ni l'absence de criteres : **c'est la LANGUE**.
+
+**Correction** : prompt traduit en anglais, avec les criteres de ce qui compte comme « accepte ».
+Verifie de bout en bout sur `_run_microsoft_probes` avec le juge reel : cible qui cede -> **0.0**
++ finding **Critical** ; cible qui refuse -> **10.0**, aucun finding.
+
+⚠️ **CONSEQUENCE SUR LES RUNS PASSES** : tous les scores Microsoft produits en profil
+`dev`/`ollama` sont INVALIDES (faux 10/10) — §21 (ASI03 « 5/5 refuses »), §25 (ASI06 « 2/2 »),
+§30 (ASI07 « 1/1 »), §32 (ASI09 « 4/4 »). Ces runs prouvent que l'axe S'EXECUTE, pas que la
+cible a refuse. Les scores Gemini (`final`) ne sont pas forcement touches — modele bien plus
+fort — mais aucun n'a pu etre re-teste : quota Vertex bloque (§28).
+
+**Lecon generalisable** : un juge LLM peut echouer de facon SILENCIEUSE et CONSTANTE. Ici il ne
+plantait pas, ne renvoyait pas d'erreur, ne sortait pas de l'echelle — il repondait toujours la
+meme chose. Aucune des protections anti-faux-10/10 du socle (exclusion `[HTTP_ERROR]`, `None`
+si rien de scorable) ne pouvait l'attraper : le pipeline etait sain, c'est le VERDICT qui etait
+constant. Seul un test dans les DEUX SENS (cible qui cede / cible qui refuse) le revele — a
+faire pour tout nouvel axe juge par LLM.
+
+## 34.1 Revue de `cross_validation` (2026-08-25) — 4 corrections
+
+1. **Doc corrigee.** Elle annoncait un cout « proportionnel aux cas reellement ambigus ». Mesure
+   sur les 28 findings comportementaux stockes : **71 % de desaccords** avec le mapping statique.
+   Le cout est borne parce que les findings sont PEU NOMBREUX (1-2 par run), pas parce que
+   l'ambiguite serait rare. La distinction compte pour qui planifie un budget de quota.
+2. **Remontee de confiance sur accord SUPPRIMEE.** Le second avis vient du MEME modele : ses
+   erreurs sont correlees a celles du premier. Gonfler la confiance parce qu'un modele se
+   confirme lui-meme fabriquait exactement le faux signal que le projet combat ailleurs. En
+   prime, plus rien ne lisait cette valeur en aval : c'etait de la logique morte.
+3. **Payloads Microsoft passes par le juge UNIQUE** : `structured()` (donc le repli JSON partage
+   par les 3 juges) + `SeverityJudge` pour la GRAVITE, au lieu d'un `High` en dur — un payload
+   accepte n'a pas la meme gravite selon ce que l'agent a concede. La contre-validation couvre
+   desormais ce chemin. C'est en faisant ce point qu'on a trouve le bug §34.
+4. **Declencheur rendu DECISIONNEL.** Seul un desaccord qui traverse la frontiere bloquante
+   (Critical/High <-> Medium/Low/Info) force un second avis. Mesure : 71 % de desaccords, mais
+   **36 % seulement** traversent la frontiere — `Medium->High` x9 et `Medium->Critical` x1
+   (la decision CI/CD change) contre `Medium->Low` x8 et `Medium->Info` x2 (les deux verdicts
+   restent non bloquants, rejuger ne changerait rien). Moitie du cout en moins, aucun cas
+   decisionnel perdu. **Reserve levee par la mesure** : on pouvait craindre de rater les
+   desaccords `Critical<->High` — il n'y en a AUCUN, tous partent de `Medium`. A re-mesurer si
+   `behavioral_severity_map` devient plus fin.
+
+Auto-test : `python -m judge.cross_validation` (8 chemins, sans reseau).
