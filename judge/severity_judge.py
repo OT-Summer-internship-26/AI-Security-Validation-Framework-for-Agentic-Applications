@@ -202,14 +202,14 @@ class SeverityJudge:
             # Second avis sur les verdicts peu sûrs (cf. judge/cross_validation.py).
             note = None
             if self.cross_validator is not None:
-                # Second déclencheur : le verdict du LLM contredit la gravité curée
-                # pour ce type. Signal OBJECTIF, indispensable — la confiance
-                # auto-déclarée reste à 95 % sur les petits modèles (mesuré).
-                disagrees = bool(expected_severity) and _normalize(
-                    expected_severity
-                ) != _normalize(v.severity)
+                # Second déclencheur : le verdict du LLM et la gravité curée ne
+                # tombent pas du même côté de la frontière bloquante. Signal OBJECTIF,
+                # indispensable — la confiance auto-déclarée reste à 95 % sur les
+                # petits modèles (mesuré). La POLITIQUE appartient au cross-validator :
+                # le juge ne connaît pas la frontière de décision du gate.
                 v, note = self.cross_validator.review(
-                    primary=v, base_prompt=prompt, force=disagrees
+                    primary=v, base_prompt=prompt,
+                    force=self.cross_validator.should_force(expected_severity, v.severity),
                 )
             normalized = _normalize(v.severity)
             if normalized is None:
