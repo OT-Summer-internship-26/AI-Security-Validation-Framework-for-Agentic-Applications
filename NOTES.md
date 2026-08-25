@@ -1925,3 +1925,62 @@ Verifie : rendu du rapport sur 3 cas (verdict sur / verdict a 45 % / juge indisp
 — 9 marqueurs presents ; confiance omise -> None -> reconciliation declenchee ; bornage
 150/-20 ; `excerpt` conserve les deux extremites ; qualite hors echelle -> None + compteur ;
 cross_validation 14/14 ; dry_run 5.57 (ASI01/05/09) ; registre 10/10 ; 0 `print` restant.
+
+
+## 35. LA COUCHE JUGE EST COMPLETE (2026-08-25) — 4 juges, tous dans `judge/`
+
+Constat de depart : `judge/__init__.py` annoncait TROIS etages. Deux existaient. Le
+troisieme, `recommendation_engine.py`, etait un stub de 23 lignes levant
+`NotImplementedError` depuis le debut du projet. Et un QUATRIEME juge, celui de
+conformite des payloads Microsoft, vivait enfoui dans `agents/base_agent.py`.
+
+### Ce qui manquait vraiment, et pourquoi ca comptait
+Les remediations etaient **generiques** : `recommendation_map` (une phrase par classe,
+ecrite d'avance) puis 9 puces de la KB. Deux findings de la MEME classe recevaient donc
+le MEME paragraphe — qu'un agent ait divulgue un mot de passe admin ou change de ton.
+Un lecteur ne pouvait pas savoir quoi corriger EN PREMIER, ni ou.
+
+### La decision structurante : AUCUN appel LLM supplementaire
+Le plan §5 prevoyait « generer des recommandations via un LLM » = un appel de plus par
+vulnerabilite. **Ecarte.** Le juge de gravite vient d'etablir QUELLE garde a cede
+(`guardrail`) et quel serait l'impact : il est au meilleur endroit pour dire quoi
+ajouter, et son appel est DEJA paye. -> champ **`remediation` ajoute a `SeverityVerdict`**,
+avec la consigne « nomme LE controle qui aurait arrete CETTE attaque, jamais un conseil
+generique ». Cout marginal : **zero**.
+Verifie en ligne (Ollama, cible qui promeut un admin et divulgue le mot de passe root) :
+« Implement a multi-factor authentication mechanism for administrative actions,
+specifically for role promotions and password resets... at the application level where
+the agent operates. » — cible, pas generique.
+
+### `recommendation_engine.py` — assemble, n'invente pas
+Trois etages, du plus precis au plus general : **Correctif immediat** (verdict du juge) >
+**Controle a mettre en place** (`recommendation_map`) > **Reference OWASP** (guidelines KB).
+Un etage absent est saute ; les trois absents -> consigne generique, c'est-a-dire
+EXACTEMENT le comportement d'avant. Le moteur ne peut donc jamais degrader une
+remediation existante (verifie par test).
+Il REFUSE deux choses : les doublons (comparaison par RADICAUX de 4 caracteres — « signature »
+et « signer » sont le meme controle ecrit deux fois, une egalite de chaines ne les
+rapprocherait pas) et les conseils creux en tete de rapport (« valider les entrees »,
+« moindre privilege » figurent deja dans le catalogue affiche juste en dessous).
+Sans etat, sans reseau -> un rapport reste reproductible et contestable.
+
+### `compliance_judge.py` — le 4e juge rejoint ses pairs
+Il tournait dans `base_agent`. Isole, il ne beneficiait d'AUCUNE de leurs protections —
+et c'est precisement la qu'un prompt en francais a produit un faux 10/10 pendant des
+semaines (§34). Deplace dans `judge/`, il partage desormais `structured()` (repli quand le
+modele repond en texte libre) et `excerpt()` (tete + queue, pour ne pas rater une fuite en
+fin de reponse). Sa question reste BINAIRE — « est-ce arrive » — distincte de celle du juge
+de gravite — « a quel point est-ce grave » : les melanger produirait un juge qui nuance la
+ou il faut trancher. Juge muet -> `None` -> payload EXCLU du scoring, jamais compte comme
+refuse (regle anti-faux-10/10, §18).
+
+### Etat final de la couche
+| Juge | Role | Auto-test |
+|---|---|---|
+| `severity_judge` | gravite contextuelle + explication en 7 champs + remediation | via les autres |
+| `cross_validation` | reconciliation a 3 voix des verdicts douteux | 14 controles |
+| `recommendation_engine` | assemblage de la remediation | 7 controles |
+| `compliance_judge` | l'agent a-t-il cede, oui ou non | 5 controles |
+
+`python -m judge.<module>` — aucun reseau. Non-regression dry_run **5.57** (ASI01/04/05/09).
+Rapport : `.reco` passe en `white-space:pre-line` pour que les trois blocs restent lisibles.

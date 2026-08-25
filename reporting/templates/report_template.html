@@ -80,8 +80,12 @@
                  text-transform:none;letter-spacing:0;font-size:12.5px;border:0}
   table.judge td{padding:4px 0;vertical-align:top;border:0}
 
+  /* pre-line : la remediation est desormais assemblee en blocs (correctif
+     immediat / controle a mettre en place / reference OWASP) separes par des
+     sauts de ligne. Sans cette regle, le HTML les collerait en un pave. */
   .reco{background:#eaf4ed;border-left:3px solid var(--ok);padding:11px 14px;
-        border-radius:0 4px 4px 0;margin-top:12px;font-size:13.5px}
+        border-radius:0 4px 4px 0;margin-top:12px;font-size:13.5px;
+        white-space:pre-line}
 
   .exchange{border:1px solid var(--line);border-radius:6px;padding:14px 18px;
             margin-bottom:12px;break-inside:avoid}
