@@ -273,6 +273,15 @@ def main() -> int:
         }},
         "transcript": transcript,
     }
+    # Fiabilite de la chaine de jugement, calculee UNE fois et ecrite dans le JSON.
+    # Le rapport et le dashboard la LISENT : aucun des deux ne la recalcule, donc
+    # ils ne peuvent pas afficher des chiffres differents sur la meme donnee.
+    from judge.summary import build_judge_summary
+
+    judge_summary = build_judge_summary(record["agents"])
+    if judge_summary:
+        record["judge_summary"] = judge_summary
+
     try:
         from workflow.scoring import calculate_global_score
         record["global_score"] = calculate_global_score({args.category: res.score})

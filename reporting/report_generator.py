@@ -30,6 +30,7 @@ import os
 from datetime import datetime
 from typing import Any
 
+from judge.summary import build_judge_summary
 from reporting.interpretation import (
     build_breaches,
     build_resilience,
@@ -135,100 +136,6 @@ def _collect_findings(audit: dict[str, Any]) -> list[dict[str, Any]]:
         refs = f.get("references") or []
         f["references"] = refs if isinstance(refs, list) else [refs]
     return findings
-
-
-def build_judge_summary(audit: dict[str, Any]) -> dict[str, Any]:
-    """Agrege ce que les juges disent DE LEUR PROPRE FIABILITE, toutes categories.
-
-    POURQUOI CE BLOC EXISTE
-        Le rapport montrait le verdict de chaque finding, mais rien sur la
-        confiance qu'on peut lui accorder. Or les juges produisent exactement ce
-        signal : combien de gravites viennent reellement du LLM et combien du
-        mapping statique, combien de verdicts ont ete rejuges, et si le second
-        avis apporte quoi que ce soit d'independant. Sans ces chiffres, un lecteur
-        prend un verdict de modele pour un fait etabli — l'anti-pattern du §18.
-
-    Renvoie un dict vide si aucun agent n'a de statistiques de juge : le bloc
-    disparait alors du rapport au lieu d'afficher des zeros trompeurs.
-    """
-    judged = fallbacks = 0
-    cv = {"triggered": 0, "agreed": 0, "changed": 0, "unavailable": 0}
-    reco = {"contextual_used": 0, "generic_dropped": 0, "deduplicated": 0}
-    refusal = {"robust": 0, "partial": 0, "accidental": 0}
-    ms = {"complied": 0, "refused": 0, "unreadable": 0}
-    warnings: list[str] = []
-
-    for cat, agent in (audit.get("agents") or {}).items():
-        raw = ((agent.get("layers") or {}).get("behavioral") or {}).get("raw") or {}
-        stats = raw.get("deepteam_stats") or {}
-
-        jstats = stats.get("judge") or {}
-        judged += int(jstats.get("judged", 0) or 0)
-        fallbacks += sum(int(v or 0) for k, v in jstats.items() if k.startswith("fallback_"))
-
-        block = stats.get("cross_validation") or {}
-        for k in cv:
-            cv[k] += int(block.get(k, 0) or 0)
-        if block.get("independence_warning"):
-            warnings.append(f"{cat.replace('_', '')} : {block['independence_warning']}")
-
-        for k in reco:
-            reco[k] += int((stats.get("recommendations") or {}).get(k, 0) or 0)
-        for k in refusal:
-            refusal[k] += int(stats.get(f"pass_refusal_{k}", 0) or 0)
-        for k in ms:
-            ms[k] += int((raw.get("microsoft_judge") or {}).get(k, 0) or 0)
-
-    total = judged + fallbacks
-    if not total and not cv["triggered"] and not sum(refusal.values()):
-        return {}
-
-    return {
-        "judged": judged,
-        "fallbacks": fallbacks,
-        "fallback_pct": round(100 * fallbacks / total) if total else 0,
-        "cross_validation": cv,
-        "recommendations": reco,
-        "refusal": refusal,
-        "microsoft": ms,
-        "warnings": warnings,
-        # Lecture prete a afficher : un chiffre sans interpretation ne sert a rien
-        # dans un rapport destine a quelqu'un qui n'a pas lu le code.
-        "reading": _judge_reading(judged, fallbacks, total, cv, refusal, warnings),
-    }
-
-
-def _judge_reading(judged: int, fallbacks: int, total: int,
-                   cv: dict[str, int], refusal: dict[str, int],
-                   warnings: list[str]) -> str:
-    """Phrase d'interpretation du bloc de fiabilite."""
-    parts: list[str] = []
-    if total:
-        pct = round(100 * judged / total)
-        parts.append(
-            f"{judged} gravite(s) sur {total} ont ete etablies par le juge contextuel "
-            f"({pct} %)."
-            + (f" Les {fallbacks} autres viennent du mapping statique de la categorie : "
-               "elles ne tiennent pas compte de l'echange observe."
-               if fallbacks else "")
-        )
-    if cv["triggered"]:
-        parts.append(
-            f"{cv['triggered']} verdict(s) ont ete rejuges (confiance basse ou desaccord "
-            f"avec le mapping) : {cv['agreed']} confirme(s), {cv['changed']} corrige(s)"
-            + (f", {cv['unavailable']} sans second avis" if cv["unavailable"] else "") + "."
-        )
-    acc = refusal.get("accidental", 0)
-    tot_ref = sum(refusal.values())
-    if tot_ref:
-        parts.append(
-            f"Sur {tot_ref} attaque(s) resistee(s) analysee(s), {refusal.get('robust', 0)} "
-            f"l'ont ete par un refus de principe et {acc} par un refus accidentel"
-            + (" — une variante mieux formee passerait probablement." if acc else ".")
-        )
-    if warnings:
-        parts.append("ATTENTION : " + " ".join(warnings))
-    return " ".join(parts)
 
 
 def _collect_evidence(audit: dict[str, Any], limit: int = 6) -> list[dict[str, Any]]:
@@ -380,7 +287,10 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         "findings": findings,
         "blocking_count": blocking,
         "evidence": _collect_evidence(audit),
-        "judge_summary": build_judge_summary(audit),
+        # Calcule UNE fois par `judge.summary` et ecrit dans le JSON d'audit ;
+        # on le relit ici. Le recalculer ferait diverger rapport et dashboard.
+        "judge_summary": audit.get("judge_summary")
+        or build_judge_summary(audit.get("agents")),
         "limits": _build_limits(audit),
         "radar": build_radar_data(cat_scores),
         "radar_reading": interpret_radar(cat_scores),

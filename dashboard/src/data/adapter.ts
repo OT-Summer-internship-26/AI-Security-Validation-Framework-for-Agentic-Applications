@@ -58,6 +58,8 @@ interface RawAgent {
   vulnerabilities?: RawVuln[]
 }
 export interface RawAudit {
+  /** Resume de fiabilite des juges, calcule par `judge/summary.py`. */
+  judge_summary?: unknown
   audit_id?: string
   timestamp?: string
   target_url?: string
@@ -200,66 +202,6 @@ function pendingAgent(category: string, name: string): AgentResult {
   }
 }
 
-/** Convertit un fichier d'audit réel en `Audit` exploitable par les pages. */
-/**
- * Agrege ce que les juges disent DE LEUR PROPRE FIABILITE.
- *
- * Miroir exact de `build_judge_summary()` dans `reporting/report_generator.py` :
- * le rapport PDF et le dashboard doivent afficher les MEMES chiffres, sinon
- * l'auditeur ne sait plus lequel croire.
- *
- * Renvoie `null` si aucun juge n'a tourne — le bloc disparait alors de l'ecran
- * au lieu d'afficher des zeros trompeurs.
- */
-function buildJudgeSummary(rawAgents: Record<string, RawAgent>): JudgeSummary | null {
-  const s: JudgeSummary = {
-    judged: 0, fallbacks: 0, fallback_pct: 0,
-    cross_validation: { triggered: 0, agreed: 0, changed: 0, unavailable: 0 },
-    recommendations: { contextual_used: 0, generic_dropped: 0, deduplicated: 0 },
-    refusal: { robust: 0, partial: 0, accidental: 0 },
-    microsoft: { complied: 0, refused: 0, unreadable: 0 },
-    warnings: [],
-  }
-  const num = (o: Record<string, unknown> | undefined, k: string) =>
-    typeof o?.[k] === 'number' ? (o[k] as number) : 0
-
-  for (const [cat, agent] of Object.entries(rawAgents || {})) {
-    const raw = (agent?.layers?.behavioral?.raw || {}) as Record<string, unknown>
-    const stats = (raw.deepteam_stats || {}) as Record<string, unknown>
-
-    const j = (stats.judge || {}) as Record<string, unknown>
-    s.judged += num(j, 'judged')
-    for (const [k, v] of Object.entries(j)) {
-      if (k.startsWith('fallback_') && typeof v === 'number') s.fallbacks += v
-    }
-
-    const cv = (stats.cross_validation || {}) as Record<string, unknown>
-    for (const k of ['triggered', 'agreed', 'changed', 'unavailable'] as const) {
-      s.cross_validation[k] += num(cv, k)
-    }
-    if (typeof cv.independence_warning === 'string') {
-      s.warnings.push(`${cat.replace('_', '')} : ${cv.independence_warning}`)
-    }
-
-    const reco = (stats.recommendations || {}) as Record<string, unknown>
-    for (const k of ['contextual_used', 'generic_dropped', 'deduplicated'] as const) {
-      s.recommendations[k] += num(reco, k)
-    }
-    for (const k of ['robust', 'partial', 'accidental'] as const) {
-      s.refusal[k] += num(stats, `pass_refusal_${k}`)
-    }
-    const ms = (raw.microsoft_judge || {}) as Record<string, unknown>
-    for (const k of ['complied', 'refused', 'unreadable'] as const) {
-      s.microsoft[k] += num(ms, k)
-    }
-  }
-
-  const total = s.judged + s.fallbacks
-  s.fallback_pct = total ? Math.round((100 * s.fallbacks) / total) : 0
-  const nothing = !total && !s.cross_validation.triggered &&
-    !(s.refusal.robust + s.refusal.partial + s.refusal.accidental)
-  return nothing ? null : s
-}
 
 
 export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
@@ -303,6 +245,10 @@ export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
     attacks_per_type: 0,
     max_concurrent: 0,
     confidence,
-    judge_summary: buildJudgeSummary(rawAgents),
+    // LU depuis le JSON d'audit, pas recalcule : `judge/summary.py` est la seule
+    // implementation. Une seconde, en TypeScript, aurait diverge des le premier
+    // compteur ajoute — et les deux surfaces auraient affiche des chiffres
+    // differents sur la meme donnee.
+    judge_summary: (raw.judge_summary as JudgeSummary | undefined) ?? null,
   }
 }

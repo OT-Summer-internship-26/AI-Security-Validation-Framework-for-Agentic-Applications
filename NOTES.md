@@ -2066,3 +2066,52 @@ renvoient vide/null si aucun juge n'a tourne).
 
 Verifie : rendu du rapport (7 marqueurs), `tsc --noEmit` propre, `vite build` OK,
 auto-tests 14 + 7 + 6, non-regression dry_run 5.57.
+
+
+## 35.3 CORRECTION D'UN DEFAUT DE CONCEPTION QUE J'AVAIS PRESENTE COMME UNE QUALITE
+
+Critique de l'utilisateur : « ce n'est pas professionnel, la construction n'est pas
+solide ». Verifiee, fondee, sur quatre points.
+
+**1. J'avais ecrit la MEME agregation deux fois — et je l'avais vantee.**
+62 lignes en Python (`report_generator`) + 49 en TypeScript (`adapter.ts`), presentees
+comme un « miroir exact ». Ce n'est pas de la rigueur, c'est une bombe a retardement :
+le premier ajout de compteur n'aurait ete fait que d'un cote, rien ne detecte la
+divergence, et les deux surfaces auraient affiche des chiffres differents sur la meme
+donnee. C'est exactement l'anti-pattern que ce projet combat partout ailleurs.
+
+**CORRECTION** : le calcul vit desormais dans **`judge/summary.py`**, a un SEUL endroit,
+et son resultat est **ECRIT DANS LE JSON d'audit** par `run_agent.py` et
+`run_audit_global.py`. Le rapport le lit, le dashboard le lit. Les 49 lignes TS sont
+SUPPRIMEES ; les 94 lignes du generateur aussi. Repli conserve pour les audits produits
+avant ce changement (le generateur recalcule si le champ manque).
+Pourquoi dans `judge/` et pas dans `reporting/` : ce sont les compteurs des juges, le
+generateur de rapport n'a pas a connaitre leurs cles internes.
+
+**2. Dix fichiers connaissaient les memes cles de stats en dur.** Un renommage de
+`pass_refusal_robust` cassait quatre fichiers en silence. Les cles sont maintenant des
+constantes de `judge/summary.py` (`CV_KEYS`, `RECO_KEYS`, `REFUSAL_KEYS`, `MS_KEYS`).
+
+**3. L'agregation qui alimente le rapport ET le dashboard n'etait testee NULLE PART.**
+Les modules juges avaient des `demo()`, pas elle. Verifiee une fois a la main, avec un
+JSON trafique.
+
+**4. Et surtout : RIEN NE TOURNAIT TOUT SEUL.** `tests/` etait vide. La « solidite »
+reposait sur quelqu'un qui pense a taper trois commandes — or le juge de conformite a ete
+casse DEUX FOIS dans la meme journee, la seconde en le « rangeant », precisement parce
+qu'aucun garde ne tournait entre les deux.
+
+**CORRECTION** : `tests/test_judge.py` — **29 tests, 0 reseau, 0 LLM** (modeles factices,
+donc executable en CI sur une machine sans Ollama ni cle). Il rejoue les `demo()` des 4
+modules ET verrouille les INVARIANTS : juge muet -> jamais de gravite inventee, replis
+comptes, confiance absente traitee comme douteuse, gravite hors echelle toleree, extrait
+tete+queue, frontiere de decision, reconciliation qui ne perd jamais un verdict,
+autodiagnostic d'independance, remediation jamais degradee, **prompt de conformite intact**
+(le garde-fou des deux cassages), resume vide quand aucun juge, survie a un vieux JSON,
+et `dry_run == 5.57` sur trois agents.
+**Branche dans `.github/workflows/security_audit.yml`** : `pytest tests/ -q` a chaque PR,
+avant Semgrep. Livrable §12 #6 partiellement rempli au passage.
+
+Verifie : 29 tests passes, `tsc --noEmit` propre, `vite build` OK, une seule definition de
+`build_judge_summary` dans tout le depot, rapport qui lit le champ stocke, et vieux JSON
+qui n'affiche pas le bloc (plutot que des zeros rassurants).

@@ -54,6 +54,16 @@ jobs:
           # Le framework complet n'est pas nécessaire : la CI n'exécute que
           # les axes déterministes.
 
+      # Suite hors-ligne : aucun LLM, aucun reseau. Elle doit tourner a CHAQUE
+      # PR, sinon les garde-fous des juges ne valent que par la memoire de qui
+      # pense a les lancer — et ce juge a deja ete casse deux fois entre deux runs.
+      - name: Tests unitaires (couche juge, hors-ligne)
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          pip install pytest pydantic
+          python -m pytest tests/ -q
+
       - name: Analyse statique — Semgrep
         id: semgrep
         continue-on-error: true

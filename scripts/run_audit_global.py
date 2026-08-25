@@ -112,6 +112,11 @@ def main() -> int:
             record["transcript"] += per_agent.get("transcript", [])
 
         # Consolidation APRÈS CHAQUE agent : le fichier global est toujours à jour.
+        from judge.summary import build_judge_summary
+
+        js = build_judge_summary(record["agents"])
+        if js:
+            record["judge_summary"] = js
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
         record["global_score"] = calculate_global_score(scores)
         record["risk_level"] = get_risk_level(record["global_score"])
