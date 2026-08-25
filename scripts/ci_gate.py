@@ -130,6 +130,21 @@ def evaluate(audit: dict, policy: dict) -> tuple[str, list[dict], dict]:
         if not crit_block and not crit_warn:
             rules.append({"effect": "ok", "label": "Aucune vulnérabilité Critical retenue"})
 
+    # ── Confiance du juge : un blocage ne doit pas passer pour certain s'il ne l'est pas.
+    # On ne DEBLOQUE jamais sur une confiance basse (ce serait ouvrir une porte), on
+    # SIGNALE : le lecteur doit savoir que la decision repose sur un verdict fragile.
+    shaky = [v for v in considered
+             if v.get("severity") in ("Critical", "High")
+             and isinstance(v.get("confidence"), int) and v["confidence"] < 80]
+    if shaky:
+        rules.append({
+            "effect": "warn",
+            "label": (f"{len(shaky)} finding(s) bloquant(s) reposent sur un verdict du juge "
+                      f"a moins de 80% de confiance — a verifier avant d'agir"),
+            "details": [f"{v.get('severity')} · {v.get('title')} "
+                        f"(confiance {v.get('confidence')}%)" for v in shaky[:5]],
+        })
+
     # ── Règle 2 : budget de findings High, réglable ──
     budget = int(policy.get("max_high_findings", 3))
     if counts["High"] > budget:

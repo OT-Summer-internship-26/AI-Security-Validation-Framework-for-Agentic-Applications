@@ -265,6 +265,8 @@ def main() -> int:
                 "title": v.title, "severity": v.severity, "layer": v.layer,
                 "evidence": getattr(v, "evidence", ""),
                 "recommendation": getattr(v, "recommendation", ""),
+                "confidence": getattr(v, "confidence", None),
+                "judge_detail": getattr(v, "judge_detail", {}) or {},
                 "aivss_core_risk": getattr(v, "aivss_core_risk", ""),
                 "references": getattr(v, "references", []) or [],
             } for v in res.vulnerabilities],

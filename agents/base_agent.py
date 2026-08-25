@@ -84,6 +84,12 @@ class Vulnerability:
     aivss_core_risk: str = ""
     references: list[str] = field(default_factory=list)
     attack_scenarios: list[dict[str, str]] = field(default_factory=list)
+    # Confiance du juge (0-100) et champs structures de son verdict. Avant, les 7
+    # champs demandes au modele etaient recolles en une phrase et perdus : le
+    # rapport ne pouvait ni les decouper ni les trier, et le gate CI/CD ne voyait
+    # pas qu'un blocage Critical reposait parfois sur un verdict a 30%.
+    confidence: int | None = None
+    judge_detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -708,13 +714,15 @@ class BaseSecurityAgent(ABC):
                 self.behavioral_severity_map.get(vtype_str)
                 or self.behavioral_severity_map.get(vuln_name, "Medium")
             )
-            judged_sev, judged_rat = (None, None)
+            judged_sev, judged_rat, judge_detail, judge_conf = (None, None, {}, None)
             if severity_judge is not None:
-                judged_sev, judged_rat = severity_judge.judge(
+                jr = severity_judge.judge(
                     title=vuln_name, vuln_type=vtype_str, attack_method=attack_method,
                     evidence=evidence, asi_category=self.asi_category, asi_name=self.name,
                     attack_prompt=attack_prompt, expected_severity=static_sev,
                 )
+                judged_sev, judged_rat = jr.severity, jr.text
+                judge_detail, judge_conf = jr.as_dict(), jr.confidence
             severity = judged_sev or static_sev
             sev_note = (
                 f" | Analyse du juge (gravité={severity}, statique={static_sev}) — {judged_rat}"
@@ -728,6 +736,8 @@ class BaseSecurityAgent(ABC):
                     asi_category=self.asi_category,
                     title=vuln_name,
                     severity=severity,
+                    confidence=judge_conf,
+                    judge_detail=judge_detail,
                     description=(
                         f"Type: {vtype_str} | Attaque: {attack_method} "
                         f"| Raison: {getattr(tc, 'reason', '') or ''}{sev_note}"
@@ -761,6 +771,12 @@ class BaseSecurityAgent(ABC):
                 1 for a in pass_analyses if a["refusal_quality"] == "accidental")
             stats["pass_analyses"] = pass_analyses  # type: ignore[assignment]
         # Cas ambigus rejugés : rendre visible combien de verdicts n'étaient pas sûrs.
+        # VISIBILITE DES REPLIS : sans ce bloc, un run entier pouvait etre note par
+        # le mapping statique pendant que le rapport laissait croire a un jugement LLM.
+        if severity_judge is not None and getattr(severity_judge, "stats", None):
+            js = dict(severity_judge.stats)
+            js["fallback_rate"] = severity_judge.fallback_rate()
+            stats["judge"] = js  # type: ignore[assignment]
         cv = getattr(severity_judge, "cross_validator", None)
         if cv is not None and cv.stats["triggered"]:
             block: dict[str, Any] = dict(cv.stats)
@@ -1053,16 +1069,17 @@ class BaseSecurityAgent(ABC):
             # chemin Microsoft, qui en était privé (deux juges, deux comportements).
             # Juge absent ou verdict hors échelle → on retombe sur « High », la
             # valeur historique : ce chemin ne peut pas perdre de finding.
-            severity, judged_rat = ("High", "")
+            severity, judged_rat, ms_detail, ms_conf = ("High", "", {}, None)
             if severity_judge is not None:
-                js, jr = severity_judge.judge(
+                jres = severity_judge.judge(
                     title=str(p.get("name", "")), vuln_type="microsoft_payload",
                     attack_method=f"Payload Arcanum · {p.get('name')}",
                     evidence=text, attack_prompt=prompt,
                     asi_category=self.asi_category, asi_name=self.name,
                     expected_severity="High",
                 )
-                severity, judged_rat = (js or "High"), (jr or "")
+                severity, judged_rat = (jres.severity or "High"), (jres.text or "")
+                ms_detail, ms_conf = jres.as_dict(), jres.confidence
             _log(p, prompt, text, "compromised",
                  judged_rat or rat or "Payload ACCEPTÉ par l'agent.")
             findings.append(
@@ -1070,6 +1087,8 @@ class BaseSecurityAgent(ABC):
                     asi_category=self.asi_category,
                     title=f"{self.microsoft_finding_title}: {p.get('name')}",
                     severity=severity,
+                    confidence=ms_conf,
+                    judge_detail=ms_detail,
                     description=(
                         f"Payload Arcanum-Sec « {p.get('name')} » (source {p.get('source')}) "
                         f"ACCEPTÉ par l'agent. {rat}"

@@ -1843,3 +1843,41 @@ schema, abandonner au premier echec perdrait la reconciliation pour une raison t
 Verifie : auto-test **14 controles** (`python -m judge.cross_validation`), non-regression
 dry_run 5.57, et run reel Ollama — desaccord decisionnel `mapping=Critical` vs juge `Low`,
 les deux tirages LLM concordent -> regle `llm_majority`, trace complete dans le rapport.
+
+
+## 34.3 `severity_judge` DURCI (2026-08-25) — 4 pertes d'information corrigees
+
+Fil commun des quatre defauts : **on produisait de l'information, puis on la perdait en route.**
+
+**1. Les 7 champs du verdict etaient ecrases en une phrase.** `SeverityVerdict` demande 7 champs
+separes et son docstring annonce « pour que le rapport les affiche en sections » — mais
+`judge()` renvoyait `(severity, texte)` et `_format_verdict()` recollait tout avec des ` | `.
+Preuve : `grep attack_intent|agent_behavior|guardrail` hors du fichier = **0 resultat**. On
+payait le prix d'une sortie structuree (fragile sur un petit modele) sans en toucher le
+benefice. -> nouvelle dataclass **`JudgeResult`** (`severity`, `text`, `verdict`, `fallback`)
+et `as_dict()` ; les champs vont desormais jusque dans `Vulnerability.judge_detail`, donc dans
+le JSON d'audit et le rapport.
+
+**2. `confidence` ne servait qu'a s'afficher.** Seuls le declencheur de `cross_validation` et
+la ligne de texte le lisaient ; **le gate CI/CD ne le voyait pas**. Un `Critical` a 30 % de
+confiance bloquait un deploiement exactement comme un `Critical` a 95 %. -> `Vulnerability.confidence`
++ regle dans `scripts/ci_gate.py` : un finding bloquant sous 80 % est SIGNALE (jamais debloque —
+on n'ouvre pas une porte sur une incertitude, on previent le lecteur).
+
+**3. Un verdict mal orthographie faisait taire le juge SANS BRUIT.** `_normalize` exigeait une
+egalite stricte : « HIGH - data leak » ou « Severity: Critical » -> `None` -> repli silencieux
+sur le mapping statique. Rien ne le comptait : un run entier pouvait etre note par le mapping
+pendant que le rapport laissait croire a un jugement LLM. Meme famille que le bug §34 — un
+echec silencieux et constant. -> `_normalize` tolere une gravite PRESENTE dans la chaine
+(parcours du plus grave au moins grave, pour ne jamais sous-evaluer), et
+`SeverityJudge.stats` + `fallback_rate()` comptent chaque repli, remontes dans
+`deepteam_stats["judge"]`.
+
+**4. Les echecs partaient dans `print()`.** Noyes dans les centaines de lignes de DeepTeam, et
+surtout INVISIBLES pour l'API et le dashboard qui ne lisent que le JSON. -> `logging` (capturable,
+filtrable) + comptage dans les stats. Plus aucun `print` dans le fichier.
+
+Verifie : tolerance de `_normalize` sur 6 cas ; juge en panne -> `fallback` renseigne,
+compteur incremente, log capture ; run reel Ollama sur cible qui cede -> les 7 champs arrivent
+dans `judge_detail`, `confidence=95`, gravite **Critical** (le juge, plus le `High` en dur) ;
+auto-test cross_validation 14/14 ; non-regression dry_run 5.57 (ASI01/ASI05).
