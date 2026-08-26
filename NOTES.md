@@ -2192,3 +2192,34 @@ bout, CLI de comparaison lancee sur deux audits reels, `dry_run` 5.57 inchange.
 1. **Audit global 10 categories sur cible reelle** — bloque par la cle Gemini, pas par le code.
 2. Tests hors couche juge : sandbox, scoring, `base_agent` (regles anti-faux-10/10).
 3. Etude de validation DVAP : precision / rappel sur les 15 labs (§26 #4).
+
+
+## 36.6 LangGraph — bug de merge trouve en verifiant, et non pas en codant (2026-08-25)
+
+Question posee : « langgraph est fait ? ». Verification plutot que reponse — et elle a
+sorti un bug que ma propre verification de la veille avait pris pour une reussite.
+
+**LE BUG.** Chaque noeud renvoyait l'etat COMPLET (`{**state.results, cat: res}`,
+`state.vulnerabilities + res.vulns`). C'etait correct en sequentiel. Avec des noeuds
+PARALLELES et un reducer `operator.add`, chacun des cinq noeuds de la vague 2 repartait de
+l'etat contenant deja les vulnerabilites de la vague 1 et les renvoyait — le reducer
+concatenait donc **cinq copies** de la vague 1. Resultat : **35 vulnerabilites au lieu de
+10**. J'avais lu ce 35 comme une preuve que l'agregation fonctionnait.
+
+**LA CORRECTION.** Un noeud ne renvoie plus que son DELTA (`{cat: res}`) : c'est
+exactement le role des reducers. Verifie contre le chemin sequentiel, qui n'a jamais eu de
+merge concurrent : **10 categories · 10 vulnerabilites · 55.7/100 des deux cotes**.
+
+**LE TEST QUI L'AURAIT ATTRAPE** est desormais dans la suite
+(`test_graphe_parallele_equivaut_au_sequentiel`) : il compare les deux chemins
+d'orchestration. Un chiffre gonfle ne peut plus passer pour un succes, parce qu'il n'est
+plus lu seul — il est confronte a une reference.
+
+**Docstring corrige** : `build_audit_graph` decrivait encore « un noeud par agent
+(sequentiel) […] correct sans reducer concurrent ». Il decrivait le contraire du code.
+
+**ETAT REEL DE LANGGRAPH** : le graphe est construit, compile, s'execute et donne le meme
+resultat que le chemin sequentiel. Mais **rien ne l'appelle** : `run_audit_global.py` et
+l'API passent par des sous-processus `run_agent.py` (fail-safe + persistance incrementale).
+LangGraph est donc FONCTIONNEL mais HORS du chemin d'execution par defaut — a dire tel quel,
+puisque le §1 annonce une orchestration LangGraph.

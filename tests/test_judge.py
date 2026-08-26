@@ -257,6 +257,31 @@ def test_dry_run_stable(module, classe):
     assert agent.run().score == 5.57
 
 
+def test_graphe_parallele_equivaut_au_sequentiel():
+    """Les deux chemins d'orchestration doivent donner le MEME resultat.
+
+    POURQUOI CE TEST EXISTE
+        Les noeuds paralleles renvoyaient l'etat COMPLET au lieu de leur seule
+        ecriture. Le reducer `operator.add` concatenait donc, pour chaque noeud de
+        la vague 2, les vulnerabilites deja produites par la vague 1 : 35 au lieu
+        de 10. Le chiffre gonfle passait pour une reussite. Seule la comparaison
+        avec le chemin sequentiel — qui n'a jamais eu de merge concurrent — le
+        revele.
+    """
+    from workflow.audit_graph import build_audit_graph, run_audit
+    from workflow.state import AuditState
+
+    config = {"llm_profile": "dry_run"}
+    seq = run_audit("http://cible-factice/chat", config)
+    out = build_audit_graph().compile().invoke(
+        AuditState(target_url="http://cible-factice/chat", target_config=config))
+    get = (lambda k: out[k] if isinstance(out, dict) else getattr(out, k))
+
+    assert len(get("results")) == len(seq.results) == 10, "une ecriture a ete perdue"
+    assert len(get("vulnerabilities")) == len(seq.vulnerabilities), "doublons au merge"
+    assert get("global_score") == seq.global_score
+
+
 def test_echelle_de_gravite_ordonnee():
     """L'ordre décroissant est une PRÉCONDITION de `_rank` et de l'escalade."""
     assert ALLOWED_SEVERITIES == ("Critical", "High", "Medium", "Low", "Info")

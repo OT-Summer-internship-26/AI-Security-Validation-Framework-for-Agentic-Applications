@@ -148,11 +148,15 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
 
 
 def build_audit_graph():
-    """Construit un StateGraph LangGraph : un nœud par agent (séquentiel) → consolidation.
+    """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (§7).
 
-    Chaque nœud lit l'état courant et renvoie un état ÉTENDU (merge manuel des dicts) →
-    correct sans reducer concurrent (nœuds chaînés, pas parallèles). `run_audit()` reste
-    le point d'entrée recommandé ; ce graph existe pour l'intégration workflow (§7).
+    Chaque nœud ne renvoie QUE sa propre écriture ; ce sont les reducers d'`AuditState`
+    qui fusionnent les écritures concurrentes. Renvoyer l'état complet fonctionnerait
+    aussi, mais masquerait le rôle des reducers — donc la raison pour laquelle des
+    nœuds parallèles ne s'écrasent pas entre eux.
+
+    `run_audit()` reste le point d'entrée SÉQUENTIEL, à préférer quand la cible ne
+    supporte pas cinq conversations simultanées.
     """
     from langgraph.graph import END, START, StateGraph
 
@@ -162,10 +166,13 @@ def build_audit_graph():
         def _node(state: AuditState) -> dict[str, Any]:
             cb = _build_callback(state.target_url, state.target_config)
             res = _run_one(cat, cb, {**state.target_config, "target_url": state.target_url})
+            # Seulement le DELTA : les reducers d'AuditState fusionnent. Renvoyer
+            # `{**state.results, ...}` recopierait l'etat de depart de chaque noeud
+            # parallele et rendrait invisible ce qui protege des ecritures perdues.
             return {
-                "results": {**state.results, cat: res},
-                "scores": {**state.scores, cat: float(res.score)},
-                "vulnerabilities": state.vulnerabilities + list(res.vulnerabilities),
+                "results": {cat: res},
+                "scores": {cat: float(res.score)},
+                "vulnerabilities": list(res.vulnerabilities),
             }
         return _node
 
