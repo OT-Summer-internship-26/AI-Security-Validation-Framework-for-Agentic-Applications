@@ -51,6 +51,7 @@ interface RawAgent {
   name?: string
   status?: string
   score?: number
+  measured?: boolean
   duration_seconds?: number
   cost_tokens?: number
   layers?: Record<string, RawLayer>
@@ -141,6 +142,8 @@ function toLayer(key: LayerKey, raw?: RawLayer): LayerResult {
 
 function toAgent(category: string, a: RawAgent, auditId: string): AgentResult {
   const known = ASI_CATEGORIES.find(c => c.id === category)
+  // Une categorie non mesuree ne doit pas s'afficher comme un 0 merite.
+  const measured = a.measured !== false
   const layers = a.layers || {}
 
   const vulnerabilities: Vulnerability[] = (a.vulnerabilities || []).map((v, i) => ({
@@ -178,6 +181,7 @@ function toAgent(category: string, a: RawAgent, auditId: string): AgentResult {
     name: known?.name || a.name || category,
     score: a.score ?? 0,
     status: (a.status as AuditStatus) || 'completed',
+    measured,
     duration_s: a.duration_seconds ?? 0,
     cost_tokens: a.cost_tokens ?? 0,
     layers: {

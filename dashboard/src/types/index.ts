@@ -92,6 +92,9 @@ export interface JudgeSummary {
 }
 
 export interface AgentResult {
+  /** `false` => aucune couche exploitable : le score 0 n'est PAS un verdict et la
+   *  categorie est exclue du score global. */
+  measured?: boolean
   asi_category: string
   name: string
   score: number

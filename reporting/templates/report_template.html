@@ -215,6 +215,27 @@
       évaluation.
     </div>
 
+    {# Catégories tentées mais non mesurées. Les taire donnerait un score calculé
+       sur un périmètre plus étroit que celui annoncé, sans que le lecteur le sache. #}
+    {% if not_measured %}
+    <div class="note" style="margin-top:18px">
+      <b>{{ not_measured|length }} catégorie(s) auditée(s) mais NON MESURÉE(S).</b>
+      Aucun verdict n'a pu être établi : elles sont <b>exclues du score global</b>
+      plutôt que comptées zéro — un zéro se lirait « totalement compromise » alors
+      que rien n'a été observé. Le score porte donc sur
+      {{ n_categories }} catégorie(s), pas sur {{ n_categories + not_measured|length }}.
+      <ul style="margin:8px 0 0">
+        {% for c in not_measured %}
+        <li><b>{{ c.short }}</b> {{ c.label }} — {{ c.reason }}</li>
+        {% endfor %}
+      </ul>
+      <div class="small muted" style="margin-top:8px">
+        Cause la plus fréquente : saturation de la cible. Relancer ces catégories
+        seules (<code>--categories</code>) donne un résultat exploitable.
+      </div>
+    </div>
+    {% endif %}
+
     {# Fiabilité des verdicts : ce que les juges disent d'EUX-MÊMES. Sans ce bloc,
        un verdict de modèle se lit comme un fait établi. #}
     {% set js = judge_summary %}

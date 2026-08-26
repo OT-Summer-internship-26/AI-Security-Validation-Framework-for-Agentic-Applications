@@ -238,10 +238,22 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
     cat_scores: dict[str, float | None] = {}
     per_cat_axes: dict[str, dict[str, float | None]] = {}
     cat_rows: list[dict[str, Any]] = []
+    # Categories TENTEES mais dont aucun verdict n'a pu etre etabli. Les omettre
+    # en silence laisserait croire qu'elles n'ont pas ete auditees ; afficher leur
+    # 0 dirait « totalement compromise » alors que rien n'a ete mesure. On les
+    # sort du score ET on dit pourquoi.
+    not_measured: list[dict[str, Any]] = []
+
     for code, label in ASI_ORDER:
         agent = agents.get(code)
         if not agent or agent.get("status") != "completed":
             cat_scores[code] = None
+            if agent is not None and agent.get("measured") is False:
+                layers = agent.get("layers") or {}
+                raison = next((l.get("error") for l in layers.values() if l.get("error")),
+                              agent.get("error") or "aucune couche exploitable")
+                not_measured.append({"code": code, "short": code.replace("_", ""),
+                                     "label": label, "reason": raison})
             continue
         cat_scores[code] = agent.get("score")
         beh = (agent.get("layers") or {}).get("behavioral") or {}
@@ -284,6 +296,7 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         "duration": _fmt_duration(audit.get("duration_seconds")),
         "categories": cat_rows,
         "n_categories": len(cat_rows),
+        "not_measured": not_measured,
         "findings": findings,
         "blocking_count": blocking,
         "evidence": _collect_evidence(audit),
