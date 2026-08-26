@@ -178,6 +178,13 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     from workflow.audit_graph import consolidate
     from workflow.serialization import build_agent_entry
 
+    # Le thread de reprise est ecrit AVANT le premier agent, pas a la fin.
+    # Sinon il n'existe dans le fichier que si l'audit va jusqu'au bout — donc
+    # jamais dans le cas ou l'on en a besoin : celui ou l'audit a ete interrompu.
+    record["thread_id"] = args.resume or f"audit-{datetime.now():%Y%m%d%H%M%S}"
+    print(f"Thread de reprise : {record['thread_id']}"
+          f"\n  (reprendre avec --resume {record['thread_id']})\n", flush=True)
+
     def persiste(category: str, result) -> None:
         """Ecrit le fichier global des qu'un agent termine.
 
@@ -209,8 +216,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         cfg["requirements_path"] = args.requirements_path
 
     state = run_audit_graph(args.target, cfg, categories=cats,
-                            thread_id=args.resume, on_agent_done=persiste)
-    record["thread_id"] = state.thread_id
+                            thread_id=record["thread_id"], on_agent_done=persiste)
 
     # REPRISE : les agents deja termines ne sont pas rejoues, donc `persiste` n'a
     # pas ete appele pour eux — sans ce comblement, un audit repris produirait un

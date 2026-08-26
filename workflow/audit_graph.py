@@ -341,9 +341,9 @@ def run_audit_graph(
         resuming = bool(done) or bool(snapshot.next)
         if resuming:
             print(f"[workflow] reprise de « {thread} » — {len(done)} catégorie(s) "
-                  f"déjà terminée(s), non rejouée(s)")
+                  f"déjà terminée(s), non rejouée(s)", flush=True)
 
-        print(f"[workflow] LangGraph — 2 vagues parallèles · thread « {thread} »")
+        print(f"[workflow] LangGraph — 2 vagues parallèles · thread « {thread} »", flush=True)
         for update in graph.stream(None if resuming else state, run_config,
                                    stream_mode="updates"):
             for node, delta in (update or {}).items():
