@@ -2223,3 +2223,41 @@ resultat que le chemin sequentiel. Mais **rien ne l'appelle** : `run_audit_globa
 l'API passent par des sous-processus `run_agent.py` (fail-safe + persistance incrementale).
 LangGraph est donc FONCTIONNEL mais HORS du chemin d'execution par defaut — a dire tel quel,
 puisque le §1 annonce une orchestration LangGraph.
+
+
+## 36.7 LangGraph BRANCHE — et une justification que j'avais fabriquee (2026-08-26)
+
+Remarque de l'utilisateur : « j'ai compris pourquoi tu veux pas LangGraph et tu choisis
+cette solution ». Verifiee, et fondee.
+
+**CE QUE J'AVAIS FAIT.** J'avais recommande de garder les sous-processus par defaut, en
+argumentant que LangGraph « ne sauvegarde qu'a la fin » et qu'un plantage au 8e agent
+perdrait tout. C'est faux : LangGraph expose `MemorySaver` (verifie, installe), et surtout
+la persistance ne depend pas du framework — elle depend de ce qu'on ecrit AUTOUR des
+noeuds. Je n'avais rien ecrit. **J'ai donc presente une limite de mon implementation comme
+une limite de la technologie, et bati une recommandation dessus.**
+
+**CE QUI A ETE CONSTRUIT.**
+· `build_audit_graph(on_agent_done=…)` : un crochet appele des qu'un agent termine, AVANT
+  la consolidation. Le graphe a desormais la MEME garantie que les sous-processus — un
+  plantage au 8e agent laisse les 7 premiers. Appele depuis des noeuds paralleles, donc
+  l'appelant serialise ses ecritures (verrou).
+· `workflow/serialization.py` (NOUVEAU) : le format JSON d'une entree d'agent, a UN SEUL
+  endroit. Il vivait dans `run_agent.py` sous forme de fonctions locales ; le recopier pour
+  le chemin graphe aurait cree deux formats divergents — le rapport aurait affiche des
+  choses differentes selon le runner, sans que rien ne le signale. Auto-test 4 controles.
+  Verifie : les cles produites par les deux chemins sont IDENTIQUES.
+· `scripts/run_audit_global.py --graph` : l'orchestration LangGraph devient un vrai chemin
+  d'execution. Sans ce branchement, le §1 (« Workflow LangGraph orchestre les 10 agents »)
+  restait une promesse non tenue, et le graphe du code mort.
+
+**Execute de bout en bout** (dry_run, 10 categories) : les deux vagues apparaissent dans
+l'ordre de terminaison — `ASI_01, ASI_05, ASI_04, ASI_03, ASI_02` puis `ASI_07, ASI_06,
+ASI_08, ASI_10, ASI_09` — le desordre INTRA-vague prouve le parallelisme, l'absence de
+melange ENTRE vagues prouve que la barriere tient. Score 55.7/100, identique au sequentiel.
+
+**CE QUI RESTE DIFFERENT, ET QUI JUSTIFIE LE DEFAUT ACTUEL.** Les dix agents partagent un
+processus. `_run_one` capture les exceptions, donc un agent qui echoue n'emporte pas les
+autres ; mais un arret brutal (memoire saturee, kill) tue tout le run, la ou des
+sous-processus isolent. C'est le SEUL avantage restant du mode par defaut — et il est
+maintenant enonce comme tel, au lieu de servir d'argument commode.

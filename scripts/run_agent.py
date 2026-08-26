@@ -206,47 +206,17 @@ def main() -> int:
         print(f"  [{c}{v.severity:<8}{X}] {v.layer:<11} {v.title}")
 
     # ------------------------------------------------ sauvegarde dashboard --
-    def layer(l):
-        """Sérialise une couche EN CONSERVANT tout son `raw`.
+    # Format UNIQUE (workflow/serialization.py) : le runner en sous-processus et
+    # l'orchestration LangGraph produisent le meme JSON. Deux serialiseurs
+    # divergeraient au premier champ ajoute, et le rapport afficherait des choses
+    # differentes selon le runner — sans que rien ne le signale.
+    from workflow.serialization import build_agent_entry, collect_attacks
 
-        POURQUOI TOUT GARDER
-            L'ancienne version ne sauvait que `score_components` et `deepteam_stats`.
-            Résultat : un axe exclu (PyRIT/Microsoft → None) apparaissait sans AUCUNE
-            explication dans le fichier d'audit — impossible de distinguer « non
-            applicable » de « a échoué ». Les `*_status` sont désormais remontés.
-        """
-        raw_l = l.raw or {}
-        return {
-            "score": l.score, "applicable": l.applicable, "error": l.error,
-            "components": raw_l.get("score_components"),
-            "stats": raw_l.get("deepteam_stats"),
-            "axis_status": {
-                "deepteam": raw_l.get("deepteam_status")
-                            or (f"{(raw_l.get('deepteam_stats') or {}).get('scored', 0)} test(s) scorés"
-                                if raw_l.get("deepteam_stats") else None),
-                "pyrit": raw_l.get("pyrit_status"),
-                "garak": raw_l.get("garak_status"),
-                "microsoft": raw_l.get("microsoft_status"),
-            },
-            "note": raw_l.get("behavioral_note"),
-            "raw": {k: v for k, v in raw_l.items() if k != "garak_raw"},
-        }
-
-    # Attaques AVEC VERDICT, produites par le socle (journal unifié des 4 axes).
-    # Le transcript brut reste disponible à part : c'est une trace réseau, pas un
-    # ensemble de tests notés — le confondre affichait « 0 % d'attaques réussies »
-    # à côté de vulnérabilités Critical.
-    attacks: list[dict] = []
-    for _layer in (beh, sta, dyn):
-        attacks += list((_layer.raw or {}).get("attack_log") or [])
-    if not attacks:
-        attacks = [{
-            "technique": "Échange capturé", "layer": "behavioral", "axis": "DeepTeam",
-            "vulnerability": "", "prompt": e["prompt"], "response": e["response"],
-            "verdict": "excluded", "severity": None,
-            "judge_reason": f"échange #{e['n']} · {e['elapsed_s']}s · non évalué"
-            + (" · [HTTP_ERROR]" if e["http_error"] else ""),
-        } for e in transcript]
+    agent_entry = build_agent_entry(
+        args.category, res, duration_s=dt,
+        attacks=collect_attacks(res, transcript),
+    )
+    agent_entry["name"] = getattr(agent, "name", args.category)
 
     record = {
         "audit_id": f"{args.category}-{datetime.now():%Y%m%d%H%M%S}",
@@ -256,21 +226,7 @@ def main() -> int:
         "global_score": None, "risk_level": None,
         "duration_seconds": int(dt), "cost_tokens": 0, "cost_usd": 0.0,
         "status": res.status,
-        "agents": {args.category: {
-            "name": getattr(agent, "name", args.category), "status": res.status,
-            "score": res.score, "duration_seconds": int(dt), "cost_tokens": 0,
-            "layers": {"behavioral": layer(beh), "static": layer(sta), "dynamic": layer(dyn)},
-            "attacks": attacks,
-            "vulnerabilities": [{
-                "title": v.title, "severity": v.severity, "layer": v.layer,
-                "evidence": getattr(v, "evidence", ""),
-                "recommendation": getattr(v, "recommendation", ""),
-                "confidence": getattr(v, "confidence", None),
-                "judge_detail": getattr(v, "judge_detail", {}) or {},
-                "aivss_core_risk": getattr(v, "aivss_core_risk", ""),
-                "references": getattr(v, "references", []) or [],
-            } for v in res.vulnerabilities],
-        }},
+        "agents": {args.category: agent_entry},
         "transcript": transcript,
     }
     # Fiabilite de la chaine de jugement, calculee UNE fois et ecrite dans le JSON.

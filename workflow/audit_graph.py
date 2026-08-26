@@ -147,13 +147,21 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
     return state
 
 
-def build_audit_graph():
+def build_audit_graph(on_agent_done: Any = None):
     """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (§7).
 
     Chaque nœud ne renvoie QUE sa propre écriture ; ce sont les reducers d'`AuditState`
     qui fusionnent les écritures concurrentes. Renvoyer l'état complet fonctionnerait
     aussi, mais masquerait le rôle des reducers — donc la raison pour laquelle des
     nœuds parallèles ne s'écrasent pas entre eux.
+
+    `on_agent_done(categorie, resultat)` — appelé dès qu'un agent termine, AVANT la
+    consolidation. C'est ce qui donne au graphe la même garantie que les
+    sous-processus : un audit de plusieurs heures ne doit pas tout perdre parce que
+    le processus meurt au huitième agent. Sans ce crochet, l'état ne quitte la
+    mémoire qu'à la fin — ce n'est pas une limite de LangGraph, c'est une limite de
+    ce qu'on écrit autour. Le rappel est fait depuis des nœuds PARALLÈLES : à
+    l'appelant de sérialiser ses écritures (verrou).
 
     `run_audit()` reste le point d'entrée SÉQUENTIEL, à préférer quand la cible ne
     supporte pas cinq conversations simultanées.
@@ -166,6 +174,11 @@ def build_audit_graph():
         def _node(state: AuditState) -> dict[str, Any]:
             cb = _build_callback(state.target_url, state.target_config)
             res = _run_one(cat, cb, {**state.target_config, "target_url": state.target_url})
+            if on_agent_done is not None:
+                try:
+                    on_agent_done(cat, res)
+                except Exception as exc:  # la persistance ne casse jamais l'audit
+                    print(f"[workflow] persistance {cat} ignorée : {exc}")
             # Seulement le DELTA : les reducers d'AuditState fusionnent. Renvoyer
             # `{**state.results, ...}` recopierait l'etat de depart de chaque noeud
             # parallele et rendrait invisible ce qui protege des ecritures perdues.
