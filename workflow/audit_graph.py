@@ -147,7 +147,7 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
     return state
 
 
-def build_audit_graph(on_agent_done: Any = None):
+def build_audit_graph():
     """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (§7).
 
     Chaque nœud ne renvoie QUE sa propre écriture ; ce sont les reducers d'`AuditState`
@@ -155,13 +155,11 @@ def build_audit_graph(on_agent_done: Any = None):
     aussi, mais masquerait le rôle des reducers — donc la raison pour laquelle des
     nœuds parallèles ne s'écrasent pas entre eux.
 
-    `on_agent_done(categorie, resultat)` — appelé dès qu'un agent termine, AVANT la
-    consolidation. C'est ce qui donne au graphe la même garantie que les
-    sous-processus : un audit de plusieurs heures ne doit pas tout perdre parce que
-    le processus meurt au huitième agent. Sans ce crochet, l'état ne quitte la
-    mémoire qu'à la fin — ce n'est pas une limite de LangGraph, c'est une limite de
-    ce qu'on écrit autour. Le rappel est fait depuis des nœuds PARALLÈLES : à
-    l'appelant de sérialiser ses écritures (verrou).
+    Les nœuds sont PURS : ils exécutent un agent et renvoient leur écriture. Aucun
+    effet de bord, aucun crochet — la progression et la persistance sont l'affaire
+    de `run_audit_graph()`, qui consomme le flux de mises à jour. Un nœud qui
+    écrirait lui-même sur disque devrait se protéger d'un verrou (il tourne en
+    parallèle) et deviendrait intestable sans système de fichiers.
 
     `run_audit()` reste le point d'entrée SÉQUENTIEL, à préférer quand la cible ne
     supporte pas cinq conversations simultanées.
@@ -174,11 +172,6 @@ def build_audit_graph(on_agent_done: Any = None):
         def _node(state: AuditState) -> dict[str, Any]:
             cb = _build_callback(state.target_url, state.target_config)
             res = _run_one(cat, cb, {**state.target_config, "target_url": state.target_url})
-            if on_agent_done is not None:
-                try:
-                    on_agent_done(cat, res)
-                except Exception as exc:  # la persistance ne casse jamais l'audit
-                    print(f"[workflow] persistance {cat} ignorée : {exc}")
             # Seulement le DELTA : les reducers d'AuditState fusionnent. Renvoyer
             # `{**state.results, ...}` recopierait l'etat de depart de chaque noeud
             # parallele et rendrait invisible ce qui protege des ecritures perdues.
@@ -229,3 +222,118 @@ def build_audit_graph(on_agent_done: Any = None):
         graph.add_edge(cat, "consolidate")  # consolidation après la dernière vague
     graph.add_edge("consolidate", END)
     return graph
+
+
+# ---------------------------------------------------------------------------- #
+# Orchestration LangGraph — le chemin d'exécution principal (NOTES.md §1 / §7).
+# ---------------------------------------------------------------------------- #
+
+# Types de l'état à autoriser explicitement à la relecture d'un checkpoint.
+# LangGraph bloquera bientôt toute désérialisation non déclarée ; sans cette
+# liste, un audit repris depuis le disque reviendrait vide sans lever d'erreur.
+_CHECKPOINT_TYPES = {
+    ("workflow.state", "AuditState"),
+    ("agents.base_agent", "AgentResult"),
+    ("agents.base_agent", "LayerResult"),
+    ("agents.base_agent", "Vulnerability"),
+}
+# ⚠️ OUBLIER UN SEUL TYPE CASSE LA REPRISE EN SILENCE. Mesuré : sans `AuditState`,
+# LangGraph refusait de relire l'état — il ne levait pas d'erreur, il repartait de
+# zéro et rejouait les dix agents. Le checkpoint existait pourtant, complet.
+
+# Base de reprise. Un fichier, pas une base serveur : l'audit tourne sur un poste.
+CHECKPOINT_DB = os.environ.get(
+    "AUDIT_CHECKPOINT_DB",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "checkpoints.sqlite"),
+)
+
+
+def run_audit_graph(
+    target_url: str,
+    target_config: dict[str, Any] | None = None,
+    categories: list[str] | None = None,
+    thread_id: str | None = None,
+    on_agent_done: Any = None,
+) -> AuditState:
+    """Exécute l'audit via LangGraph : deux vagues parallèles, reprise sur incident.
+
+    CE QUE CE CHEMIN APPORTE PAR RAPPORT À `run_audit()`
+        · **Parallélisme** : cinq agents à la fois au lieu de dix à la suite.
+        · **Reprise** : l'état est écrit dans un checkpoint SQLite. Relancer avec
+          le même `thread_id` NE REJOUE PAS les agents dont l'écriture a été
+          validée. Sur un audit de plusieurs heures, c'est la différence entre
+          reprendre et tout recommencer.
+
+          GRANULARITÉ RÉELLE, MESURÉE (ne pas la surestimer) : LangGraph valide
+          par SUPER-ÉTAPE, pas par nœud. Un processus tué au milieu d'une vague
+          rejoue les agents de CETTE vague ; ceux des vagues déjà validées sont
+          sautés. Test de crash : 8 agents ré-exécutés sur 10, deux sautés.
+          Les RÉSULTATS, eux, ne sont jamais perdus — le consommateur du flux
+          écrit chaque agent terminé sur disque (voir `run_audit_global.py`).
+        · **Progression au fil de l'eau** : `on_agent_done(catégorie, résultat)`
+          est appelé depuis le CONSOMMATEUR du flux, donc dans un seul thread —
+          l'appelant n'a aucun verrou à gérer.
+
+    POURQUOI `stream()` ET PAS UN CROCHET DANS LES NŒUDS
+        Un nœud qui notifie lui-même tourne en parallèle des autres : il faudrait
+        le protéger d'un verrou, et le graphe ne serait plus testable sans effet de
+        bord. `stream(stream_mode="updates")` livre une mise à jour par nœud
+        terminé, dans un seul flux : la sérialisation est offerte par LangGraph.
+
+    thread_id : identifiant de reprise. `None` → nouvel audit (horodaté).
+    """
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    cfg = dict(target_config or {})
+    cats = categories or list(AGENT_REGISTRY.keys())
+    thread = thread_id or f"audit-{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+    os.makedirs(os.path.dirname(CHECKPOINT_DB), exist_ok=True)
+
+    state = AuditState(target_url=target_url, target_config=cfg)
+    run_config = {"configurable": {"thread_id": thread},
+                  # Un audit complet dépasse largement la limite par défaut (25) :
+                  # 10 nœuds + consolidation, plus les reprises éventuelles.
+                  "recursion_limit": 50}
+
+    with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
+        saver.serde = JsonPlusSerializer(allowed_msgpack_modules=_CHECKPOINT_TYPES)
+        graph = build_audit_graph().compile(checkpointer=saver)
+
+        # REPRISE : passer `None` en entrée, et NON un état neuf.
+        #     Fournir un état d'entrée dit à LangGraph « voici le point de départ » :
+        #     il écrase ce qu'il avait mémorisé et rejoue tout. `None` signifie
+        #     « continue là où tu en étais ». Mesuré : avec un état neuf, les dix
+        #     agents étaient rejoués malgré un checkpoint valide — la reprise
+        #     n'existait que sur le papier.
+        snapshot = graph.get_state(run_config)
+        done = (snapshot.values or {}).get("results") or {}
+        resuming = bool(done) or bool(snapshot.next)
+        if resuming:
+            print(f"[workflow] reprise de « {thread} » — {len(done)} catégorie(s) "
+                  f"déjà terminée(s), non rejouée(s)")
+
+        print(f"[workflow] LangGraph — 2 vagues parallèles · thread « {thread} »")
+        for update in graph.stream(None if resuming else state, run_config,
+                                   stream_mode="updates"):
+            for node, delta in (update or {}).items():
+                if node == "consolidate" or not isinstance(delta, dict):
+                    continue
+                for category, result in (delta.get("results") or {}).items():
+                    if on_agent_done is not None:
+                        on_agent_done(category, result)
+
+        final = graph.get_state(run_config).values
+
+    merged = AuditState(target_url=target_url, target_config=cfg)
+    merged.results = final.get("results", {})
+    merged.scores = final.get("scores", {})
+    merged.vulnerabilities = final.get("vulnerabilities", [])
+    merged.global_score = final.get("global_score", 0.0)
+    merged.status = final.get("status", "completed")
+    merged.completed_at = final.get("completed_at")
+    merged.thread_id = thread
+    print(f"[workflow] SCORE GLOBAL : {merged.global_score}/100 — "
+          f"{get_risk_level(merged.global_score)} "
+          f"({len(merged.vulnerabilities)} vulnérabilités, {len(merged.scores)} catégories)")
+    return merged

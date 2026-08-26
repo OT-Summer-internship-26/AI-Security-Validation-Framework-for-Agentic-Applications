@@ -50,5 +50,8 @@ class AuditState:
     vulnerabilities: Annotated[list[Any], operator.add] = field(default_factory=list)
 
     status: str = "running"  # "running" | "completed" | "failed"
+    # Identifiant de reprise LangGraph : relancer avec le meme thread reprend
+    # l'audit la ou il s'est arrete au lieu de tout rejouer.
+    thread_id: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None

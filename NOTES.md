@@ -2261,3 +2261,53 @@ processus. `_run_one` capture les exceptions, donc un agent qui echoue n'emporte
 autres ; mais un arret brutal (memoire saturee, kill) tue tout le run, la ou des
 sous-processus isolent. C'est le SEUL avantage restant du mode par defaut — et il est
 maintenant enonce comme tel, au lieu de servir d'argument commode.
+
+
+## 37. LANGGRAPH DEVIENT L'ORCHESTRATION PRINCIPALE (2026-08-26)
+
+Demande : « on doit implementer une solution LangGraph professionnelle et tres solide ».
+Fait — et la construction a sorti QUATRE defauts que seule la mesure revelait. Aucun ne
+levait d'exception : tous produisaient un chiffre plausible.
+
+### Ce qui a ete construit
+`workflow/audit_graph.py` → **`run_audit_graph()`**, le chemin d'execution principal
+(`scripts/run_audit_global.py` l'utilise PAR DEFAUT ; `--subprocess` reste l'echappatoire).
+· **Parallelisme** : deux vagues (ASI01-05, puis ASI06-10), barriere de convergence.
+· **Reprise** : checkpoint SQLite (`langgraph-checkpoint-sqlite`, installe) +
+  `--resume THREAD_ID`. Un audit interrompu ne rejoue pas les agents deja termines.
+· **Progression** : `stream(stream_mode="updates")` livre une maj par noeud, consommee
+  dans UN SEUL thread — donc aucun verrou cote appelant. Un crochet dans les noeuds
+  aurait impose un verrou et rendu le graphe intestable sans effet de bord.
+· **Noeuds PURS** : ils executent un agent et renvoient leur ecriture, rien d'autre.
+
+### Les quatre defauts trouves EN MESURANT
+1. **Noeuds renvoyant l'etat complet** → le reducer `operator.add` concatenait cinq copies
+   de la vague 1 : **35 vulnerabilites au lieu de 10**. J'avais lu ce 35 comme une preuve
+   que l'agregation marchait. Correction : un noeud ne renvoie que son DELTA.
+2. **Reprise inexistante** : on passait un etat neuf en entree de `stream()`, ce qui dit a
+   LangGraph « voici le point de depart » — il ecrasait le checkpoint et rejouait TOUT.
+   Correction : entree `None` quand un checkpoint existe.
+3. **`AuditState` absent de l'allowlist msgpack** → LangGraph refusait de relire l'etat
+   **en silence** (pas d'erreur, checkpoint vide, dix agents rejoues). Oublier UN type
+   casse la reprise sans le dire.
+4. **Audit repris = fichier vide** : les agents non rejoues ne passaient pas par le
+   consommateur, donc rien n'etait persiste — score **0.0/100**, ce qui se serait lu comme
+   une cible totalement compromise. Correction : comblement depuis l'etat restitue.
+
+### Granularite reelle de la reprise — mesuree, pas supposee
+LangGraph valide **par super-etape**, pas par noeud. Test de crash (`os._exit` en plein
+audit) : **8 agents re-executes sur 10**, deux sautes. Les RESULTATS, eux, ne sont jamais
+perdus : le consommateur du flux ecrit chaque agent termine sur disque. Reprise complete
+verifiee de bout en bout — **10 categories restituees en 1 s au lieu de 11**.
+
+### Ce qui reste different du mode `--subprocess`
+Les dix agents partagent un processus. `_run_one` capture les exceptions (retry + backoff,
+puis fail-safe), donc un agent qui echoue n'emporte pas les autres ; mais un arret brutal
+(OOM, kill) tue tout le run, la ou des sous-processus isolent. C'est le seul avantage
+restant du mode de repli — et il est enonce comme tel.
+
+### Verrouillage
+`tests/test_workflow.py` — **5 tests** qui verrouillent exactement les defauts ci-dessus :
+barriere entre vagues, equivalence graphe/sequentiel, reprise sans re-execution, allowlist
+complete (relecture depuis le disque, objets typés exiges), retry fail-safe.
+**37 tests** au total. `data/checkpoints.sqlite*` ignore par git (etat local).

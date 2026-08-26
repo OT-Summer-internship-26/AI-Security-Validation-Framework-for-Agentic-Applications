@@ -45,3 +45,6 @@ dashboard/.env.local
 node_modules/
 dist/
 .vite/
+
+# Base de reprise LangGraph (etat local, pas un livrable)
+data/checkpoints.sqlite*

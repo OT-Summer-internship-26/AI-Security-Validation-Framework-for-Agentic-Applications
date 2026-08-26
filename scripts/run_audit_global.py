@@ -51,10 +51,13 @@ def main() -> int:
                     help="sous-ensemble, ex. 'ASI_01,ASI_05' (défaut : les 10)")
     ap.add_argument("--source-path", default=None, help="couche statique (ASI02/04/05)")
     ap.add_argument("--requirements-path", default=None, help="pip-audit (ASI04)")
-    ap.add_argument("--graph", action="store_true",
-                    help="orchestration LangGraph : 2 vagues PARALLELES (5 agents a la "
-                         "fois) au lieu d'un sous-processus par categorie. Plus rapide, "
-                         "mais tous les agents partagent le meme processus.")
+    ap.add_argument("--subprocess", action="store_true",
+                    help="orchestration par SOUS-PROCESSUS au lieu de LangGraph : un "
+                         "processus isole par categorie. Plus lent et sans reprise, mais "
+                         "un arret brutal (OOM, kill) n'emporte que l'agent en cours.")
+    ap.add_argument("--resume", metavar="THREAD_ID",
+                    help="reprend un audit interrompu : les agents deja termines ne sont "
+                         "pas rejoues. L'identifiant est affiche au lancement.")
     args = ap.parse_args()
 
     from workflow.audit_graph import AGENT_REGISTRY
@@ -100,7 +103,9 @@ def main() -> int:
 
     t0 = time.time()
 
-    if args.graph:
+    # LangGraph est le chemin par DEFAUT (§1 : « Workflow LangGraph orchestre les
+    # 10 agents »). Les sous-processus restent disponibles pour l'isolation.
+    if not args.subprocess:
         return _run_via_graph(args, cats, record, out, t0)
 
     for i, cat in enumerate(cats, 1):
@@ -142,6 +147,7 @@ def main() -> int:
         print(f"  {cat}  {a.get('score')}/10   {a.get('status')}")
     print(f"\n  SCORE GLOBAL : {record['global_score']}/100 — {record['risk_level']}")
     print(f"  seuil CI/CD 70 → {'PASSE' if record['global_score'] >= 70 else 'BLOQUE'}")
+    record.setdefault("duration_seconds", int(time.time() - t0))
     print(f"  {len(record['agents'])} catégories · {record['duration_seconds']}s")
     print(f"\nEnregistré : {out.relative_to(ROOT)}")
     return 0
@@ -168,29 +174,28 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         (memoire saturee, kill) tue tout le run, la ou des sous-processus isolent.
         C'est le seul avantage restant du mode par defaut.
     """
-    import threading
-
     from judge.summary import build_judge_summary
-    from workflow.audit_graph import build_audit_graph
+    from workflow.audit_graph import run_audit_graph
     from workflow.scoring import calculate_global_score, get_risk_level
     from workflow.serialization import build_agent_entry
-    from workflow.state import AuditState
-
-    verrou = threading.Lock()
 
     def persiste(category: str, result) -> None:
-        # Appele depuis des noeuds PARALLELES : le verrou serialise les ecritures,
-        # sinon deux agents qui terminent en meme temps corrompent le fichier.
-        with verrou:
-            record["agents"][category] = build_agent_entry(category, result)
-            scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
-            record["global_score"] = calculate_global_score(scores)
-            record["risk_level"] = get_risk_level(record["global_score"])
-            record["duration_seconds"] = int(time.time() - t0)
-            out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
-                           encoding="utf-8")
-            print(f"[global] {category} → {result.score}/10 · "
-                  f"cumul {record['global_score']}/100 ({record['risk_level']})", flush=True)
+        """Ecrit le fichier global des qu'un agent termine.
+
+        Appele depuis le CONSOMMATEUR du flux LangGraph, donc dans un seul
+        thread : aucun verrou necessaire. C'est cette ecriture qui garantit que
+        les RESULTATS ne sont jamais perdus, meme pour un agent dont le
+        checkpoint n'a pas ete valide avant un arret brutal.
+        """
+        record["agents"][category] = build_agent_entry(category, result)
+        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
+        record["global_score"] = calculate_global_score(scores)
+        record["risk_level"] = get_risk_level(record["global_score"])
+        record["duration_seconds"] = int(time.time() - t0)
+        out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
+                       encoding="utf-8")
+        print(f"[global] {category} → {result.score}/10 · "
+              f"cumul {record['global_score']}/100 ({record['risk_level']})", flush=True)
 
     cfg = {
         "llm_profile": args.profile, "prompt_field": args.prompt_field,
@@ -205,20 +210,36 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     if args.requirements_path:
         cfg["requirements_path"] = args.requirements_path
 
-    print(f"Orchestration LangGraph — 2 vagues paralleles sur {len(cats)} categories\n")
-    build_audit_graph(on_agent_done=persiste).compile().invoke(
-        AuditState(target_url=args.target, target_config=cfg))
+    state = run_audit_graph(args.target, cfg, categories=cats,
+                            thread_id=args.resume, on_agent_done=persiste)
+    record["thread_id"] = state.thread_id
+
+    # REPRISE : les agents deja termines ne sont pas rejoues, donc `persiste` n'a
+    # pas ete appele pour eux — sans ce comblement, un audit repris produirait un
+    # fichier VIDE et un score 0, ce qui se lirait comme une cible parfaitement
+    # compromise. On recopie depuis l'etat restitue par le checkpoint.
+    for category, result in (state.results or {}).items():
+        if category not in record["agents"]:
+            record["agents"][category] = build_agent_entry(category, result)
+    if state.results:
+        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
+        record["global_score"] = calculate_global_score(scores)
+        record["risk_level"] = get_risk_level(record["global_score"])
 
     record["status"] = "completed"
-    js = build_judge_summary(record["agents"])
-    if js:
-        record["judge_summary"] = js
-    out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
-                   encoding="utf-8")
+    out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+    print(f"\n{'='*70}")
+    for cat, a in record["agents"].items():
+        print(f"  {cat}  {a.get('score')}/10   {a.get('status')}")
     print(f"\n  SCORE GLOBAL : {record['global_score']}/100 — {record['risk_level']}")
     print(f"  seuil CI/CD 70 → {'PASSE' if record['global_score'] >= 70 else 'BLOQUE'}")
-    print(f"\nEnregistre : {out}")
+    record.setdefault("duration_seconds", int(time.time() - t0))
+    print(f"  {len(record['agents'])} catégories · {record['duration_seconds']}s")
+    print(f"\nEnregistré : {out.relative_to(ROOT)}")
     return 0
+
+
 
 
 if __name__ == "__main__":
