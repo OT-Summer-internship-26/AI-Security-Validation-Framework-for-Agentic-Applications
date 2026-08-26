@@ -109,6 +109,49 @@ def test_allowlist_couvre_tous_les_types_de_l_etat(checkpoint_db):
     assert resultat.score > 0 and hasattr(resultat, "vulnerabilities")
 
 
+@pytest.mark.parametrize("demandees,attendues", [
+    (["ASI_01", "ASI_05"], ["ASI_01", "ASI_05"]),          # les deux en vague 1
+    (["ASI_07", "ASI_09"], ["ASI_07", "ASI_09"]),          # les deux en vague 2
+    (["ASI_01", "ASI_08"], ["ASI_01", "ASI_08"]),          # a cheval sur les vagues
+])
+def test_categories_respectees(demandees, attendues):
+    """Le graphe ne doit contenir QUE les categories demandees.
+
+    Le bug qu'il attrape : le parametre etait accepte et ignore en silence.
+    `--categories ASI_01,ASI_05` lancait les DIX — des heures et du quota LLM
+    depenses sur huit categories que personne n'avait demandees.
+    """
+    from workflow.audit_graph import build_audit_graph
+
+    noeuds = build_audit_graph(demandees).compile().get_graph().nodes
+    assert sorted(n for n in noeuds if n.startswith("ASI")) == attendues
+
+
+def test_categories_inconnues_refusees():
+    """Une categorie inexistante doit lever, pas produire un audit vide."""
+    import pytest as _pytest
+
+    from workflow.audit_graph import build_audit_graph
+
+    with _pytest.raises(ValueError):
+        build_audit_graph(["ASI_99"])
+
+
+def test_un_seul_point_de_calcul_du_score():
+    """`consolidate()` est LE calcul : score et niveau doivent rester coherents.
+
+    Le bug qu'il attrape : les seuils de risque etaient reimplementes a la main
+    dans run_agent.py — ils pouvaient diverger de ceux du reste du projet.
+    """
+    from workflow.audit_graph import consolidate
+    from workflow.scoring import get_risk_level
+
+    for scores in ({"ASI_01": 10.0}, {"ASI_01": 5.57}, {"ASI_01": 0.0}):
+        out = consolidate(scores)
+        assert out["risk_level"] == get_risk_level(out["global_score"])
+    assert consolidate({"ASI_01": 5.57})["global_score"] == 55.7
+
+
 def test_retry_rend_la_main_apres_les_tentatives(monkeypatch):
     """Un agent definitivement en echec ne bloque pas l'audit (fail-safe §7)."""
     import workflow.audit_graph as ag

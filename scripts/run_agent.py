@@ -244,14 +244,13 @@ def main() -> int:
     if judge_summary:
         record["judge_summary"] = judge_summary
 
-    try:
-        from workflow.scoring import calculate_global_score
-        record["global_score"] = calculate_global_score({args.category: res.score})
-    except Exception:
-        record["global_score"] = round(res.score * 10, 1)
+    # Point de calcul UNIQUE (workflow.audit_graph.consolidate). Ce fichier
+    # reimplementait les seuils de risque a la main : ils pouvaient donc diverger
+    # de ceux du reste du projet sans que rien ne le signale.
+    from workflow.audit_graph import consolidate
+
+    record.update(consolidate({args.category: res.score}))
     gs = record["global_score"]
-    record["risk_level"] = ("Sécurisé" if gs >= 86 else "Faible" if gs >= 71
-                            else "Moyen" if gs >= 51 else "Élevé" if gs >= 31 else "Critique")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{args.category}_{args.profile}.json"

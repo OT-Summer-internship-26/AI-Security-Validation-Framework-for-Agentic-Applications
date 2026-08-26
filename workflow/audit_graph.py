@@ -111,6 +111,20 @@ def _run_one(category: str, target_callback, agent_config: dict[str, Any]) -> An
                        error=f"{last_error} (après {MAX_ATTEMPTS} tentatives)")
 
 
+def consolidate(scores: dict[str, float]) -> dict[str, Any]:
+    """Score global + niveau de risque — LE point de calcul, pour tout le projet.
+
+    POURQUOI CENTRALISER UN APPEL DE DEUX LIGNES
+        Il etait ecrit SIX fois (noeud du graphe, run_audit, trois endroits dans le
+        runner global, run_agent). Le jour ou la ponderation change — ou simplement
+        l'arrondi — cinq copies restent en arriere, et deux surfaces du meme audit
+        affichent deux scores differents sans que rien ne le signale. C'est le meme
+        defaut que l'agregation des juges ecrite deux fois (§35.3).
+    """
+    score = calculate_global_score(scores)
+    return {"global_score": score, "risk_level": get_risk_level(score)}
+
+
 def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
               categories: list[str] | None = None) -> AuditState:
     """Lance un audit complet et renvoie l'`AuditState` consolidé (score global /100).
@@ -138,7 +152,7 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
         print(f"[workflow] ✔ {cat} : score={result.score}/10 "
               f"({len(result.vulnerabilities)} vuln., {result.status})")
 
-    state.global_score = calculate_global_score(state.scores)
+    state.global_score = consolidate(state.scores)["global_score"]
     state.status = "completed"
     state.completed_at = datetime.now(timezone.utc)
     print(f"[workflow] SCORE GLOBAL : {state.global_score}/100 "
@@ -147,7 +161,7 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
     return state
 
 
-def build_audit_graph():
+def build_audit_graph(categories: list[str] | None = None):
     """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (§7).
 
     Chaque nœud ne renvoie QUE sa propre écriture ; ce sont les reducers d'`AuditState`
@@ -160,6 +174,12 @@ def build_audit_graph():
     de `run_audit_graph()`, qui consomme le flux de mises à jour. Un nœud qui
     écrirait lui-même sur disque devrait se protéger d'un verrou (il tourne en
     parallèle) et deviendrait intestable sans système de fichiers.
+
+    `categories` : sous-ensemble à auditer (défaut : tous les agents enregistrés).
+    Le graphe ne contient QUE ces nœuds. L'ancienne version acceptait le paramètre
+    et le laissait tomber en silence — `--categories ASI_01,ASI_05` lançait les
+    dix, soit des heures et du quota LLM dépensés sur huit catégories que personne
+    n'avait demandées, sans un seul avertissement.
 
     `run_audit()` reste le point d'entrée SÉQUENTIEL, à préférer quand la cible ne
     supporte pas cinq conversations simultanées.
@@ -184,12 +204,15 @@ def build_audit_graph():
 
     def _consolidate(state: AuditState) -> dict[str, Any]:
         return {
-            "global_score": calculate_global_score(state.scores),
+            "global_score": consolidate(state.scores)["global_score"],
             "status": "completed",
             "completed_at": datetime.now(timezone.utc),
         }
 
-    cats = list(AGENT_REGISTRY.keys())
+    known = list(AGENT_REGISTRY.keys())
+    cats = [c for c in known if c in set(categories)] if categories else known
+    if not cats:
+        raise ValueError(f"aucune categorie connue parmi {categories!r}")
     for cat in cats:
         graph.add_node(cat, _make_node(cat))
     graph.add_node("consolidate", _consolidate)
@@ -211,7 +234,14 @@ def build_audit_graph():
     #     Le merge concurrent est assuré par les reducers d'`AuditState`
     #     (`workflow/state.py`) : sans eux, cinq écritures simultanées sur `results`
     #     n'en laisseraient qu'une, et quatre agents disparaîtraient du rapport.
-    wave1, wave2 = cats[:5], cats[5:]
+    # Les vagues suivent le decoupage du §7 (ASI01-05 / ASI06-10), INTERSECTE avec
+    # ce qui est demande. Un sous-ensemble entierement dans la premiere moitie
+    # tourne en une seule vague, au lieu d'une vague vide qui bloquerait le graphe.
+    first_half = set(known[:5])
+    wave1 = [c for c in cats if c in first_half]
+    wave2 = [c for c in cats if c not in first_half]
+    if not wave1:
+        wave1, wave2 = wave2, []
 
     for cat in wave1:
         graph.add_edge(START, cat)          # la vague 1 démarre en éventail
@@ -298,7 +328,7 @@ def run_audit_graph(
 
     with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
         saver.serde = JsonPlusSerializer(allowed_msgpack_modules=_CHECKPOINT_TYPES)
-        graph = build_audit_graph().compile(checkpointer=saver)
+        graph = build_audit_graph(cats).compile(checkpointer=saver)
 
         # REPRISE : passer `None` en entrée, et NON un état neuf.
         #     Fournir un état d'entrée dit à LangGraph « voici le point de départ » :

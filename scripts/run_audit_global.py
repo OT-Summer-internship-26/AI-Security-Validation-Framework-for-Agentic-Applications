@@ -61,7 +61,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from workflow.audit_graph import AGENT_REGISTRY
-    from workflow.scoring import calculate_global_score, get_risk_level
+    from workflow.audit_graph import consolidate
 
     cats = ([c.strip() for c in args.categories.split(",")] if args.categories
             else list(AGENT_REGISTRY))
@@ -131,8 +131,7 @@ def main() -> int:
         if js:
             record["judge_summary"] = js
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
-        record["global_score"] = calculate_global_score(scores)
-        record["risk_level"] = get_risk_level(record["global_score"])
+        record.update(consolidate(scores))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
                        encoding="utf-8")
@@ -176,7 +175,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     """
     from judge.summary import build_judge_summary
     from workflow.audit_graph import run_audit_graph
-    from workflow.scoring import calculate_global_score, get_risk_level
+    from workflow.audit_graph import consolidate
     from workflow.serialization import build_agent_entry
 
     def persiste(category: str, result) -> None:
@@ -189,8 +188,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         """
         record["agents"][category] = build_agent_entry(category, result)
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
-        record["global_score"] = calculate_global_score(scores)
-        record["risk_level"] = get_risk_level(record["global_score"])
+        record.update(consolidate(scores))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
                        encoding="utf-8")
@@ -223,8 +221,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
             record["agents"][category] = build_agent_entry(category, result)
     if state.results:
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
-        record["global_score"] = calculate_global_score(scores)
-        record["risk_level"] = get_risk_level(record["global_score"])
+        record.update(consolidate(scores))
 
     record["status"] = "completed"
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")

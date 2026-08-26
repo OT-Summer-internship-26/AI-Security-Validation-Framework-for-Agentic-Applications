@@ -2311,3 +2311,37 @@ restant du mode de repli — et il est enonce comme tel.
 barriere entre vagues, equivalence graphe/sequentiel, reprise sans re-execution, allowlist
 complete (relecture depuis le disque, objets typés exiges), retry fail-safe.
 **37 tests** au total. `data/checkpoints.sqlite*` ignore par git (etat local).
+
+
+## 37.1 LA CONSTRUCTION N'ETAIT PAS SOLIDE — 3 defauts structurels (2026-08-26)
+
+Remarque de l'utilisateur : « cette construction n'est pas solide comme on voulait ».
+Mesuree, fondee sur trois points — dont un bug de correction, pas de confort.
+
+**1. `--categories` ETAIT ACCEPTE ET IGNORE EN SILENCE.**
+`--categories ASI_01,ASI_05` lancait **les dix agents**. Sur un audit reel en profil
+`final`, c'est plusieurs HEURES et le quota LLM d'une journee depenses sur huit categories
+que personne n'avait demandees — sans un seul message. Cause : `build_audit_graph()`
+construisait toujours les dix noeuds ; `run_audit_graph()` recevait `categories` et ne le
+transmettait pas. **Corrige a la RACINE** : le graphe ne contient que les noeuds demandes,
+et les vagues du §7 sont INTERSECTEES avec la demande (un sous-ensemble entierement dans la
+premiere moitie tourne en une seule vague, au lieu d'une vague vide qui bloquerait).
+Une categorie inconnue leve desormais, au lieu de produire un audit vide.
+
+**2. LE SCORE GLOBAL ETAIT CALCULE A SIX ENDROITS** (dont trois dans le seul
+`run_audit_global.py`), et `run_agent.py` REIMPLEMENTAIT les seuils de risque a la main.
+Le jour ou la ponderation ou l'arrondi change, cinq copies restent en arriere et deux
+surfaces du meme audit affichent deux scores differents. Exactement le defaut de
+l'agregation des juges ecrite deux fois (§35.3). **Corrige** : `workflow.audit_graph.consolidate()`
+est LE point de calcul ; plus aucun seuil recopie ailleurs.
+
+**3. Deux orchestrateurs pour une meme responsabilite** (`run_audit()` sequentiel et
+`run_audit_graph()`). Conserve DELIBEREMENT : ce sont deux modes d'execution reels
+(processus unique parallele avec reprise / sequentiel sans dependance au checkpoint), et
+ils partagent desormais `_run_one` ET `consolidate`. La duplication restante est le
+squelette de boucle, pas la logique.
+
+### Verrouillage
+`tests/test_workflow.py` passe a **8 tests** : sous-ensemble de categories (trois cas —
+vague 1, vague 2, a cheval), categorie inconnue refusee, coherence score/niveau du point de
+calcul unique — en plus des quatre precedents. **42 tests** au total.
