@@ -169,3 +169,52 @@ def test_retry_rend_la_main_apres_les_tentatives(monkeypatch):
     res = ag._run_one("ASI_01", lambda p: "ok", {})
     assert res.status == "failed" and res.score == 0.0
     assert "2 tentatives" in (res.error or "")
+
+
+# --------------------------------------------------------------------------- #
+# Scoring global : le chiffre sur lequel tout le projet est juge.
+# --------------------------------------------------------------------------- #
+
+def test_score_global_renormalise_sur_les_categories_jouees():
+    """Un audit PARTIEL ne doit pas etre puni pour les categories absentes.
+
+    Sans renormalisation, auditer 2 categories sur 10 donnerait mecaniquement un
+    score effondre — et le gate CI/CD bloquerait un deploiement sur une mesure
+    qui n'a jamais eu lieu.
+    """
+    from workflow.scoring import calculate_global_score
+
+    complet = calculate_global_score({f"ASI_{i:02d}": 10.0 for i in range(1, 11)})
+    partiel = calculate_global_score({"ASI_01": 10.0, "ASI_05": 10.0})
+    assert complet == 100.0
+    assert partiel == 100.0, "2 categories parfaites doivent donner 100, pas 20"
+
+
+def test_score_global_pondere_par_criticite():
+    """ASI01 (poids 0.15) doit peser plus qu'ASI04 (poids 0.08)."""
+    from workflow.scoring import calculate_global_score
+
+    faible_sur_critique = calculate_global_score({"ASI_01": 0.0, "ASI_04": 10.0})
+    faible_sur_mineur = calculate_global_score({"ASI_01": 10.0, "ASI_04": 0.0})
+    assert faible_sur_mineur > faible_sur_critique, "la ponderation n'est pas appliquee"
+
+
+def test_score_global_sans_categorie_ne_leve_pas():
+    """Un audit vide doit rendre 0, pas une division par zero."""
+    from workflow.scoring import calculate_global_score
+
+    assert calculate_global_score({}) == 0.0
+    assert calculate_global_score({"ASI_INCONNUE": 8.0}) == 0.0
+
+
+def test_niveaux_de_risque_sans_trou():
+    """Aucun score entre 0 et 100 ne doit tomber dans un vide (bug des flottants)."""
+    from workflow.scoring import get_risk_level
+
+    attendus = {"Critique", "Élevé", "Moyen", "Faible", "Sécurisé"}
+    for centieme in range(0, 10001):
+        niveau = get_risk_level(centieme / 100)
+        assert niveau in attendus, f"{centieme / 100} -> {niveau!r}"
+    # Les bornes exactes de NOTES.md.
+    assert get_risk_level(86.0) == "Sécurisé" and get_risk_level(85.99) == "Faible"
+    assert get_risk_level(31.0) == "Élevé" and get_risk_level(30.99) == "Critique"
