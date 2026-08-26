@@ -106,6 +106,9 @@ def build_agent_entry(category: str, result: Any, duration_s: float = 0.0,
         "name": getattr(result, "name", category),
         "status": result.status,
         "score": result.score,
+        # `False` => le score 0 n'est pas un verdict : la categorie est exclue du
+        # score global et le rapport doit le dire au lieu de l'afficher comme un echec.
+        "measured": getattr(result, "measured", True),
         "duration_seconds": int(duration_s),
         "cost_tokens": 0,
         "layers": {

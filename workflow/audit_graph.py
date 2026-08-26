@@ -147,7 +147,11 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
         print(f"[workflow] ▶ {cat} …")
         result = _run_one(cat, callback, agent_config)
         state.results[cat] = result
-        state.scores[cat] = float(result.score)
+        # Un agent dont RIEN n'a pu etre mesure n'entre pas dans le score global :
+        # son 0 se lirait « categorie totalement compromise » alors qu'aucune
+        # attaque n'a abouti a un verdict (mesure du 2026-08-26 : -5.4 points).
+        if getattr(result, "measured", True):
+            state.scores[cat] = float(result.score)
         state.vulnerabilities.extend(result.vulnerabilities)
         print(f"[workflow] ✔ {cat} : score={result.score}/10 "
               f"({len(result.vulnerabilities)} vuln., {result.status})")
@@ -197,7 +201,8 @@ def build_audit_graph(categories: list[str] | None = None):
             # parallele et rendrait invisible ce qui protege des ecritures perdues.
             return {
                 "results": {cat: res},
-                "scores": {cat: float(res.score)},
+                # Meme regle que `run_audit` : un agent non mesure sort du score.
+                "scores": ({cat: float(res.score)} if getattr(res, "measured", True) else {}),
                 "vulnerabilities": list(res.vulnerabilities),
             }
         return _node

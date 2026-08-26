@@ -24,6 +24,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -125,6 +126,17 @@ class AgentResult:
     layers: dict[str, LayerResult] = field(default_factory=dict)
     vulnerabilities: list[Vulnerability] = field(default_factory=list)
     status: str = "pending"  # "pending" | "running" | "completed" | "failed"
+                             # | "not_measured" (aucune couche exploitable)
+    # AUCUNE couche n'a pu etre mesuree : le score 0 n'est PAS un verdict.
+    #
+    # MESURE QUI A IMPOSE CE CHAMP (audit global du 2026-08-26) : la cible a
+    # sature pendant ASI_09, ses 4 tests sont tombes en [HTTP_ERROR], la couche
+    # s'est correctement exclue... et l'agent a quand meme rendu 0.0/10, qui est
+    # descendu dans le score global comme une vraie mesure (72.5 au lieu de 77.9).
+    # Une cible injoignable se lisait donc « totalement compromise » — le faux
+    # verdict symetrique du faux 10/10, que le socle interdit couche par couche
+    # mais laissait passer a la frontiere de l'agent.
+    measured: bool = True
     error: str | None = None
 
 
@@ -299,11 +311,21 @@ class BaseSecurityAgent(ABC):
 
         # 4. Score pondéré multi-couches
         result.score = self.calculate_score(layers)
+        result.measured = any(lr.applicable and lr.error is None for lr in layers.values())
+        if not result.measured:
+            result.status = "not_measured"
+            result.error = result.error or (
+                "aucune couche exploitable — score non calculable (cible injoignable "
+                "ou tous les axes exclus)"
+            )
 
         # 5. Résultat final
         result.layers = layers
         result.vulnerabilities = vulnerabilities
-        result.status = "completed"
+        # `not_measured` ne doit PAS etre ecrase par « completed » : l'audit s'est
+        # bien deroule techniquement, mais aucun verdict n'a pu etre etabli — et
+        # c'est cette distinction qui empeche le 0 d'etre lu comme un resultat.
+        result.status = "completed" if result.measured else "not_measured"
         return result
 
     @abstractmethod
@@ -1458,6 +1480,30 @@ def load_microsoft_scenarios(asi_category: str, match: str = "primary") -> list[
 # --------------------------------------------------------------------------- #
 # Adaptateur HTTP réutilisable (cible = agent IA exposé en HTTP)
 # --------------------------------------------------------------------------- #
+
+# Plafond de requêtes SIMULTANÉES vers la cible, tous agents confondus.
+#
+# POURQUOI CE PLAFOND EXISTE — mesuré sur l'audit global du 2026-08-26
+#     Le graphe lance 5 agents en parallèle, chacun autorisé à `max_concurrent`
+#     requêtes : jusqu'à 10 requêtes simultanées sur une cible qui en traite UNE
+#     toutes les 19 s. Une requête arrivée derrière 9 autres attend 171 s pour un
+#     timeout à 180 s. Résultat : **15 tests perdus sur 50 (30 %)** en
+#     `[HTTP_ERROR]`, dont ASI_09 intégralement — donc une catégorie sans verdict.
+#
+#     Ce n'est PAS un problème de vague : réduire le nombre d'agents ralentirait
+#     aussi la génération des attaques, qui est locale et ne touche pas la cible.
+#     Le point de contention est la cible, donc le plafond se pose sur elle.
+#
+#     ⚠️ En profil `final`, ce plafond est PLUS nécessaire, pas moins : la
+#     génération part chez Gemini et cesse de freiner le pipeline. La lenteur du
+#     modèle local jouait jusqu'ici un rôle de limiteur involontaire.
+#
+# Un sémaphore borné, partagé par tout le processus : les agents continuent de
+# travailler en parallèle, seules leurs requêtes HTTP font la queue.
+TARGET_CONCURRENCY = max(1, int(os.environ.get("AUDIT_TARGET_CONCURRENCY", "3")))
+_TARGET_SLOTS = threading.BoundedSemaphore(TARGET_CONCURRENCY)
+
+
 def build_http_callback(
     target_url: str,
     headers: dict[str, str] | None = None,
@@ -1502,6 +1548,12 @@ def build_http_callback(
     hdrs = {"Content-Type": "application/json", **(headers or {})}
 
     def _callback(prompt: str) -> Any:
+        # Le sémaphore encadre TOUT l'appel réseau : sans lui, dix agents peuvent
+        # saturer une cible qui traite une requête à la fois (cf. TARGET_CONCURRENCY).
+        with _TARGET_SLOTS:
+            return _send(prompt)
+
+    def _send(prompt: str) -> Any:
         payload: dict[str, Any] = {prompt_field: prompt}
         if extra_payload:
             payload.update(extra_payload)

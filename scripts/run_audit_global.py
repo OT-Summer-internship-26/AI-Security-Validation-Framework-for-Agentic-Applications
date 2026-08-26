@@ -130,7 +130,10 @@ def main() -> int:
         js = build_judge_summary(record["agents"])
         if js:
             record["judge_summary"] = js
-        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
+        # Les agents non mesures (cible injoignable, tous axes exclus) sortent du
+        # score : compter leur 0 dirait « totalement compromis » sans preuve.
+        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
+                  if a.get("measured", True)}
         record.update(consolidate(scores))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
@@ -194,7 +197,10 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         checkpoint n'a pas ete valide avant un arret brutal.
         """
         record["agents"][category] = build_agent_entry(category, result)
-        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
+        # Les agents non mesures (cible injoignable, tous axes exclus) sortent du
+        # score : compter leur 0 dirait « totalement compromis » sans preuve.
+        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
+                  if a.get("measured", True)}
         record.update(consolidate(scores))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
@@ -226,7 +232,10 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         if category not in record["agents"]:
             record["agents"][category] = build_agent_entry(category, result)
     if state.results:
-        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()}
+        # Les agents non mesures (cible injoignable, tous axes exclus) sortent du
+        # score : compter leur 0 dirait « totalement compromis » sans preuve.
+        scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
+                  if a.get("measured", True)}
         record.update(consolidate(scores))
 
     record["status"] = "completed"

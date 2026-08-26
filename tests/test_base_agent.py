@@ -215,3 +215,105 @@ def test_axe_microsoft_absent_est_exclu_pas_note_zero():
 def test_adaptateur_deepteam_preserve_la_reponse():
     turn = to_deepteam_callback(lambda p: f"echo:{p}")("attaque", [])
     assert "echo:attaque" in str(getattr(turn, "actual_output", turn))
+
+
+# --------------------------------------------------------------------------- #
+# 6. Un agent dont RIEN n'a ete mesure ne vaut pas 0 (mesure du 2026-08-26).
+# --------------------------------------------------------------------------- #
+
+def test_agent_sans_couche_exploitable_est_marque_non_mesure():
+    """Cible injoignable -> `measured=False`, et le 0 n'est PAS un verdict.
+
+    LE BUG QU'IL ATTRAPE (audit global du 2026-08-26) : la cible a sature pendant
+    ASI_09, ses 4 tests sont tombes en [HTTP_ERROR], la couche s'est correctement
+    exclue... et l'agent a quand meme rendu 0.0/10, descendu dans le score global
+    comme une vraie mesure — 72.5/100 au lieu de 77.9. Une cible injoignable se
+    lisait « totalement compromise ».
+    """
+    a = agent()
+    a.use_pyrit = a.use_garak = a.use_microsoft_probes = False
+    a._dry_run_assessment = lambda: SimpleNamespace(test_cases=[
+        case(1.0, f"{HTTP_ERROR_MARKER} cible morte"),
+    ])
+    res = a.run()
+    assert res.measured is False, "aucune couche exploitable -> l'agent n'est pas mesure"
+    assert res.status == "not_measured" and res.error
+    assert res.score == 0.0, "le score reste 0, mais il ne doit plus etre INTERPRETE"
+
+
+def test_agent_mesure_reste_marque_mesure():
+    """Non-regression : un agent normal ne doit pas etre exclu par erreur."""
+    res = agent().run()
+    assert res.measured is True and res.status == "completed" and res.score > 0
+
+
+def test_agent_non_mesure_exclu_du_score_global():
+    """La categorie non mesuree sort du /100 au lieu de le tirer vers le bas."""
+    from workflow.scoring import calculate_global_score
+
+    mesures = {"ASI_01": 8.0, "ASI_02": 8.0}
+    avec_faux_zero = calculate_global_score({**mesures, "ASI_09": 0.0})
+    sans = calculate_global_score(mesures)
+    assert sans > avec_faux_zero, (
+        "compter un agent non mesure comme 0 fausse le score global vers le bas"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 7. Plafond de requetes simultanees vers la cible.
+# --------------------------------------------------------------------------- #
+
+def test_plafond_de_requetes_simultanees():
+    """La cible ne doit JAMAIS voir plus de `TARGET_CONCURRENCY` requetes a la fois.
+
+    LE BUG QU'IL ATTRAPE : 5 agents paralleles x max_concurrent 2 = 10 requetes
+    simultanees sur une cible qui en traite une toutes les 19 s. Mesure sur
+    l'audit global du 2026-08-26 : 15 tests perdus sur 50 (30 %) en [HTTP_ERROR].
+    """
+    import http.server
+    import json
+    import socketserver
+    import threading
+    import time
+
+    from agents.base_agent import TARGET_CONCURRENCY
+
+    etat = {"en_cours": 0, "max": 0, "total": 0}
+    verrou = threading.Lock()
+
+    class Cible(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            with verrou:
+                etat["en_cours"] += 1
+                etat["total"] += 1
+                etat["max"] = max(etat["max"], etat["en_cours"])
+            time.sleep(0.15)
+            with verrou:
+                etat["en_cours"] -= 1
+            corps = json.dumps({"response": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            self.wfile.write(corps)
+
+        def log_message(self, *_a):
+            pass
+
+    srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Cible)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        cb = build_http_callback(f"http://127.0.0.1:{srv.server_address[1]}/chat", timeout=10)
+        fils = [threading.Thread(target=lambda: cb("attaque")) for _ in range(12)]
+        for f in fils:
+            f.start()
+        for f in fils:
+            f.join()
+    finally:
+        srv.shutdown()
+
+    assert etat["max"] <= TARGET_CONCURRENCY, (
+        f"{etat['max']} requetes simultanees vues alors que le plafond est "
+        f"{TARGET_CONCURRENCY} : la cible peut saturer"
+    )
+    assert etat["total"] == 12, "le plafond ne doit PERDRE aucune requete, seulement les etaler"
