@@ -20,8 +20,17 @@ PRINCIPE : TOTALEMENT OPTIONNEL, ET SILENCIEUX
 
 ACTIVATION
     LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST (défaut :
-    http://localhost:3000, le service du docker-compose). Sans ces variables, le
-    module est inerte — c'est le cas par défaut.
+    http://localhost:3000, le service de docker-compose.langfuse.yml). Sans ces
+    variables, le module est inerte — c'est le cas par défaut.
+
+CE QUI N'EST PAS TRACÉ, ET POURQUOI
+    Les compteurs de jetons et le coût restent à zéro dans le tableau de bord.
+    Ce n'est pas un oubli : les modèles passent par l'interface `DeepEvalBaseLLM`,
+    qui renvoie `(réponse, coût)` — un coût que les fournisseurs locaux (Ollama)
+    laissent à 0 et qui ne contient AUCUN décompte de jetons. Les inventer à
+    partir d'une estimation produirait un chiffre faux dans un tableau de bord
+    censé servir de référence ; on préfère un champ vide, honnête. La LATENCE,
+    elle, est exacte : l'observation encadre l'appel (voir `observe`).
 """
 
 from __future__ import annotations
@@ -175,11 +184,89 @@ def is_enabled() -> bool:
     return get_client() is not None
 
 
+@contextmanager
+def observe(role: str, model: Any, prompt: str):
+    """Ouvre une observation AUTOUR de l'appel — pas après lui.
+
+    POURQUOI C'EST STRUCTURANT, ET PAS UN DÉTAIL
+        La version précédente ouvrait le span une fois l'appel terminé : LangFuse
+        enregistrait donc un événement INSTANTANÉ. Mesuré sur un appel de 1,5 s :
+        `startTime == endTime`, `latency = 0`. Toutes les vues temporelles du
+        tableau de bord — latence par modèle, détection des appels lents,
+        chronologie d'un audit — affichaient zéro. La durée réelle ne survivait
+        que dans une métadonnée, invisible aux graphiques.
+
+        En encadrant l'appel, LangFuse mesure lui-même le début et la fin : la
+        latence devient exacte sans qu'on la calcule, et la chronologie d'un audit
+        redevient lisible.
+
+    S'utilise ainsi :
+
+        with observe("simulator", model, prompt) as obs:
+            resultat = model.generate(prompt)
+            obs.set_output(resultat)
+
+    Ne lève JAMAIS : sans traçage configuré, le bloc est un passe-plat.
+    """
+    client = get_client()
+    if client is None:
+        yield _Muet()
+        return
+
+    contexte = current_context()
+    categorie = contexte.get("category", "")
+    titre = f"{categorie} · {role}" if categorie else f"judge.{role}"
+    nom_modele = str(getattr(model, "get_model_name", lambda: str(model))())
+    debut = time.time()
+    try:
+        with client.start_as_current_observation(name=titre, as_type="generation") as span:
+            porteur = _Porteur(span)
+            span.update(model=nom_modele, input=prompt[:4000],
+                        metadata={"role": role, **contexte})
+            try:
+                yield porteur
+            except Exception as exc:
+                span.update(level="ERROR", status_message=str(exc)[:500],
+                            metadata={"role": role, **contexte,
+                                      "duration_s": round(time.time() - debut, 2),
+                                      "error": str(exc)[:500]})
+                raise
+            span.update(output=str(porteur.output)[:4000],
+                        metadata={"role": role, **contexte,
+                                  "duration_s": round(time.time() - debut, 2)})
+    except Exception as exc:  # l'observabilité ne casse JAMAIS la production
+        if not isinstance(exc, _Relancer):
+            logger.debug("LangFuse : observation ignorée (%s)", exc)
+        raise
+
+
+class _Relancer(Exception):
+    """Marqueur interne : une exception applicative traverse `observe` intacte."""
+
+
+class _Muet:
+    """Passe-plat quand le traçage est inactif : aucun surcoût, aucune branche."""
+
+    output: Any = None
+
+    def set_output(self, valeur: Any) -> None:
+        self.output = valeur
+
+
+class _Porteur(_Muet):
+    """Recueille la sortie de l'appel pour la poser sur le span à la fermeture."""
+
+    def __init__(self, span: Any) -> None:
+        self.span = span
+        self.output = None
+
+
 def trace_llm_call(role: str, model: Any, prompt: str, response: Any,
                    duration_s: float, error: str = "") -> None:
-    """Enregistre un appel LLM. Ne lève JAMAIS et ne ralentit pas l'audit.
+    """Enregistre un appel LLM DÉJÀ terminé (durée fournie).
 
-    role : `severity` | `compliance` | `cross_validation` | `pass_analysis`…
+    Conservé pour les appelants qui ne peuvent pas encadrer l'appel. Préférer
+    `observe()` : lui seul donne une latence exacte à LangFuse.
     """
     client = get_client()
     if client is None:
@@ -248,29 +335,25 @@ def traced_model(model: Any, role: str) -> Any:
 
 
 def _wrap(original: Any, role: str, model: Any, *, is_async: bool) -> Any:
-    """Construit la version tracée d'un `generate` / `a_generate`."""
+    """Construit la version tracée d'un `generate` / `a_generate`.
+
+    L'appel est ENCADRÉ par l'observation (et non tracé après coup) : c'est ce qui
+    donne à LangFuse une latence exacte plutôt qu'un événement instantané.
+    """
     if is_async:
         async def enveloppe_async(prompt, *args, **kwargs):
-            debut = time.time()
-            try:
+            with observe(role, model, str(prompt)) as obs:
                 resultat = await original(prompt, *args, **kwargs)
-            except Exception as exc:
-                trace_llm_call(role, model, str(prompt), "", time.time() - debut, str(exc))
-                raise
-            trace_llm_call(role, model, str(prompt), _sortie(resultat), time.time() - debut)
-            return resultat
+                obs.set_output(_sortie(resultat))
+                return resultat
 
         return enveloppe_async
 
     def enveloppe(prompt, *args, **kwargs):
-        debut = time.time()
-        try:
+        with observe(role, model, str(prompt)) as obs:
             resultat = original(prompt, *args, **kwargs)
-        except Exception as exc:
-            trace_llm_call(role, model, str(prompt), "", time.time() - debut, str(exc))
-            raise
-        trace_llm_call(role, model, str(prompt), _sortie(resultat), time.time() - debut)
-        return resultat
+            obs.set_output(_sortie(resultat))
+            return resultat
 
     return enveloppe
 
@@ -311,6 +394,9 @@ def graph_callbacks() -> list[Any]:
 
 class timed:
     """Chronomètre un appel LLM et le trace à la sortie du bloc.
+
+    ⚠️ DÉPRÉCIÉ au profit de `observe()`, qui encadre l'appel et donne donc une
+    latence exacte. Conservé pour ne casser aucun appelant existant.
 
     Utilisé par `judge.severity_judge.structured()`, donc les TROIS juges en
     bénéficient sans que chacun ait à instrumenter ses appels.
@@ -365,15 +451,24 @@ def demo() -> None:
     observations: list[dict] = []
 
     class FauxSpan:
+        """Accumule les `update` successifs dans UNE observation.
+
+        `observe()` appelle `update` deux fois — entree a l'ouverture, sortie a la
+        fermeture. Un faux span qui empilerait deux entrees separees ne
+        refleterait pas ce que LangFuse enregistre reellement.
+        """
+
+        def __init__(self, enregistrement): self.enr = enregistrement
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def update(self, **kw): observations.append(kw)
+        def update(self, **kw): self.enr.update(kw)
 
     class FauxClient:
         flushed = 0
         def start_as_current_observation(self, **kw):
-            observations.append({"_name": kw.get("name")})
-            return FauxSpan()
+            enr = {"_name": kw.get("name")}
+            observations.append(enr)
+            return FauxSpan(enr)
         def flush(self): FauxClient.flushed += 1
 
     _client, _checked = FauxClient(), True
@@ -389,6 +484,8 @@ def demo() -> None:
         noms = [o.get("_name") for o in observations if o.get("_name")]
         assert noms == ["judge.simulator"], noms
         trace = next(o for o in observations if "input" in o)
+        # Entree ET sortie sur la MEME observation : c'est ce que garantit le fait
+        # d'encadrer l'appel plutot que de le tracer apres coup.
         assert trace["input"] == "attaque" and trace["output"] == "reponse"
         assert trace["model"] == "modele-test"
 
@@ -407,10 +504,12 @@ def demo() -> None:
         assert any("panne" in str(o.get("metadata", {})) for o in observations)
 
         # Double enveloppement impossible (sinon chaque appel serait trace N fois).
+        # Une observation par appel : `observe()` en cree UNE et la met a jour deux
+        # fois (entree puis sortie), ce que le faux span accumule.
         avant = len(observations)
         m2 = traced_model(m, "simulator")
         m2.generate("x")
-        assert len(observations) - avant == 2, "un appel = une observation"
+        assert len(observations) - avant == 1, "un appel = une observation"
 
         # Le CONTEXTE doit atteindre le nom ET les metadonnees : sans lui, une
         # trace ne dit pas a quel audit ni a quelle categorie elle appartient.

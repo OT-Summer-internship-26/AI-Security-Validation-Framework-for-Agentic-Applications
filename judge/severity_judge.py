@@ -212,12 +212,12 @@ def structured(model: Any, prompt: str, schema: type[BaseModel]) -> Any:
     # TRACAGE : branche ICI et nulle part ailleurs. Les trois juges passent par
     # cette fonction, donc instrumenter ce seul point les couvre tous — et un
     # nouveau juge en beneficie sans rien ajouter. Inerte sans LangFuse configure.
-    from judge.tracing import timed
+    from judge.tracing import observe
 
-    with timed(_trace_role(schema), model, prompt) as span:
+    with observe(_trace_role(schema), model, prompt) as span:
         try:
             resp, _cost = model.generate(prompt, schema=schema)
-            span.response = resp
+            span.set_output(resp)
             return _parse_structured(resp, schema)
         except Exception as exc:  # jamais bloquant
             logger.warning("sortie structurée indisponible (%s) : %s", schema.__name__, exc)
