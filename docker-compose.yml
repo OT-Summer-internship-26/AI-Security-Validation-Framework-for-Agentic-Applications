@@ -1,42 +1,36 @@
-# ==============================================================
-# docker-compose.yml — Services du framework
-#   - langfuse : observabilité / traçage des appels LLM
-#   - api      : l'API FastAPI du framework d'audit
-# PLACEHOLDER Phase 1 — à affiner en Phase 2 (volumes, secrets, réseau sandbox).
-# ==============================================================
-version: "3.9"
+# ==============================================================================
+#  Services du framework — API d'audit
+#
+#  ⚠️ CE FICHIER NE CONTIENT PLUS LANGFUSE
+#      Il en déclarait un service, mais celui-ci ne pouvait PAS démarrer : il
+#      pointait une base `db` jamais définie, et l'image `langfuse:latest` est une
+#      v3 qui exige ClickHouse, Redis et MinIO. Laisser ce service ici donnait un
+#      `docker compose up` qui échoue — pire qu'une absence, parce que le lecteur
+#      croit la brique disponible.
+#
+#      L'observabilité vit désormais dans **docker-compose.langfuse.yml**, une
+#      pile complète et vérifiée (traces réellement reçues, cf. NOTES.md) :
+#          docker compose -f docker-compose.langfuse.yml up -d
+#
+#  ⚠️ LE SERVICE `api` EXIGE UN Dockerfile QUI N'EXISTE PAS ENCORE
+#      Il est laissé ici parce qu'il décrit l'intention, mais `docker compose up`
+#      échouera au build tant que le Dockerfile n'est pas écrit. En attendant,
+#      l'API se lance directement :
+#          uvicorn api.main:app --reload        (ou run-api.bat)
+# ==============================================================================
 
 services:
-  # ----------------------------------------------------------
-  # LangFuse — monitoring et traçage LLM
-  # (config minimale ; base de données à ajouter en Phase 2)
-  # ----------------------------------------------------------
-  langfuse:
-    image: langfuse/langfuse:latest
-    container_name: langfuse
-    ports:
-      - "3000:3000"
-    environment:
-      # TODO Phase 2 : renseigner via .env (voir .env.example)
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-changeme}
-      SALT: ${SALT:-changeme}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/langfuse}
-    restart: unless-stopped
-
-  # ----------------------------------------------------------
-  # API du framework d'audit (FastAPI + Uvicorn)
-  # ----------------------------------------------------------
   api:
     build:
       context: .
-      dockerfile: Dockerfile   # TODO Phase 2 : créer le Dockerfile de l'API
+      dockerfile: Dockerfile   # ⚠️ à écrire — voir l'avertissement ci-dessus
     container_name: ai_security_api
     ports:
       - "8000:8000"
     env_file:
       - .env
-    depends_on:
-      - langfuse
     # Le module sandbox (ASI05) exécute du code dans des conteneurs Docker
-    # éphémères : l'accès au socket Docker sera configuré en Phase 2.
+    # éphémères : monter le socket Docker sera nécessaire pour la couche dynamique.
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

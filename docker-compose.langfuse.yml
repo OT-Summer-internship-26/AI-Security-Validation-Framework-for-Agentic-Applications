@@ -1,0 +1,172 @@
+# ==============================================================================
+#  LangFuse en local — observabilité des appels LLM et de l'orchestration
+#
+#  POURQUOI UN FICHIER SÉPARÉ
+#      `docker-compose.yml` est resté un placeholder de Phase 1 : il référence un
+#      service `db` qui n'existe pas et un `Dockerfile` d'API jamais écrit. Le
+#      réparer pour LangFuse v3 exigerait quatre dépendances supplémentaires
+#      (ClickHouse, Redis, MinIO) pour un bénéfice nul ici.
+#
+#  POURQUOI LA v3 ET SES CINQ DEPENDANCES — la v2 a ete ESSAYEE puis ECARTEE
+#      La v2 ne demande que PostgreSQL : deux services au lieu de six, c'etait
+#      le choix evident. Elle demarre effectivement (2.95.11, sante OK), mais le
+#      SDK Python installe (langfuse 4.14) parle le protocole v3 :
+#        - `auth_check()` echoue sur le format de reponse (champs `organization`
+#          et `metadata` absents de la v2) ;
+#        - surtout, l'ingestion part sur un endpoint OTEL que la v2 n'expose pas
+#          -> HTTP 404, et 0 trace enregistree cote serveur (mesure).
+#      Aligner le serveur sur le SDK est donc la seule option qui ne demande pas
+#      de reecrire `judge/tracing.py`. Le prix : ClickHouse (analytique), Redis
+#      (file d'attente) et MinIO (stockage objet), imposes par l'architecture v3.
+#
+#  INITIALISATION SANS INTERFACE
+#      Les variables `LANGFUSE_INIT_*` créent l'organisation, le projet et les
+#      CLÉS au premier démarrage. Sans elles, il faudrait s'inscrire à la main
+#      dans le navigateur avant de pouvoir tracer quoi que ce soit — et rien ne
+#      serait reproductible d'une machine à l'autre.
+#
+#  LANCEMENT
+#      docker compose -f docker-compose.langfuse.yml up -d
+#      (premier demarrage : ~2 min, les migrations ClickHouse sont longues)
+#      → interface  : http://localhost:3000  (admin@audit.local / langfuse-local)
+#      → puis dans .env :
+#          LANGFUSE_PUBLIC_KEY=pk-lf-local-dev
+#          LANGFUSE_SECRET_KEY=sk-lf-local-dev
+#          LANGFUSE_HOST=http://localhost:3000
+# ==============================================================================
+
+services:
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: langfuse-db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      # Volume nomme : les traces d'un audit survivent a un redemarrage. Sans lui,
+      # chaque `down` effacerait l'historique qu'on cherche justement a conserver.
+      - langfuse_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Base analytique : la v3 y stocke traces et observations (Postgres ne garde
+  # plus que les metadonnees). C'est la dependance qui rend la v3 « lourde ».
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: langfuse-clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_chdata:/var/lib/clickhouse
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # File d'attente entre le web et le worker : l'ingestion est asynchrone.
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: langfuse-redis
+    command: --requirepass langfuse
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Stockage objet (compatible S3) : corps des evenements volumineux.
+  langfuse-minio:
+    image: minio/minio
+    container_name: langfuse-minio
+    # Le bucket doit EXISTER avant le premier evenement : LangFuse ne le cree pas.
+    # Sans ce `mkdir`, l'ingestion echoue en « Failed to upload JSON to S3 » et
+    # AUCUNE trace n'arrive — le serveur repond pourtant OK, et le SDK s'authentifie
+    # correctement : rien ne signale le probleme cote client (mesure).
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server /data --console-address ":9001"'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse_miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Traite la file : sans lui, les traces sont acceptees mais jamais ecrites.
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: langfuse-worker
+    depends_on:
+      langfuse-db: {condition: service_healthy}
+      langfuse-clickhouse: {condition: service_healthy}
+      langfuse-redis: {condition: service_healthy}
+      langfuse-minio: {condition: service_healthy}
+    environment: &langfuse_env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      SALT: local-dev-salt-change-in-production
+      ENCRYPTION_KEY: 2fa935bd5a8be1d8f18911a572e9b51524f60f3ee12edccdc590eb001c474853
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:3
+    container_name: langfuse
+    depends_on:
+      langfuse-worker: {condition: service_started}
+      langfuse-db: {condition: service_healthy}
+      langfuse-clickhouse: {condition: service_healthy}
+      langfuse-redis: {condition: service_healthy}
+      langfuse-minio: {condition: service_healthy}
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse_env
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: local-dev-secret-change-in-production
+      AUTH_DISABLE_SIGNUP: "false"
+
+      # ---- Initialisation sans interface : organisation, projet et CLES ----
+      LANGFUSE_INIT_ORG_ID: ooredoo-audit
+      LANGFUSE_INIT_ORG_NAME: Audit IA
+      LANGFUSE_INIT_PROJECT_ID: ai-security-framework
+      LANGFUSE_INIT_PROJECT_NAME: AI Security Framework
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local-dev
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local-dev
+      LANGFUSE_INIT_USER_EMAIL: admin@audit.local   # un TLD est exige
+      LANGFUSE_INIT_USER_NAME: Auditeur
+      LANGFUSE_INIT_USER_PASSWORD: langfuse-local
+    restart: unless-stopped
+
+volumes:
+  langfuse_pgdata:
+  langfuse_chdata:
+  langfuse_miniodata:

@@ -2345,3 +2345,66 @@ squelette de boucle, pas la logique.
 `tests/test_workflow.py` passe a **8 tests** : sous-ensemble de categories (trois cas —
 vague 1, vague 2, a cheval), categorie inconnue refusee, coherence score/niveau du point de
 calcul unique — en plus des quatre precedents. **42 tests** au total.
+
+
+## 38. LANGFUSE VALIDE CONTRE UN VRAI SERVEUR (2026-08-27)
+
+Le module etait teste avec un client SIMULE. Le brancher sur un serveur reel a sorti
+QUATRE problemes, dont deux qu'aucun test hors-ligne n'aurait pu voir.
+
+### La pile locale : `docker-compose.langfuse.yml`
+`docker-compose.yml` declarait un service LangFuse qui ne pouvait PAS demarrer (base
+`db` jamais definie, image `latest` = v3 exigeant 3 dependances). Il est retire de la :
+laisser un service qui echoue est pire qu'une absence, le lecteur croit la brique
+disponible. L'observabilite vit dans un fichier dedie.
+
+**La v2 a ete essayee puis ECARTEE, mesure a l'appui.** Deux services au lieu de six,
+c'etait le choix evident — elle demarre (2.95.11, sante OK) mais le SDK installe
+(langfuse 4.14) parle le protocole v3 : `auth_check()` echoue sur le format de reponse,
+et surtout l'ingestion part sur un endpoint OTEL absent de la v2 -> **404, 0 trace**.
+Aligner le serveur sur le SDK etait la seule option sans reecrire `judge/tracing.py`.
+
+### Les trois obstacles de la v3
+| Symptome | Cause reelle |
+|---|---|
+| `Invalid environment variables` | `ENCRYPTION_KEY` en zeros refusee ; email sans TLD |
+| `Failed to upload JSON to S3` | **le bucket MinIO n'existe pas** — LangFuse ne le cree pas |
+| 0 trace, aucune erreur cote client | consequence du precedent |
+
+Le second est le plus sournois : le serveur repondait `OK`, `auth_check()` passait, et
+**rien cote client ne signalait quoi que ce soit**. Seule la RELECTURE des traces depuis
+le serveur l'a revele — meme famille que le juge en francais (§34) et le merge LangGraph
+(§36.6) : un echec silencieux qui produit un resultat plausible. Le `mkdir` est
+desormais dans l'entrypoint MinIO, avec la raison ecrite a cote.
+
+### Ce qui est PROUVE en conditions reelles
+Audit ASI_07 (`ollama`, 616 s) puis ASI_08 via LangGraph :
+· **47 traces sur 52 viennent du SIMULATEUR DeepTeam** — exactement ce qui echappait
+  au tracage avant §37. L'enveloppe posee a la fabrication des modeles les capture
+  toutes, sans une ligne modifiee chez DeepTeam ni PyRIT.
+· Le contenu est complet : `model=qwen2.5:7b`, prompt d'attaque en `input`, verdict en
+  `output`.
+· **L'orchestration est tracee et IMBRIQUEE** :
+```
+LangGraph (trace)
+├── ASI_08                      <- le noeud du graphe
+│   ├── ASI_08 · simulator x24  <- les appels LLM, dedans
+│   └── ASI_08 · evaluation x1
+└── consolidate
+```
+
+### Le bug que la suite de tests a attrape
+Les traces arrivaient sans contexte : 52 observations nommees `judge.simulator`, sans
+lien vers l'audit ni la categorie. Un tableau de bord de 200 traces anonymes ne repond
+a aucune des questions pour lesquelles on trace. Ajout de `set_context()` — appele une
+fois par l'agent (categorie) et une fois par le runner (audit).
+
+**Premiere version FAUSSE** : un seul dictionnaire global. En mode LangGraph, cinq agents
+tournent EN PARALLELE dans autant de threads — le dernier `set_context` gagnait, et les
+appels d'ASI_01 pouvaient etre etiquetes ASI_05. Un tracage qui attribue les prompts au
+mauvais agent est pire qu'un tracage absent : il fait chercher au mauvais endroit.
+-> Portee separee : `_audit` commun au processus (audit_id, profil), `_local`
+   thread-local pour la categorie. Verrouille par un controle a deux threads.
+
+Auto-test `python -m judge.tracing` : **4 -> 15 controles** (inerte sans cle, actif avec
+client simule, n'avale aucune exception, contexte, parallelisme). 80 tests au total.

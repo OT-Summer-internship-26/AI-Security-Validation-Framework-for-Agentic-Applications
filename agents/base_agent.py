@@ -388,6 +388,11 @@ class BaseSecurityAgent(ABC):
 
         profile = (self.config.get("llm_profile") or DEFAULT_PROFILE or "dev").lower()
         raw["profile"] = profile
+        # Contexte de tracage : toutes les observations produites par cet agent
+        # porteront sa categorie et son profil (cf. judge/tracing.set_context).
+        from judge.tracing import set_context
+
+        set_context(category=self.asi_category, profile=profile)
         is_dry = profile in ("dry_run", "dry-run", "ci")
         severity_judge = None
 

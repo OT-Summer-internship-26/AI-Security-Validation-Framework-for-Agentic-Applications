@@ -227,6 +227,9 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     if args.requirements_path:
         cfg["requirements_path"] = args.requirements_path
 
+    from judge.tracing import set_context
+
+    set_context(audit_id=record["audit_id"], profile=args.profile)
     state = run_audit_graph(args.target, cfg, categories=cats,
                             thread_id=record["thread_id"], on_agent_done=persiste)
 

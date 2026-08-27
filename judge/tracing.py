@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Any
 
@@ -35,6 +36,66 @@ logger = logging.getLogger(__name__)
 
 _client: Any = None
 _checked = False
+
+# Contexte courant, attaché à CHAQUE observation.
+#
+# POURQUOI C'EST INDISPENSABLE — constaté sur le premier run réel
+#     52 traces sont arrivées, toutes nommées `judge.simulator`, sans le moindre
+#     lien vers l'audit ou la catégorie qui les avait produites. Un tableau de
+#     bord de 200 traces anonymes ne répond à aucune des questions pour
+#     lesquelles on trace : « quels prompts ASI_07 a-t-il envoyés ? », « pourquoi
+#     ce verdict-là ? ». L'observabilité sans contexte n'est qu'un compteur.
+#
+#     Le SDK 4.14 n'expose ni `session_id` ni `tags` sur une observation : on
+#     passe donc par le NOM (lisible d'un coup d'œil) et les MÉTADONNÉES
+#     (filtrables dans l'interface).
+# DEUX PORTÉES, ET C'EST INDISPENSABLE.
+#
+#     `_audit` — valeurs communes à tout le processus (identifiant d'audit,
+#     profil), posées une fois par le runner.
+#
+#     `_local` — valeurs propres à un THREAD : la catégorie. En mode LangGraph,
+#     cinq agents tournent EN PARALLÈLE dans autant de threads. Avec un seul
+#     dictionnaire global, le dernier `set_context` gagnait : les appels d'ASI_01
+#     pouvaient être étiquetés ASI_05. Un traçage qui attribue les prompts au
+#     mauvais agent est pire qu'un traçage absent — il fait chercher au mauvais
+#     endroit. (Attrapé par la suite de tests, pas en production.)
+_audit: dict[str, str] = {}
+_local = threading.local()
+
+
+def set_context(audit_id: str = "", category: str = "", profile: str = "") -> None:
+    """Déclare à quel audit et à quelle catégorie appartiennent les traces suivantes.
+
+    `audit_id` et `profile` valent pour tout le processus ; `category` ne vaut que
+    pour le thread courant — c'est ce qui permet à cinq agents parallèles de ne
+    pas se voler leurs étiquettes.
+
+    Les valeurs vides sont ignorées : un appel partiel ne perd rien de ce qui est
+    déjà posé.
+    """
+    for cle, valeur in (("audit_id", audit_id), ("profile", profile)):
+        if valeur:
+            _audit[cle] = str(valeur)
+    if category:
+        _local.category = str(category)
+
+
+def current_context() -> dict[str, str]:
+    """Contexte effectif du thread courant : commun + propre au thread."""
+    ctx = dict(_audit)
+    categorie = getattr(_local, "category", "")
+    if categorie:
+        ctx["category"] = categorie
+    return ctx
+
+
+def clear_context() -> None:
+    """Repart d'un contexte vide (entre deux audits d'un même processus, et
+    entre deux tests — sans quoi une catégorie fuit d'un cas à l'autre)."""
+    _audit.clear()
+    if hasattr(_local, "category"):
+        del _local.category
 
 
 def get_client() -> Any:
@@ -86,12 +147,18 @@ def trace_llm_call(role: str, model: Any, prompt: str, response: Any,
         return
     try:
         name = getattr(model, "get_model_name", lambda: str(model))()
-        with client.start_as_current_observation(name=f"judge.{role}", as_type="generation") as obs:
+        # Le nom porte la catégorie : dans une liste de 200 traces, « ASI_07 ·
+        # simulator » se repère instantanément là où « judge.simulator » ne dit rien.
+        contexte = current_context()
+        categorie = contexte.get("category", "")
+        titre = f"{categorie} · {role}" if categorie else f"judge.{role}"
+        with client.start_as_current_observation(name=titre, as_type="generation") as obs:
             obs.update(
                 model=str(name),
                 input=prompt[:4000],
                 output=str(response)[:4000],
                 metadata={"role": role, "duration_s": round(duration_s, 2),
+                          **contexte,
                           **({"error": error} if error else {})},
             )
     except Exception as exc:  # l'observabilité ne casse pas la production
@@ -271,6 +338,7 @@ def demo() -> None:
         def flush(self): FauxClient.flushed += 1
 
     _client, _checked = FauxClient(), True
+    clear_context()          # un test precedent a pu laisser une categorie
     try:
         # Un modele deepeval renvoie (reponse, cout) : on ne trace que la reponse.
         class Modele:
@@ -305,9 +373,62 @@ def demo() -> None:
         m2.generate("x")
         assert len(observations) - avant == 2, "un appel = une observation"
 
+        # Le CONTEXTE doit atteindre le nom ET les metadonnees : sans lui, une
+        # trace ne dit pas a quel audit ni a quelle categorie elle appartient.
+        observations.clear()
+        set_context(audit_id="ASI_07-20260827", category="ASI_07", profile="ollama")
+        traced_model(Modele(), "simulator").generate("attaque contextualisee")
+        assert [o.get("_name") for o in observations if o.get("_name")] == ["ASI_07 · simulator"]
+        meta = next(o for o in observations if "metadata" in o)["metadata"]
+        assert meta["category"] == "ASI_07" and meta["audit_id"] == "ASI_07-20260827"
+        assert meta["profile"] == "ollama" and meta["role"] == "simulator"
+
+        # PARALLELISME : deux threads, deux categories. Sans portee par thread, le
+        # dernier `set_context` gagnait et les appels d'un agent portaient
+        # l'etiquette d'un autre — bug reel du mode LangGraph (5 agents en vagues).
+        import threading
+
+        observations.clear()
+        clear_context()
+        set_context(audit_id="GLOBAL-1", profile="ollama")
+        vus: dict[str, str] = {}
+
+        def agent(cat):
+            set_context(category=cat)
+            traced_model(Modele(), "simulator").generate(f"attaque {cat}")
+            vus[cat] = current_context().get("category", "")
+
+        fils = [threading.Thread(target=agent, args=(c,)) for c in ("ASI_01", "ASI_05")]
+        for f in fils:
+            f.start()
+        for f in fils:
+            f.join()
+        assert vus == {"ASI_01": "ASI_01", "ASI_05": "ASI_05"}, vus
+        noms = sorted(o["_name"] for o in observations if o.get("_name"))
+        assert noms == ["ASI_01 · simulator", "ASI_05 · simulator"], noms
+        # L'audit reste commun aux deux threads.
+        for o in observations:
+            if "metadata" in o:
+                assert o["metadata"]["audit_id"] == "GLOBAL-1"
+
+        clear_context()
+        set_context(audit_id="ASI_07-20260827", category="ASI_07", profile="ollama")
+        observations.clear()
+        traced_model(Modele(), "simulator").generate("x")
+        meta = next(o for o in observations if "metadata" in o)["metadata"]
+        assert meta["category"] == "ASI_07"
+
+        # Un appel partiel n'ecrase pas ce qui est deja pose.
+        set_context(category="ASI_09")
+        observations.clear()
+        traced_model(Modele(), "evaluation").generate("x")
+        meta = next(o for o in observations if "metadata" in o)["metadata"]
+        assert meta["category"] == "ASI_09" and meta["audit_id"] == "ASI_07-20260827"
+        clear_context()
+
         flush()
         assert FauxClient.flushed == 1
-        print("tracing : 9/9 controles OK (inerte sans cle, actif avec, "
+        print("tracing : 15/15 controles OK (inerte sans cle, actif avec, "
               "n'avale aucune exception)")
     finally:
         _client, _checked = None, False

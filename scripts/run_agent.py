@@ -147,6 +147,12 @@ def main() -> int:
     print(f"{D}profil {args.profile} · modèle {model_used} · "
           f"{args.attacks_per_type} attaque(s)/type{X}\n", flush=True)
 
+    # Identifiant d'audit dans chaque trace : sans lui, deux runs successifs se
+    # melangent dans le tableau de bord et aucune trace n'est rattachable.
+    from judge.tracing import set_context
+
+    set_context(audit_id=f"{args.category}-{datetime.now():%Y%m%d%H%M%S}")
+
     agent = AGENT_REGISTRY[args.category](target_callback=cb, config=cfg)
 
     # Axes coupés à la demande. `deepteam_category=""` rend la couche
