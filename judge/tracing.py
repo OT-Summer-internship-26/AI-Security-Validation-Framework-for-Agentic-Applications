@@ -30,6 +30,7 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -91,11 +92,49 @@ def current_context() -> dict[str, str]:
 
 
 def clear_context() -> None:
-    """Repart d'un contexte vide (entre deux audits d'un même processus, et
-    entre deux tests — sans quoi une catégorie fuit d'un cas à l'autre)."""
+    """Repart d'un contexte vide (entre deux audits d'un même processus, et entre
+    deux tests — sans quoi une catégorie fuit d'un cas à l'autre)."""
     _audit.clear()
     if hasattr(_local, "category"):
         del _local.category
+
+
+@contextmanager
+def audit_context(audit_id: str = "", profile: str = ""):
+    """Délimite un audit : le contexte est POSÉ à l'entrée et RESTAURÉ à la sortie.
+
+    POURQUOI UN BLOC ET PAS UN `clear_context()` A APPELER
+        `set_context()` est purement additif : une valeur posée y reste pour
+        toujours. Un second audit dans le même processus héritait donc de la
+        catégorie du dernier agent du premier — mesuré : `audit_id=AUDIT-2` avec
+        `category=ASI_01`. Des prompts se retrouvaient étiquetés sur la mauvaise
+        catégorie, c'est-à-dire le défaut même que la portée par thread avait
+        corrigé entre agents, reproduit entre audits.
+
+        Confier le nettoyage a un `clear_context()` que chaque runner doit penser
+        à appeler reproduit la fragilité d'origine : le jour où quelqu'un ajoute
+        un troisième runner, la fuite revient. Ici c'est le langage qui garantit
+        la restauration — `finally` s'exécute même sur exception ou interruption.
+
+    Le bloc restaure l'état PRÉCÉDENT (et non un état vide) : un audit imbriqué
+    dans un autre ne détruit pas le contexte de son parent.
+    """
+    ancien_audit = dict(_audit)
+    ancienne_categorie = getattr(_local, "category", None)
+    try:
+        _audit.clear()
+        if hasattr(_local, "category"):
+            del _local.category
+        set_context(audit_id=audit_id, profile=profile)
+        yield
+    finally:
+        _audit.clear()
+        _audit.update(ancien_audit)
+        if ancienne_categorie is None:
+            if hasattr(_local, "category"):
+                del _local.category
+        else:
+            _local.category = ancienne_categorie
 
 
 def get_client() -> Any:
@@ -424,11 +463,37 @@ def demo() -> None:
         traced_model(Modele(), "evaluation").generate("x")
         meta = next(o for o in observations if "metadata" in o)["metadata"]
         assert meta["category"] == "ASI_09" and meta["audit_id"] == "ASI_07-20260827"
+        # PORTEE D'AUDIT : aucune fuite d'un audit vers le suivant, et la
+        # restauration tient meme si le bloc part en exception.
+        clear_context()
+        with audit_context(audit_id="AUDIT-1", profile="ollama"):
+            set_context(category="ASI_01")
+            assert current_context()["category"] == "ASI_01"
+        with audit_context(audit_id="AUDIT-2", profile="final"):
+            ctx = current_context()
+            assert ctx["audit_id"] == "AUDIT-2" and "category" not in ctx, ctx
+        assert current_context() == {}, "le contexte doit etre rendu a son etat d'origine"
+
+        # Une exception dans le bloc ne doit pas laisser le contexte pollue.
+        try:
+            with audit_context(audit_id="AUDIT-3"):
+                set_context(category="ASI_09")
+                raise RuntimeError("panne en plein audit")
+        except RuntimeError:
+            pass
+        assert current_context() == {}, "le `finally` doit restaurer meme sur exception"
+
+        # Un audit imbrique restitue le contexte de son parent (et ne le detruit pas).
+        with audit_context(audit_id="PARENT"):
+            set_context(category="ASI_02")
+            with audit_context(audit_id="ENFANT"):
+                assert current_context()["audit_id"] == "ENFANT"
+            assert current_context() == {"audit_id": "PARENT", "category": "ASI_02"}
         clear_context()
 
         flush()
         assert FauxClient.flushed == 1
-        print("tracing : 15/15 controles OK (inerte sans cle, actif avec, "
+        print("tracing : 19/19 controles OK (inerte sans cle, actif avec, "
               "n'avale aucune exception)")
     finally:
         _client, _checked = None, False

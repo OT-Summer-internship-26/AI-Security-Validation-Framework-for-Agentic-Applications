@@ -45,7 +45,7 @@ CI/CD : si score < 70 → bloquer le déploiement
 | Outil | Version | Rôle |
 |---|---|---|
 | DeepTeam | latest | Moteur de red teaming principal, LLM-as-Judge intégré, framework OWASP_ASI_2026 natif. Utilisé dans tous les agents ASI01→ASI10 dans `_run_behavioral_layer()` |
-| DeepEval | latest | Évaluation des réponses LLM. Utilisé SÉPARÉMENT de DeepTeam dans ASI06 (mesure de déviation comportementale avant/après memory poisoning) et ASI09 (détection manipulation émotionnelle, misinformation, fausse expertise dans les réponses de l'agent) |
+| DeepEval | latest | **NON utilisé comme axe d'évaluation.** Le plan initial le prévoyait pour ASI06 et ASI09 ; décision inverse prise et documentée (§5 obsolète, §25, §32) : redondant avec `ContextPoisoning` de DeepTeam pour ASI06, et `BiasMetric`/`ToxicityMetric` mesurent le biais et la toxicité — pas la fausse expertise ni la pression émotionnelle (§32). Seules ses classes de MODÈLES (`deepeval.models`) servent, comme connecteurs LLM pour DeepTeam. |
 | PyRIT | latest | Attaques multi-turn sophistiquées (Microsoft) |
 | Promptfoo | latest | Tests CI/CD automatisés (YAML configs) |
 | Garak | latest | Variantes automatiques d'attaques LLM |
@@ -2408,3 +2408,48 @@ mauvais agent est pire qu'un tracage absent : il fait chercher au mauvais endroi
 
 Auto-test `python -m judge.tracing` : **4 -> 15 controles** (inerte sans cle, actif avec
 client simule, n'avale aucune exception, contexte, parallelisme). 80 tests au total.
+
+
+## 38.1 LES DEUX DEFAUTS INTRODUITS PAR LE TRACAGE, CORRIGES A LA RACINE (2026-08-27)
+
+Les deux venaient de la MEME cause : un etat global qu'il fallait « penser a » remettre
+a zero. La correction supprime le « penser a ».
+
+### 1. Le contexte de trace fuyait d'un audit a l'autre
+`set_context()` est purement ADDITIF : une valeur posee y restait pour toujours. Un
+second audit dans le meme processus heritait donc de la categorie du dernier agent du
+premier — mesure : `audit_id=AUDIT-2` avec `category=ASI_01`. Des prompts se retrouvaient
+etiquetes sur la mauvaise categorie, c'est-a-dire exactement le defaut que la portee par
+thread venait de corriger ENTRE AGENTS, reproduit ENTRE AUDITS.
+
+**Correction ecartee** : appeler `clear_context()` dans chaque runner. C'est reproduire
+la fragilite d'origine — le jour ou quelqu'un ajoute un troisieme runner, la fuite revient.
+
+**Correction retenue** : `audit_context(audit_id, profile)`, un gestionnaire de contexte.
+Le contexte est pose a l'entree et RESTAURE dans un `finally` — donc meme sur exception
+ou interruption. Ce n'est plus une discipline, c'est le langage qui garantit. Il restaure
+l'etat PRECEDENT et non un etat vide : un audit imbrique ne detruit pas celui de son parent.
+Verifie en conditions reelles : deux audits enchaines dans un meme processus, aucune fuite,
+contexte vide a la sortie.
+
+### 2. Le plafond de requetes etait fige a l'import
+Le semaphore etait construit au chargement du module. Tout appelant posant
+`AUDIT_TARGET_CONCURRENCY` APRES l'import — l'API, un notebook, un test — voyait sa
+valeur ignoree EN SILENCE (mesure : plafond a 3 malgre `os.environ = "1"`). Un reglage
+qui ne reagit pas la ou on l'attend est pire qu'un reglage absent.
+
+**Correction** : resolution PARESSEUSE au premier acquire (double verification sous
+verrou), donc apres que l'appelant a eu l'occasion de poser la variable, plus
+`set_target_concurrency()` pour le regler par programme. Les requetes deja en vol
+terminent sur l'ancien semaphore — on ne retire pas un jeton deja pris sans risquer un
+blocage ; le nouveau plafond vaut pour les suivantes. Une valeur absurde est bornee a 1 :
+un plafond a zero bloquerait l'audit pour toujours.
+
+### 3. Contradiction de doc corrigee
+Le §2 annoncait encore DeepEval « utilise separement dans ASI06 et ASI09 » quand le §4
+dit « NON implemente ». Deux sections du meme document se contredisaient. Le §2 renvoie
+desormais a la decision et a son motif (§25, §32).
+
+**Verrouillage** : `judge.tracing` passe a **19 controles** (portee d'audit, restauration
+sur exception, imbrication) ; `tests/test_base_agent.py` gagne un controle sur le plafond
+lu APRES l'import et reconfigurable. **81 tests** au total, dry_run 5.57.

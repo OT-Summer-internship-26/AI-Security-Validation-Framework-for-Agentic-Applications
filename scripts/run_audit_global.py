@@ -227,11 +227,13 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     if args.requirements_path:
         cfg["requirements_path"] = args.requirements_path
 
-    from judge.tracing import set_context
+    # Le contexte de tracage est DELIMITE par un bloc : impossible qu'il fuite
+    # vers un audit suivant lance dans le meme processus (cf. judge/tracing).
+    from judge.tracing import audit_context
 
-    set_context(audit_id=record["audit_id"], profile=args.profile)
-    state = run_audit_graph(args.target, cfg, categories=cats,
-                            thread_id=record["thread_id"], on_agent_done=persiste)
+    with audit_context(audit_id=record["audit_id"], profile=args.profile):
+        state = run_audit_graph(args.target, cfg, categories=cats,
+                                thread_id=record["thread_id"], on_agent_done=persiste)
 
     # REPRISE : les agents deja termines ne sont pas rejoues, donc `persiste` n'a
     # pas ete appele pour eux — sans ce comblement, un audit repris produirait un

@@ -1505,8 +1505,52 @@ def load_microsoft_scenarios(asi_category: str, match: str = "primary") -> list[
 #
 # Un sémaphore borné, partagé par tout le processus : les agents continuent de
 # travailler en parallèle, seules leurs requêtes HTTP font la queue.
-TARGET_CONCURRENCY = max(1, int(os.environ.get("AUDIT_TARGET_CONCURRENCY", "3")))
-_TARGET_SLOTS = threading.BoundedSemaphore(TARGET_CONCURRENCY)
+# RESOLU A LA PREMIERE UTILISATION, PAS A L'IMPORT.
+#
+#     La version precedente construisait le semaphore au chargement du module :
+#     tout appelant qui posait `AUDIT_TARGET_CONCURRENCY` APRES l'import (l'API,
+#     un notebook, un test) voyait sa valeur ignoree EN SILENCE — mesure : plafond
+#     fige a 3 malgre `os.environ[...] = "1"`. Un reglage qui ne reagit pas la ou
+#     on l'attend est pire qu'un reglage absent.
+#
+#     Resolution paresseuse + verrou : la valeur est lue au premier acquire, donc
+#     apres que l'appelant a eu l'occasion de la poser. `set_target_concurrency()`
+#     permet en plus de la changer par programme.
+_TARGET_LOCK = threading.Lock()
+_TARGET_SLOTS: threading.BoundedSemaphore | None = None
+_TARGET_LIMIT = 0
+
+
+def target_concurrency() -> int:
+    """Plafond effectif de requetes simultanees vers la cible."""
+    _slots()
+    return _TARGET_LIMIT
+
+
+def set_target_concurrency(limit: int) -> None:
+    """Change le plafond par programme (l'API, un test, un notebook).
+
+    Les requetes DEJA en vol terminent sur l'ancien semaphore : on ne peut pas
+    retirer un jeton deja pris sans risquer un blocage. Le nouveau plafond
+    s'applique aux requetes suivantes — c'est le compromis sur lequel repose la
+    simplicite de ce mecanisme, et il est sans consequence puisqu'on ne change
+    pas ce reglage en plein audit.
+    """
+    global _TARGET_SLOTS, _TARGET_LIMIT
+    with _TARGET_LOCK:
+        _TARGET_LIMIT = max(1, int(limit))
+        _TARGET_SLOTS = threading.BoundedSemaphore(_TARGET_LIMIT)
+
+
+def _slots() -> threading.BoundedSemaphore:
+    """Semaphore partage, construit au PREMIER usage (double verification)."""
+    global _TARGET_SLOTS, _TARGET_LIMIT
+    if _TARGET_SLOTS is None:
+        with _TARGET_LOCK:
+            if _TARGET_SLOTS is None:
+                _TARGET_LIMIT = max(1, int(os.environ.get("AUDIT_TARGET_CONCURRENCY", "3")))
+                _TARGET_SLOTS = threading.BoundedSemaphore(_TARGET_LIMIT)
+    return _TARGET_SLOTS
 
 
 def build_http_callback(
@@ -1554,8 +1598,8 @@ def build_http_callback(
 
     def _callback(prompt: str) -> Any:
         # Le sémaphore encadre TOUT l'appel réseau : sans lui, dix agents peuvent
-        # saturer une cible qui traite une requête à la fois (cf. TARGET_CONCURRENCY).
-        with _TARGET_SLOTS:
+        # saturer une cible qui traite une requête à la fois (cf. target_concurrency).
+        with _slots():
             return _send(prompt)
 
     def _send(prompt: str) -> Any:

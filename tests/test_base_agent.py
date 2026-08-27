@@ -264,7 +264,7 @@ def test_agent_non_mesure_exclu_du_score_global():
 # --------------------------------------------------------------------------- #
 
 def test_plafond_de_requetes_simultanees():
-    """La cible ne doit JAMAIS voir plus de `TARGET_CONCURRENCY` requetes a la fois.
+    """La cible ne doit JAMAIS voir plus de `target_concurrency()` requetes a la fois.
 
     LE BUG QU'IL ATTRAPE : 5 agents paralleles x max_concurrent 2 = 10 requetes
     simultanees sur une cible qui en traite une toutes les 19 s. Mesure sur
@@ -276,7 +276,7 @@ def test_plafond_de_requetes_simultanees():
     import threading
     import time
 
-    from agents.base_agent import TARGET_CONCURRENCY
+    from agents.base_agent import target_concurrency
 
     etat = {"en_cours": 0, "max": 0, "total": 0}
     verrou = threading.Lock()
@@ -312,8 +312,35 @@ def test_plafond_de_requetes_simultanees():
     finally:
         srv.shutdown()
 
-    assert etat["max"] <= TARGET_CONCURRENCY, (
+    assert etat["max"] <= target_concurrency(), (
         f"{etat['max']} requetes simultanees vues alors que le plafond est "
-        f"{TARGET_CONCURRENCY} : la cible peut saturer"
+        f"{target_concurrency()} : la cible peut saturer"
     )
     assert etat["total"] == 12, "le plafond ne doit PERDRE aucune requete, seulement les etaler"
+
+
+def test_plafond_lu_apres_import_et_reconfigurable(monkeypatch):
+    """Le plafond doit reagir a un reglage pose APRES l'import du module.
+
+    LE BUG QU'IL ATTRAPE : le semaphore etait construit au chargement du module.
+    Un appelant qui posait AUDIT_TARGET_CONCURRENCY ensuite — l'API, un notebook,
+    un test — voyait sa valeur ignoree EN SILENCE (mesure : plafond fige a 3
+    malgre os.environ = "1"). Un reglage qui ne reagit pas la ou on l'attend est
+    pire qu'un reglage absent.
+    """
+    import agents.base_agent as ba
+
+    # Etat non encore resolu + variable posee apres l'import -> elle doit gagner.
+    monkeypatch.setattr(ba, "_TARGET_SLOTS", None)
+    monkeypatch.setenv("AUDIT_TARGET_CONCURRENCY", "7")
+    assert ba.target_concurrency() == 7
+
+    # Reglage par programme.
+    ba.set_target_concurrency(2)
+    assert ba.target_concurrency() == 2
+
+    # Une valeur absurde est bornee, jamais acceptee telle quelle : un plafond a
+    # zero bloquerait tout l'audit pour toujours.
+    ba.set_target_concurrency(0)
+    assert ba.target_concurrency() == 1
+    ba.set_target_concurrency(3)
