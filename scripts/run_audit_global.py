@@ -141,6 +141,12 @@ def main() -> int:
         print(f"[global] {cat} → {scores.get(cat)}/10 · "
               f"cumul {record['global_score']}/100 ({record['risk_level']})", flush=True)
 
+    # Vide la file LangFuse : sans flush, les dernieres observations meurent avec
+    # le processus. Le chemin LangGraph est le mode PAR DEFAUT — c'est donc ici
+    # qu'il manquait, `run_agent.py` (sous-processus) l'ayant deja.
+    from judge.tracing import flush as _flush_traces
+
+    _flush_traces()
     record["status"] = "completed"
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
@@ -238,6 +244,12 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
                   if a.get("measured", True)}
         record.update(consolidate(scores))
 
+    # Vide la file LangFuse : sans flush, les dernieres observations meurent avec
+    # le processus. Le chemin LangGraph est le mode PAR DEFAUT — c'est donc ici
+    # qu'il manquait, `run_agent.py` (sous-processus) l'ayant deja.
+    from judge.tracing import flush as _flush_traces
+
+    _flush_traces()
     record["status"] = "completed"
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 

@@ -109,6 +109,100 @@ def flush() -> None:
             logger.debug("LangFuse : flush ignoré (%s)", exc)
 
 
+def traced_model(model: Any, role: str) -> Any:
+    """Enveloppe une instance de modèle pour tracer CHACUN de ses appels.
+
+    POURQUOI ICI ET PAS DANS `structured()`
+        `structured()` ne voit que les appels des JUGES — une poignée par audit.
+        La très grande majorité des appels LLM vient de DeepTeam (100-200 par run,
+        cf. §15) et de PyRIT, qui utilisent les mêmes instances de modèles mais ne
+        passent jamais par notre code. Tracer au niveau de l'INSTANCE couvre donc
+        tout le monde, sans toucher ni DeepTeam ni PyRIT : ils appellent
+        `generate()` comme avant, l'observation part toute seule.
+
+        C'est la même règle que partout ailleurs dans ce projet : instrumenter la
+        racine commune plutôt que chaque appelant.
+
+    Renvoie le modèle INCHANGÉ si le traçage n'est pas configuré : aucun surcoût,
+    aucun risque quand LangFuse est absent.
+    """
+    if get_client() is None or model is None or getattr(model, "_lf_traced", False):
+        return model
+
+    for nom in ("generate", "a_generate"):
+        original = getattr(model, nom, None)
+        if original is None:
+            continue
+        setattr(model, nom, _wrap(original, role, model, is_async=nom.startswith("a_")))
+    try:
+        model._lf_traced = True     # évite un double enveloppement
+    except Exception:
+        pass
+    return model
+
+
+def _wrap(original: Any, role: str, model: Any, *, is_async: bool) -> Any:
+    """Construit la version tracée d'un `generate` / `a_generate`."""
+    if is_async:
+        async def enveloppe_async(prompt, *args, **kwargs):
+            debut = time.time()
+            try:
+                resultat = await original(prompt, *args, **kwargs)
+            except Exception as exc:
+                trace_llm_call(role, model, str(prompt), "", time.time() - debut, str(exc))
+                raise
+            trace_llm_call(role, model, str(prompt), _sortie(resultat), time.time() - debut)
+            return resultat
+
+        return enveloppe_async
+
+    def enveloppe(prompt, *args, **kwargs):
+        debut = time.time()
+        try:
+            resultat = original(prompt, *args, **kwargs)
+        except Exception as exc:
+            trace_llm_call(role, model, str(prompt), "", time.time() - debut, str(exc))
+            raise
+        trace_llm_call(role, model, str(prompt), _sortie(resultat), time.time() - debut)
+        return resultat
+
+    return enveloppe
+
+
+def _sortie(resultat: Any) -> str:
+    """Les modèles deepeval renvoient `(réponse, coût)` — on ne trace que la réponse."""
+    if isinstance(resultat, tuple) and resultat:
+        return str(resultat[0])
+    return str(resultat)
+
+
+def graph_callbacks() -> list[Any]:
+    """Callbacks LangFuse pour tracer L'ORCHESTRATION LangGraph elle-même.
+
+    CE QUE ÇA AJOUTE, ET EN QUOI C'EST DIFFÉRENT
+        `traced_model` trace les APPELS LLM : prompts, réponses, durées. Ceci
+        trace le GRAPHE : quel nœud a démarré quand, combien de temps a duré
+        chaque agent, dans quel ordre les deux vagues se sont enchaînées, et où
+        une reprise a repris. Deux vues complémentaires — l'une dit ce qui a été
+        demandé aux modèles, l'autre comment l'audit s'est déroulé.
+
+        LangGraph appartient à la famille LangChain : son mécanisme de callbacks
+        est donc directement exploitable, sans instrumenter nos nœuds.
+
+    Renvoie une liste VIDE si LangFuse n'est pas configuré — `config={"callbacks": []}`
+    est parfaitement valide pour LangGraph, donc l'appelant n'a rien à tester.
+    """
+    if get_client() is None:
+        return []
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        return [CallbackHandler()]
+    except Exception as exc:  # version incompatible, dépendance LangChain absente
+        logger.warning("LangFuse : traçage du graphe indisponible (%s)", exc)
+        return []
+
+
 class timed:
     """Chronomètre un appel LLM et le trace à la sortie du bloc.
 
@@ -155,12 +249,69 @@ def demo() -> None:
         except ValueError:
             leve = True
         assert leve, "le traceur ne doit jamais masquer une exception"
-        print("tracing : 4/4 controles OK (inerte sans cle, n'avale aucune exception)")
     finally:
         for k, v in saved.items():
             if v is not None:
                 os.environ[k] = v
         _client, _checked = None, False
+
+        # ---- Chemin ACTIF : jusqu'ici seul le cas « pas de cle » etait verifie ---- #
+    observations: list[dict] = []
+
+    class FauxSpan:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def update(self, **kw): observations.append(kw)
+
+    class FauxClient:
+        flushed = 0
+        def start_as_current_observation(self, **kw):
+            observations.append({"_name": kw.get("name")})
+            return FauxSpan()
+        def flush(self): FauxClient.flushed += 1
+
+    _client, _checked = FauxClient(), True
+    try:
+        # Un modele deepeval renvoie (reponse, cout) : on ne trace que la reponse.
+        class Modele:
+            def get_model_name(self): return "modele-test"
+            def generate(self, prompt, schema=None): return ("reponse", 0.0)
+
+        m = traced_model(Modele(), "simulator")
+        assert m.generate("attaque") == ("reponse", 0.0), "l'enveloppe ne doit RIEN changer au retour"
+        noms = [o.get("_name") for o in observations if o.get("_name")]
+        assert noms == ["judge.simulator"], noms
+        trace = next(o for o in observations if "input" in o)
+        assert trace["input"] == "attaque" and trace["output"] == "reponse"
+        assert trace["model"] == "modele-test"
+
+        # Une exception du modele est TRACEE puis RELANCEE (jamais avalee).
+        class Casse:
+            def get_model_name(self): return "casse"
+            def generate(self, prompt, schema=None): raise RuntimeError("panne")
+
+        c = traced_model(Casse(), "evaluation")
+        leve = False
+        try:
+            c.generate("p")
+        except RuntimeError:
+            leve = True
+        assert leve, "le tracage ne doit pas masquer une panne du modele"
+        assert any("panne" in str(o.get("metadata", {})) for o in observations)
+
+        # Double enveloppement impossible (sinon chaque appel serait trace N fois).
+        avant = len(observations)
+        m2 = traced_model(m, "simulator")
+        m2.generate("x")
+        assert len(observations) - avant == 2, "un appel = une observation"
+
+        flush()
+        assert FauxClient.flushed == 1
+        print("tracing : 9/9 controles OK (inerte sans cle, actif avec, "
+              "n'avale aucune exception)")
+    finally:
+        _client, _checked = None, False
+
 
 
 if __name__ == "__main__":

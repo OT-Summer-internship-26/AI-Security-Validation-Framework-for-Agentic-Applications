@@ -363,6 +363,30 @@ def get_pyrit_chat_config(profile: str | None = None) -> dict[str, str]:
         exactement comme pour Ollama /v1 — spike §17).
     """
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
+    return _traced(_build_models(profile))
+
+
+def _traced(models: "JudgeModels") -> "JudgeModels":
+    """Rend les deux modèles TRAÇABLES avant de les livrer.
+
+    POURQUOI ICI
+        Ces mêmes instances sont ensuite passées à `red_team()` (DeepTeam) et à
+        PyRIT, qui font l'écrasante majorité des appels LLM d'un audit — 100 à 200
+        par run, contre une poignée pour les juges. Les envelopper à la FABRICATION
+        est le seul endroit qui les couvre tous, sans modifier une ligne de
+        DeepTeam ni de PyRIT : ils continuent d'appeler `generate()` comme avant.
+
+        Instrumenter `structured()` (les juges) ne traçait que l'exception ; ici on
+        trace la règle. Inerte si LangFuse n'est pas configuré.
+    """
+    from judge.tracing import traced_model
+
+    simulator, evaluation = models
+    return (traced_model(simulator, "simulator"), traced_model(evaluation, "evaluation"))
+
+
+def _build_models(profile: str) -> "JudgeModels":
+    """Fabrique les deux instances selon le profil (sans traçage)."""
 
     if profile == "final":
         key = _gemini_api_key()
@@ -426,6 +450,30 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
     Retour : tuple (simulator, evaluation), tous deux DeepEvalBaseLLM.
     """
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
+    return _traced(_build_models(profile))
+
+
+def _traced(models: "JudgeModels") -> "JudgeModels":
+    """Rend les deux modèles TRAÇABLES avant de les livrer.
+
+    POURQUOI ICI
+        Ces mêmes instances sont ensuite passées à `red_team()` (DeepTeam) et à
+        PyRIT, qui font l'écrasante majorité des appels LLM d'un audit — 100 à 200
+        par run, contre une poignée pour les juges. Les envelopper à la FABRICATION
+        est le seul endroit qui les couvre tous, sans modifier une ligne de
+        DeepTeam ni de PyRIT : ils continuent d'appeler `generate()` comme avant.
+
+        Instrumenter `structured()` (les juges) ne traçait que l'exception ; ici on
+        trace la règle. Inerte si LangFuse n'est pas configuré.
+    """
+    from judge.tracing import traced_model
+
+    simulator, evaluation = models
+    return (traced_model(simulator, "simulator"), traced_model(evaluation, "evaluation"))
+
+
+def _build_models(profile: str) -> "JudgeModels":
+    """Fabrique les deux instances selon le profil (sans traçage)."""
 
     if profile == "dev":
         # `dev` = ALIAS d'`ollama` par défaut (2026-08-24).

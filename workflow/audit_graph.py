@@ -326,10 +326,16 @@ def run_audit_graph(
     os.makedirs(os.path.dirname(CHECKPOINT_DB), exist_ok=True)
 
     state = AuditState(target_url=target_url, target_config=cfg)
+    from judge.tracing import graph_callbacks
+
     run_config = {"configurable": {"thread_id": thread},
                   # Un audit complet dépasse largement la limite par défaut (25) :
                   # 10 nœuds + consolidation, plus les reprises éventuelles.
-                  "recursion_limit": 50}
+                  "recursion_limit": 50,
+                  # Traçage de L'ORCHESTRATION (durée de chaque nœud, ordre des
+                  # vagues, reprises) — distinct du traçage des appels LLM. Liste
+                  # vide si LangFuse n'est pas configuré.
+                  "callbacks": graph_callbacks()}
 
     with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
         saver.serde = JsonPlusSerializer(allowed_msgpack_modules=_CHECKPOINT_TYPES)
