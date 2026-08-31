@@ -518,7 +518,7 @@ Toute décision non évidente doit être commentée directement dans le code :
 | 3 | Base de connaissances structurée | config/owasp_knowledge_base.json | ✅ |
 | 4 | Framework d'audit réutilisable | api/ + workflow/ + scripts/run_audit_global.py | ✅ |
 | 5 | 10 agents spécialisés OWASP | agents/asi01 → asi10 | ✅ (chacun ≥ 1 run réel) |
-| 6 | Jeux de tests et scénarios d'attaque | runs DVAP dans data/audit_results/ | ⬜ suite pytest absente |
+| 6 | Jeux de tests et scénarios d'attaque | runs DVAP dans data/audit_results/ + tests/ (146 tests, en CI) | ✅ |
 | 7 | Système de scoring des risques | workflow/scoring.py | ✅ |
 | 8 | Rapports de sécurité automatisés | reporting/ + dashboard/ | ✅ |
 | 9 | Catalogue de recommandations | docs/security_best_practices.md (généré) | ✅ |
