@@ -231,6 +231,24 @@ def _build_limits(audit: dict[str, Any]) -> list[dict[str, str]]:
     return limits
 
 
+def _collect_agentic(audit: dict[str, Any]) -> list[dict[str, Any]]:
+    """Traces du mode agentique, par catégorie. Vide en mode déterministe.
+
+    Un audit dont un modèle a choisi les réglages n'est défendable que si ces
+    choix sont écrits noir sur blanc : ce que la perception a vu, ce qui a été
+    durci, ce qui a été REFUSÉ, et pourquoi un second passage a eu lieu.
+    """
+    sorties = []
+    for cat, agent in (audit.get("agents") or {}).items():
+        if not isinstance(agent, dict):
+            continue
+        trace = (((agent.get("layers") or {}).get("behavioral") or {})
+                 .get("raw") or {}).get("agentic_trace")
+        if trace:
+            sorties.append({"code": cat, **trace})
+    return sorties
+
+
 def build_context(audit: dict[str, Any]) -> dict[str, Any]:
     """Assemble toutes les données du rapport à partir du JSON d'audit brut."""
     agents = audit.get("agents") or {}
@@ -318,6 +336,9 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # jamais sans synthese, et sans modele ici (rendre un rapport doit rester
         # instantane et hors ligne).
         "resume": audit.get("executive_summary") or build_executive_summary(audit),
+        # Mode agentique : les décisions prises DOIVENT être lisibles, sinon un
+        # audit dont les réglages ont bougé n'est plus contestable.
+        "agentic": _collect_agentic(audit),
         "limits": _build_limits(audit),
         "radar": build_radar_data(cat_scores),
         "radar_reading": interpret_radar(cat_scores),

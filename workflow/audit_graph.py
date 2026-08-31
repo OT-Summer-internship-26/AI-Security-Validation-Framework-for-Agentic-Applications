@@ -97,7 +97,9 @@ def _run_one(category: str, target_callback, agent_config: dict[str, Any]) -> An
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             agent = cls(target_callback=target_callback, config=agent_config)
-            return agent.run()
+            # `execute()` et non `run()` : le mode (déterministe ou agentique) se
+            # règle par `config["mode"]`, donc ici sans rien savoir de la boucle.
+            return agent.execute()
         except Exception as exc:  # fail-safe : un agent ne crashe jamais l'audit
             last_error = str(exc)
             print(f"[workflow] {category} a échoué (tentative {attempt}/{MAX_ATTEMPTS}) : {exc}")

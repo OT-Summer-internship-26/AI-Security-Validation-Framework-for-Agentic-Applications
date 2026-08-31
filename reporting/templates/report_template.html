@@ -141,6 +141,7 @@
   .exec p{margin:0 0 8px;font-size:13.5px;line-height:1.55}
   .exec-prio{border-top:1px solid #e3e9ef;padding-top:8px;margin-top:10px!important}
   .exec-src{font-size:10.5px;color:#8494a3;margin-top:8px;font-style:italic}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#5b6b7c}
 </style>
 </head>
 <body>
@@ -275,6 +276,39 @@
         seules (<code>--categories</code>) donne un résultat exploitable.
       </div>
     </div>
+    {% endif %}
+
+    {# Mode agentique : les réglages ont été choisis par un modèle. Sans cette
+       trace, l'audit n'est plus reproductible NI contestable. #}
+    {% if agentic %}
+    <h3>Conduite agentique de l'audit</h3>
+    <p class="note">Les réglages de cet audit ont été adaptés à la cible par un
+      modèle de langage. Ils ne peuvent évoluer que dans le sens de la sévérité,
+      et le score retenu est le <b>minimum</b> des passages : la boucle peut
+      durcir un verdict, jamais l'améliorer.</p>
+    {% for a in agentic %}
+    <table class="tbl">
+      <tr><th colspan="2">{{ a.code }}</th></tr>
+      <tr><td>Perception</td><td>
+        cible {{ 'joignable' if a.perception.joignable else 'INJOIGNABLE' }},
+        latence {{ a.perception.latence_s }} s,
+        outils {{ 'exposés' if a.perception.outils_exposes else 'non exposés' }}
+      </td></tr>
+      <tr><td>Plan</td><td>{{ a.plan.raisonnement }}
+        {% for x in a.plan.adaptations %}<br><span class="mono">{{ x }}</span>{% endfor %}
+      </td></tr>
+      {% if a.reflexion %}
+      <tr><td>Réflexion</td><td>{{ a.reflexion.motif }}
+        {% for x in a.reflexion.adaptations or [] %}<br><span class="mono">{{ x }}</span>{% endfor %}
+      </td></tr>
+      {% endif %}
+      <tr><td>Passages</td><td>
+        {% for p in a.passages %}#{{ p.n }} → {{ p.score }}/10
+          {%- if p.note %} ({{ p.note }}){% endif %}{% if not loop.last %} · {% endif %}
+        {% endfor %}
+      </td></tr>
+    </table>
+    {% endfor %}
     {% endif %}
 
     {# Fiabilité des verdicts : ce que les juges disent d'EUX-MÊMES. Sans ce bloc,

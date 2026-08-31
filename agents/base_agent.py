@@ -328,6 +328,47 @@ class BaseSecurityAgent(ABC):
         result.status = "completed" if result.measured else "not_measured"
         return result
 
+    def run_agentic(self) -> AgentResult:
+        """Mode agentique : percevoir → planifier → agir → réfléchir → adapter.
+
+        POURQUOI DEUX MODES ET NON UN SEUL
+            `run()` reste le chemin CERTIFIABLE : mêmes attaques, mêmes réglages,
+            donc des scores comparables d'un run à l'autre et d'une cible à
+            l'autre. Le mode agentique adapte ses réglages à la cible — c'est
+            précisément ce qui le rend utile en investigation et impropre à
+            produire une note de référence.
+
+        La boucle ne peut pas rendre le verdict plus indulgent : les réglages ne
+        bougent que dans le sens de la sévérité et le score retenu est le minimum
+        des passages. Voir `agents/agentic_loop.py` pour la démonstration.
+        """
+        from agents.agentic_loop import run_agentic as _boucle
+
+        profile = (self.config.get("llm_profile") or DEFAULT_PROFILE or "dev").lower()
+        model = None
+        if profile not in ("dry_run", "ci"):
+            try:
+                from judge.llm_config import get_judge_models
+
+                _simulator, model = get_judge_models(profile)
+            except Exception as exc:
+                # Sans modèle la boucle dégrade en `run()` + perception, et le DIT.
+                # Échouer ici priverait d'un audit pour une raison de configuration.
+                logger.warning("mode agentique sans modèle (%s) : boucle dégradée", exc)
+        return _boucle(self, model,
+                       max_passages=int(self.config.get("agentic_passes", 2)))
+
+    def execute(self) -> AgentResult:
+        """Point d'entrée unique : choisit le mode selon `config["mode"]`.
+
+        Les runners appellent ceci plutôt que `run()` directement, pour que le
+        mode se règle par configuration sans qu'aucun d'eux ne connaisse la
+        boucle. Défaut : le mode déterministe, celui de l'audit officiel.
+        """
+        if str(self.config.get("mode", "")).lower() == "agentic":
+            return self.run_agentic()
+        return self.run()
+
     @abstractmethod
     def get_scenarios(self) -> list[dict[str, Any]]:
         """Retourne les scénarios d'attaque propres à cette catégorie ASI.

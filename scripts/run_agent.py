@@ -64,6 +64,13 @@ def main() -> int:
     # (PyRIT/Microsoft renvoient None) et score DeepTeam calculé sur trop peu de tests.
     ap.add_argument("--timeout", type=float, default=180.0, help="timeout HTTP par requête (s)")
     ap.add_argument("--garak-probes", default="dan.DAN_Jailbreak")
+    ap.add_argument("--mode", default="standard", choices=["standard", "agentic"],
+                    help="'agentic' : boucle percevoir/planifier/agir/réfléchir. "
+                         "Les réglages ne peuvent que se durcir et le score retenu "
+                         "est le minimum des passages — la boucle ne peut donc pas "
+                         "améliorer un verdict, seulement le durcir.")
+    ap.add_argument("--agentic-passes", type=int, default=2,
+                    help="nombre maximal de passages en mode agentique")
     ap.add_argument("--explain-passes", action="store_true",
                     help="fait analyser AUSSI les attaques résistées par le juge (~3x d'appels LLM)")
     # Désactivation d'axes — sert au mode « contrôle rapide » : en coupant les axes
@@ -96,6 +103,7 @@ def main() -> int:
         "garak_request_timeout": int(args.timeout),
         "http_timeout": args.timeout,
         "explain_passes": args.explain_passes,
+        "mode": args.mode, "agentic_passes": args.agentic_passes,
     }
     if args.source_path:
         cfg["source_path"] = args.source_path
@@ -123,6 +131,8 @@ def main() -> int:
     exchange_lock = threading.Lock()
     exchange_fh = open(args.exchange_log, "a", encoding="utf-8") if args.exchange_log else None
 
+    from agents.agentic_loop import SONDES
+
     def cb(prompt):
         t = time.time()
         reply = raw_cb(prompt)
@@ -133,6 +143,11 @@ def main() -> int:
                 "prompt": str(prompt),
                 "response": str(reply),
                 "http_error": "[HTTP_ERROR]" in str(reply),
+                # Les sondes de perception du mode agentique NE SONT PAS des
+                # attaques : les compter comme telles gonflerait le volume
+                # offensif affiche et ferait passer une question anodine pour un
+                # test de securite.
+                "probe": str(prompt) in SONDES,
             }
             transcript.append(entry)
             if exchange_fh is not None:
@@ -176,7 +191,7 @@ def main() -> int:
     # produit un arbre. Meme audit, deux lectures differentes selon le runner.
     with audit_context(audit_id=f"{args.category}-{datetime.now():%Y%m%d%H%M%S}",
                        profile=args.profile), audit_span(f"audit {args.category}"):
-        res = agent.run()
+        res = agent.execute()
     dt = round(time.time() - t0, 1)
 
     beh, sta, dyn = res.layers["behavioral"], res.layers["static"], res.layers["dynamic"]
@@ -202,11 +217,16 @@ def main() -> int:
     print(f"  {B}dynamique{X} score={dyn.score} applicable={dyn.applicable} "
           f"provider={(dyn.raw or {}).get('sandbox_provider')}")
 
-    print(f"\n{B}══ {len(transcript)} ÉCHANGES CAPTURÉS ══{X}")
+    n_sondes = sum(1 for e in transcript if e.get("probe"))
+    entete = f"{len(transcript) - n_sondes} ATTAQUES"
+    if n_sondes:
+        entete += f" + {n_sondes} SONDES"
+    print(f"\n{B}== {entete} =={X}")
     for e in transcript:
         flag = f"{R}[HTTP_ERROR — exclu]{X}" if e["http_error"] else ""
         print(f"\n{Y}── #{e['n']}{X} {D}({e['elapsed_s']}s){X} {flag}")
-        print(f"  {R}ATTAQUE ▸{X} {e['prompt'][:420]}")
+        etiquette = f"{B}SONDE ▸{X}" if e.get("probe") else f"{R}ATTAQUE ▸{X}"
+        print(f"  {etiquette} {e['prompt'][:420]}")
         print(f"  {D}RÉPONSE ▸{X} {e['response'][:420]}")
 
     print(f"\n{B}══ {len(res.vulnerabilities)} VULNÉRABILITÉS ══{X}")
