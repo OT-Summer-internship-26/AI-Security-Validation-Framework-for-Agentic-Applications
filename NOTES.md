@@ -2453,3 +2453,91 @@ desormais a la decision et a son motif (§25, §32).
 **Verrouillage** : `judge.tracing` passe a **19 controles** (portee d'audit, restauration
 sur exception, imbrication) ; `tests/test_base_agent.py` gagne un controle sur le plafond
 lu APRES l'import et reconfigurable. **81 tests** au total, dry_run 5.57.
+
+
+## 39. LES 5 CHANTIERS RESTANTS, TERMINES (2026-08-31)
+
+Demande : « faire un travail efficace et professionnel et master pour regler ces parties une
+fois pour toute parceque vous avez les faits plusieurs fois et toujours on trouve des
+problemes ». Cinq blocs. **Chacun a sorti un defaut REEL en etant branche sur la donnee
+reelle** — aucun n'aurait ete vu par un test hors-ligne ecrit d'avance.
+
+### 39.1 Tests de `ci_gate` + API — 40 tests sur 251 lignes qui BLOQUENT un deploiement
+`ci_gate.py` est le seul composant dont la sortie EMPECHE une mise en production, et pas une
+de ses regles n'etait verifiee ; les 13 endpoints de l'API n'avaient JAMAIS ete appeles.
+Une condition inversee ne plante pas — elle rend PASS au lieu de BLOCKED, sans trace.
+**Deux bugs trouves** : (1) une derogation a date ILLISIBLE etait traitee comme ACTIVE, donc
+une faute de frappe dans un fichier de politique ouvrait une porte ; (2) `POST /audits` avec
+une categorie inconnue repondait **200** et lancait un audit qui echouait des minutes plus
+tard. Les deux sens de chaque regle sont verrouilles : une regle qui bloque toujours est
+aussi cassee qu'une regle qui ne bloque jamais.
+
+### 39.2 Intervalle de confiance (§26 #5) — le score cesse d'etre un fait
+`workflow/confidence.py`. Le §18 a mesure **9,66 et 7,93 sur la MEME cible** : publier
+« 77,9/100 » presentait un tirage comme une mesure. Deux sources d'incertitude
+**DELIBEREMENT separees**, parce qu'une seule est actionnable :
+· le **bruit du simulateur**, irreductible sans relancer l'audit ;
+· l'**echantillonnage** (Agresti-Coull), qui DECROIT quand on monte `attacks_per_type`.
+Les fondre masquerait le seul levier d'action — d'ou `plancher_simulateur()`, qui dit
+jusqu'ou monter les attaques aide.
+
+**MESURE SUR L'AUDIT GLOBAL REEL** (77,9/100, ollama, aptype=1) : plage **64,3 – 91,5**, qui
+**CHEVAUCHE le seuil de 70**. Cet audit ne pouvait donc pas decider — le chiffre seul laissait
+croire le contraire. Calcule dans `consolidate()` (point de calcul UNIQUE du score) et ECRIT
+dans le JSON ; rapport et dashboard le LISENT — zero arithmetique en TypeScript (§35.3).
+Le delta entre deux audits est GRISE sous le plancher : un ecart plus petit que le bruit n'est
+pas une evolution.
+
+### 39.3 Resume executif (§26 #12) — le modele REFORMULE, il n'etablit rien
+`judge/executive_summary.py`. Un modele qui redige la synthese d'un rapport de securite peut
+inventer une faille ou en taire une : en tete de rapport, les deux erreurs les plus couteuses
+du projet. Trois garde-fous : (1) il ne recoit QUE des faits deja etablis — ni reponses de la
+cible, ni verdicts bruts, donc aucune possibilite de re-juger ; (2) sa sortie est VERIFIEE
+contre ces faits — chaque nombre, chaque code ASI, et le SENS du verdict ; (3) le repli n'est
+pas l'absence mais une synthese DETERMINISTE qui dit les memes faits.
+
+**DEFAUT TROUVE EN BRANCHANT SUR L'AUDIT REEL** : la premiere version ne regardait que le
+seuil de score et ecrivait « deploiement autorise » sur un audit a 77,9/100 comportant **4
+constats CRITIQUES**. Or `ci_gate` bloque sur tout Critical independamment du score — c'est la
+regle qui le distingue d'un simple seuil. La synthese applique desormais les DEUX motifs.
+Verifie sur Ollama reel : le modele nomme les constats concrets, garde les chiffres exacts et
+le verdict correct ; un modele qui derape (« 999 failles ») est rejete et le motif est DIT.
+
+### 39.4 `run_agentic()` (§26 #10) — en quoi ce sont des AGENTS
+`agents/agentic_loop.py`. Jusqu'ici chaque agent executait un pipeline FIXE : un orchestrateur
+d'outils, pas un agent. La boucle percoit la cible (sondes anodines, **sans modele** — un
+modele qui « percoit » une cible morte comme saine serait un faux 10/10 de plus), planifie,
+agit, reflechit, adapte.
+
+**LA CONTRAINTE QUI STRUCTURE TOUT** : confier les reglages a un modele lui donne un moyen tout
+neuf de fabriquer un faux score. La garantie ne repose PAS sur une consigne de prompt — une
+consigne n'est pas un controle :
+1. `appliquer_adaptation` n'accepte un reglage que s'il **DURCIT** le test. Attaques et tours
+   PyRIT ne peuvent qu'augmenter, probes Garak que s'AJOUTER (jamais remplacer : Garak est le
+   seul axe independant du LLM), aucun axe ne peut etre coupe. Tout refus est TRACE.
+2. `fusionner` retient le score **MINIMUM** des passages. Une faiblesse trouvee au 2e passage
+   prouve que la cible EST faible ; l'inverse est faux (§18 : 9,66 vs 7,93 sur la meme cible).
+→ la boucle ne peut MATHEMATIQUEMENT pas ameliorer un verdict, seulement le durcir.
+`run()` reste le chemin CERTIFIABLE (memes attaques → scores comparables) ; `execute()` choisit
+par `config["mode"]`, donc aucun runner ne connait la boucle.
+
+**DEFAUT TROUVE EN BRANCHANT** : les 3 sondes de perception s'affichaient comme des ATTAQUES et
+seraient entrees dans le journal d'attaques du rapport — du volume offensif qui n'a pas eu
+lieu. Marquees `probe`, exclues au point unique (`collect_attacks`), donc dans les deux runners.
+
+### 39.5 Ameliorations LangFuse
+Cf. commit dedie. Le tracage couvre desormais les appels non-LLM (cible HTTP, garak, pyrit,
+sandbox), la latence est mesuree en encadrant l'appel (elle valait 0), et les scores de verdict
+remontent — avec un controle de span actif, sinon `create_score` echouait en « Bad request ».
+
+### Etat de la verification
+**146 tests pytest** (0 reseau, 0 LLM) + les auto-controles des modules. Chaque defaut ci-dessus
+a son test de non-regression : ils ne peuvent pas revenir en silence.
+
+### RESTE
+1. **Audit global 10 categories sur cible reelle** — reporte a la demande de l'utilisateur.
+   Bloque par la cle Gemini (`403 BILLING_DISABLED`, essai Vertex Express expire), pas par le
+   code. Une cle AI Studio (`AIza…`, gratuite) suffirait : `judge/llm_config.py` detecte le
+   prefixe et bascule tout seul.
+2. Etude de validation DVAP : precision / rappel sur les 15 labs (§26 #4).
+
