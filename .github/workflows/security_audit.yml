@@ -57,11 +57,11 @@ jobs:
       # Suite hors-ligne : aucun LLM, aucun reseau. Elle doit tourner a CHAQUE
       # PR, sinon les garde-fous des juges ne valent que par la memoire de qui
       # pense a les lancer — et ce juge a deja ete casse deux fois entre deux runs.
-      - name: Tests unitaires (couche juge, hors-ligne)
+      - name: Tests unitaires (hors-ligne : juges, socle, sandbox, workflow, gate, API)
         env:
           PYTHONUTF8: "1"
         run: |
-          pip install pytest pydantic
+          pip install pytest pydantic fastapi httpx
           python -m pytest tests/ -q
 
       - name: Analyse statique — Semgrep

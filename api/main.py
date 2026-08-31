@@ -358,7 +358,10 @@ def _requested_categories(req: AuditRequest) -> list[str]:
         chosen = [c for c in req.categories if c in available]
         if chosen:
             return chosen
-    return [req.category]
+        # Toutes les categories demandees sont inconnues : ne rien renvoyer, pour
+        # que l'appelant soit refuse au lieu de retomber sur `req.category`.
+        return []
+    return [req.category] if req.category in available else []
 
 
 def _execute(run: Run) -> None:
@@ -650,6 +653,20 @@ def create_audit(req: AuditRequest, x_api_key: str | None = Header(default=None)
     _check_api_key(x_api_key)
     if not RUNNER.exists():
         raise HTTPException(status_code=500, detail="scripts/run_agent.py introuvable")
+
+    # VALIDER AVANT DE LANCER.
+    #     Sans ce controle, `category: "ASI_99"` renvoyait 200 : l'audit demarrait,
+    #     occupait un thread et un sous-processus, puis echouait des MINUTES plus
+    #     tard sur une faute de frappe. En profil `final`, c'est aussi du quota LLM
+    #     depense pour rien. Un refus immediat coute une milliseconde.
+    cats = _requested_categories(req)
+    if not cats:
+        from workflow.audit_graph import AGENT_REGISTRY
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Aucune categorie valide. Connues : {sorted(AGENT_REGISTRY)}",
+        )
 
     run_id = f"run-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
     run = Run(run_id, req)

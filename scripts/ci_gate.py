@@ -81,7 +81,14 @@ def evaluate(audit: dict, policy: dict) -> tuple[str, list[dict], dict]:
         try:
             exp = datetime.fromisoformat(str(d.get("expires_at"))).date()
         except Exception:
-            exp = today                      # date illisible → considérée expirée
+            # DATE ILLISIBLE → EXPIRÉE, et il faut l'écrire explicitement.
+            #     La version précédente posait `exp = today`, ce qui satisfait
+            #     `exp >= today` : la dérogation partait dans les ACTIVES et
+            #     neutralisait le finding — l'inverse exact du commentaire placé
+            #     juste à côté. Une date incompréhensible ouvrait donc une porte
+            #     au lieu de la fermer. Trouvé par test, jamais en production.
+            expired.append(d)
+            continue
         (active if exp >= today else expired).append(d)
 
     waived_titles = {str(d.get("finding_title", "")).strip().lower() for d in active}
