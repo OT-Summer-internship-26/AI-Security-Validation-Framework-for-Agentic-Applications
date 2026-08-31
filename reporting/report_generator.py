@@ -32,6 +32,7 @@ from typing import Any
 
 from judge.summary import build_judge_summary
 from workflow.confidence import intervalle_global
+from judge.executive_summary import build as build_executive_summary
 from reporting.interpretation import (
     build_breaches,
     build_resilience,
@@ -311,6 +312,12 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # Calculee avec le score par `consolidate()` et stockee dans le JSON ; on
         # la RELIT. Repli pour les audits produits avant ce champ.
         "confiance": audit.get("confidence") or intervalle_global(audit),
+        # Ecrite par le runner (reformulee par un LLM quand un modele est
+        # disponible, sinon deterministe). Absente — audit interrompu ou anterieur
+        # au champ — on produit la version deterministe : le rapport ne s'ouvre
+        # jamais sans synthese, et sans modele ici (rendre un rapport doit rester
+        # instantane et hors ligne).
+        "resume": audit.get("executive_summary") or build_executive_summary(audit),
         "limits": _build_limits(audit),
         "radar": build_radar_data(cat_scores),
         "radar_reading": interpret_radar(cat_scores),

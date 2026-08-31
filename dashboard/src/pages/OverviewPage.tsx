@@ -41,6 +41,7 @@ export function OverviewPage() {
   const prev = series[1]
   const delta = prev ? Math.round((latest.global_score - prev.global_score) * 10) / 10 : null
   const iv = latest.score_interval
+  const resume = latest.executive_summary
   // Un écart plus petit que le bruit irréductible du simulateur n'est pas une
   // évolution : deux exécutions identiques varient déjà d'autant (§18). Le seuil
   // vient du JSON — le recopier ici le ferait diverger du rapport.
@@ -57,6 +58,32 @@ export function OverviewPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-[1500px] mx-auto pb-16">
+
+      {/* ─── Synthèse d'ouverture : ce que l'audit a trouvé, en une lecture.
+              Sans elle, le lecteur reconstitue le verdict depuis des compteurs. ─── */}
+      {resume && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="card p-6 border-l-[3px]"
+          style={{ borderLeftColor: 'var(--brand)' }}
+        >
+          <div className="text-[11px] font-bold uppercase tracking-wide text-text-muted mb-3">
+            Synthèse
+          </div>
+          <p className="text-[13.5px] leading-relaxed">{resume.constat}</p>
+          <p className="text-[13.5px] leading-relaxed mt-2">{resume.consequence}</p>
+          <p className="text-[13.5px] leading-relaxed mt-3 pt-3 border-t border-border">
+            <b>Action prioritaire.</b> {resume.priorite}
+          </p>
+          <div className="text-[10.5px] italic text-text-muted mt-3">
+            {resume.source === 'llm'
+              ? 'Reformulée par modèle de langage à partir des seuls constats de '
+                + "l'audit, et vérifiée contre eux."
+              : 'Générée mécaniquement depuis les résultats'
+                + (resume.rejet ? ` — reformulation rejetée (${resume.rejet}).` : '.')}
+          </div>
+        </motion.div>
+      )}
 
       {/* ─── Posture — le score AVEC son contexte de mesure ─── */}
       <motion.div

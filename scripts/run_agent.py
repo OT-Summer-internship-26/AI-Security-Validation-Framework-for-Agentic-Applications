@@ -259,6 +259,15 @@ def main() -> int:
     from workflow.audit_graph import consolidate
 
     record.update(consolidate({args.category: res.score}, record["agents"]))
+
+    # Synthese d'ouverture du rapport, produite UNE FOIS en fin de run : le score,
+    # la plage et les constats sont alors definitifs. La placer dans la boucle de
+    # persistance incrementale couterait un appel LLM par agent pour un texte jete
+    # aussitot. Un audit interrompu n'en a donc pas — le rapport calcule alors la
+    # version deterministe, qui dit exactement les memes faits.
+    from judge.executive_summary import build_for_profile
+
+    record["executive_summary"] = build_for_profile(record, args.profile)
     gs = record["global_score"]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

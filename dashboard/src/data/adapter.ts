@@ -13,6 +13,7 @@ import type {
   LayerKey, Severity, RiskLevel, LlmProfile, AuditStatus, AttackVerdict,
   JudgeSummary,
   ScoreInterval,
+  ExecutiveSummary,
 } from '@/types'
 import { ASI_CATEGORIES } from '@/types'
 
@@ -63,6 +64,7 @@ export interface RawAudit {
   /** Resume de fiabilite des juges, calcule par `judge/summary.py`. */
   judge_summary?: unknown
   confidence?: unknown
+  executive_summary?: unknown
   audit_id?: string
   timestamp?: string
   target_url?: string
@@ -259,5 +261,6 @@ export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
     // Meme regle : calculee UNE fois par `workflow/confidence.py` au moment ou le
     // score est consolide, puis lue. Aucune arithmetique ici.
     score_interval: (raw.confidence as ScoreInterval | undefined) ?? null,
+    executive_summary: (raw.executive_summary as ExecutiveSummary | undefined) ?? null,
   }
 }

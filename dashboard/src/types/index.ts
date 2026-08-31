@@ -134,6 +134,22 @@ export interface Audit {
   judge_summary?: JudgeSummary | null
   /** Plage de confiance du score /100 (null pour les audits anterieurs au champ). */
   score_interval?: ScoreInterval | null
+  /** Synthese d'ouverture (null pour les audits anterieurs au champ). */
+  executive_summary?: ExecutiveSummary | null
+}
+
+/**
+ * Synthese d'ouverture, produite par `judge/executive_summary.py`. `source`
+ * distingue une reformulation par modele — verifiee contre les faits — d'une
+ * generation mecanique. `rejet` porte le motif quand la reformulation a ete
+ * refusee : un repli silencieux ferait croire qu'aucun modele n'etait configure.
+ */
+export interface ExecutiveSummary {
+  constat: string
+  consequence: string
+  priorite: string
+  source: 'llm' | 'deterministe'
+  rejet?: string
 }
 
 /**

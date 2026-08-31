@@ -148,6 +148,15 @@ def main() -> int:
 
     _flush_traces()
     record["status"] = "completed"
+    # Synthese d'ouverture du rapport, produite UNE FOIS en fin de run : le score,
+    # la plage et les constats sont alors definitifs. La placer dans la boucle de
+    # persistance incrementale couterait un appel LLM par agent pour un texte jete
+    # aussitot. Un audit interrompu n'en a donc pas — le rapport calcule alors la
+    # version deterministe, qui dit exactement les memes faits.
+    from judge.executive_summary import build_for_profile
+
+    record["executive_summary"] = build_for_profile(record, args.profile)
+
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
     print(f"\n{'='*70}")
@@ -256,6 +265,15 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
 
     _flush_traces()
     record["status"] = "completed"
+    # Synthese d'ouverture du rapport, produite UNE FOIS en fin de run : le score,
+    # la plage et les constats sont alors definitifs. La placer dans la boucle de
+    # persistance incrementale couterait un appel LLM par agent pour un texte jete
+    # aussitot. Un audit interrompu n'en a donc pas — le rapport calcule alors la
+    # version deterministe, qui dit exactement les memes faits.
+    from judge.executive_summary import build_for_profile
+
+    record["executive_summary"] = build_for_profile(record, args.profile)
+
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
     print(f"\n{'='*70}")

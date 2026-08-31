@@ -136,6 +136,11 @@
   .ci{margin-top:6px;font-size:11px;color:#5b6b7c;line-height:1.35;text-align:center}
   .ci span{font-variant-numeric:tabular-nums}
   .reading.warn{border-left-color:#c47f17;background:#fff8ec}
+  .exec{background:#f7f9fb;border:1px solid #e3e9ef;border-radius:8px;
+        padding:14px 16px;margin:0 0 16px}
+  .exec p{margin:0 0 8px;font-size:13.5px;line-height:1.55}
+  .exec-prio{border-top:1px solid #e3e9ef;padding-top:8px;margin-top:10px!important}
+  .exec-src{font-size:10.5px;color:#8494a3;margin-top:8px;font-style:italic}
 </style>
 </head>
 <body>
@@ -161,6 +166,23 @@
 
   <section>
     <div class="sechead"><span class="secnum">1</span><h2>Synthèse à l'attention de la direction</h2><span class="lead">Décision de déploiement et exposition globale</span></div>
+    {# Ouverture en langage courant. Le lecteur qui décide n'a pas à reconstituer
+       le verdict depuis un tableau de comptage. #}
+    {% if resume %}
+    <div class="exec">
+      <p>{{ resume.constat }}</p>
+      <p>{{ resume.consequence }}</p>
+      <p class="exec-prio"><b>Action prioritaire.</b> {{ resume.priorite }}</p>
+      <div class="exec-src">
+        {% if resume.source == 'llm' %}Synthèse reformulée par modèle de langage à
+        partir des seuls constats de l'audit, et vérifiée contre eux (aucun chiffre
+        ni catégorie hors résultats).
+        {% else %}Synthèse générée mécaniquement depuis les résultats
+        {% if resume.rejet %}— la reformulation par modèle a été rejetée ({{ resume.rejet }}){% endif %}.
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
     <div class="verdict">
       <div class="gauge">
         <div><span class="num" style="color:{{ risk_color }}">{{ score }}</span><span class="den">/100</span></div>

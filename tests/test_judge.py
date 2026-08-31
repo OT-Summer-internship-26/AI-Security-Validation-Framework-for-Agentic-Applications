@@ -285,3 +285,67 @@ def test_graphe_parallele_equivaut_au_sequentiel():
 def test_echelle_de_gravite_ordonnee():
     """L'ordre décroissant est une PRÉCONDITION de `_rank` et de l'escalade."""
     assert ALLOWED_SEVERITIES == ("Critical", "High", "Medium", "Low", "Info")
+
+
+# --------------------------------------------------------------------------- #
+# Synthese executive : le modele REFORMULE, il n'etablit rien.
+# --------------------------------------------------------------------------- #
+
+def _audit_piege() -> dict:
+    """Le cas mesure sur l'audit global reel : score au-dessus du seuil, mais des
+    constats critiques. C'est la situation ou une synthese naive ment."""
+    return {"global_score": 77.9, "risk_level": "Faible", "confidence": {},
+            "agents": {"ASI_01": {"measured": True, "vulnerabilities": [
+                {"severity": "Critical", "title": "Recursive Hijacking"}]}}}
+
+
+def test_autotest_executive_summary():
+    """Rejoue les 13 controles du module."""
+    from judge.executive_summary import demo
+    demo()
+
+
+def test_un_critical_bloque_meme_avec_un_bon_score():
+    """La synthese doit appliquer la regle REELLE du gate, pas seulement le seuil.
+
+    Sur l'audit global reel (77,9/100 avec 4 Critical), une synthese qui ne
+    regarde que le score ecrit « deploiement autorise » en tete de rapport, alors
+    que `ci_gate` bloque. C'est le mensonge le plus couteux possible.
+    """
+    from judge.executive_summary import build, collecter_faits
+    faits = collecter_faits(_audit_piege())
+    assert faits["bloque"] and not faits["bloque_par_score"]
+    assert "suspendue" in build(_audit_piege())["consequence"]
+
+
+def test_une_synthese_qui_inverse_le_verdict_est_rejetee():
+    """Garde-fou principal : un modele ne peut pas retourner la conclusion."""
+    from judge.executive_summary import build, collecter_faits, _verifier
+    audit = _audit_piege()
+    menteuse = {**build(audit), "consequence": "Le déploiement est autorisé."}
+    assert _verifier(menteuse, collecter_faits(audit)) is not None
+
+
+def test_une_synthese_qui_invente_est_rejetee():
+    """Un chiffre ou une categorie absents des resultats invalident tout le texte."""
+    from judge.executive_summary import build, collecter_faits, _verifier
+    audit = _audit_piege()
+    faits, base = collecter_faits(audit), build(audit)
+    assert _verifier({**base, "constat": "L'audit a relevé 47 constats."}, faits)
+    assert _verifier({**base, "constat": "Un problème touche ASI_07."}, faits)
+
+
+def test_sans_modele_la_synthese_existe_quand_meme():
+    """Le rapport n'est JAMAIS privé de son ouverture : le repli dit les memes faits."""
+    from judge.executive_summary import build
+    out = build(_audit_piege())
+    assert out["source"] == "deterministe"
+    assert all(out[k].strip() for k in ("constat", "consequence", "priorite"))
+
+
+def test_le_rapport_produit_une_synthese_pour_un_audit_sans_le_champ():
+    """Compatibilite : un audit anterieur au champ doit quand meme s'ouvrir."""
+    from reporting.report_generator import build_context
+    ctx = build_context(_audit_piege())
+    assert ctx["resume"]["source"] == "deterministe"
+    assert "critique" in ctx["resume"]["consequence"]
