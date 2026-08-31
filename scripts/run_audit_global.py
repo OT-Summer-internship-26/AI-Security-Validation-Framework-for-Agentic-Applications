@@ -38,7 +38,7 @@ RUNNER = ROOT / "scripts" / "run_agent.py"
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit global 10 catégories → score /100")
     ap.add_argument("--target", required=True)
-    ap.add_argument("--profile", default="final", choices=["dev", "ollama", "final", "dry_run"])
+    ap.add_argument("--profile", default="final", choices=["dev", "ollama", "openai", "final", "dry_run"])
     ap.add_argument("--prompt-field", default="message")
     ap.add_argument("--response-field", default="response")
     ap.add_argument("--extra-payload", default=None)

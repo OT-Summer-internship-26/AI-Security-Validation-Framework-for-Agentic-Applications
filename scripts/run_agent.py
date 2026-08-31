@@ -53,7 +53,7 @@ def main() -> int:
     ap.add_argument("--exchange-log", default=None,
                     help="fichier JSONL des échanges avec la cible (lu en direct par "
                          "l'API ; évite l'entrelacement stdout du spinner DeepTeam)")
-    ap.add_argument("--profile", default="dev", choices=["dev", "ollama", "final", "dry_run"])
+    ap.add_argument("--profile", default="dev", choices=["dev", "ollama", "openai", "final", "dry_run"])
     ap.add_argument("--attacks-per-type", type=int, default=1)
     ap.add_argument("--max-concurrent", type=int, default=2)
     ap.add_argument("--pyrit-max-turns", type=int, default=3)

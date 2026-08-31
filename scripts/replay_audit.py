@@ -45,7 +45,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("audit", help="fichier d'audit à rejouer (nom ou chemin)")
     ap.add_argument("--target", default=None, help="cible (défaut : celle de l'audit)")
-    ap.add_argument("--profile", default="final", choices=["dev", "ollama", "final", "dry_run"])
+    ap.add_argument("--profile", default="final", choices=["dev", "ollama", "openai", "final", "dry_run"])
     ap.add_argument("--timeout", type=float, default=180.0)
     ap.add_argument("--repeat", type=int, default=3,
                 help="envois par attaque (>=3 recommande : la cible est non deterministe)")

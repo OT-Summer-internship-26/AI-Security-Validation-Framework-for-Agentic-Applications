@@ -305,6 +305,37 @@ def _dev_llm() -> DeepEvalBaseLLM:
     return cls(model=DEV_MODEL, api_key=_dev_api_key(), base_url=DEV_BASE_URL)
 
 
+# Modèle OpenAI du profil `openai`. `gpt-4o-mini` est le défaut : sortie
+# structurée fiable (elle porte les verdicts DeepTeam et les 7 champs du juge)
+# pour un coût marginal sur un audit complet.
+OPENAI_MODEL = os.environ.get("AUDIT_OPENAI_MODEL", "gpt-4o-mini")
+
+
+def _openai_api_key() -> str:
+    """Retourne OPENAI_API_KEY ou lève une erreur explicite.
+
+    Même garde que pour Gemini : un placeholder non remplacé produirait une
+    erreur d'authentification opaque au milieu d'un audit d'une heure.
+    """
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key or key.startswith("<") or not key.startswith("sk-"):
+        raise RuntimeError(
+            "Profil 'openai' : OPENAI_API_KEY absente ou non renseignée dans .env "
+            "(une clé OpenAI commence par « sk- »)."
+        )
+    return key
+
+
+def _openai() -> DeepEvalBaseLLM:
+    """Instancie un modèle OpenAI passant par le limiteur de débit.
+
+    Réutilise la classe du chemin OpenAI-compatible (`GPTModel` sous-classé), mais
+    SANS `base_url` : le SDK vise alors l'endpoint OpenAI officiel.
+    """
+    cls = _rate_limited_dev_class()
+    return cls(model=OPENAI_MODEL, api_key=_openai_api_key())
+
+
 def _gemini_api_key() -> str:
     """Retourne GEMINI_API_KEY ou lève une RuntimeError CLAIRE.
 
@@ -363,31 +394,6 @@ def get_pyrit_chat_config(profile: str | None = None) -> dict[str, str]:
         exactement comme pour Ollama /v1 — spike doc. technique : socle reutilisable).
     """
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
-    return _traced(_build_models(profile))
-
-
-def _traced(models: JudgeModels) -> JudgeModels:
-    """Rend les deux modèles TRAÇABLES avant de les livrer.
-
-    POURQUOI ICI
-        Ces mêmes instances sont ensuite passées à `red_team()` (DeepTeam) et à
-        PyRIT, qui font l'écrasante majorité des appels LLM d'un audit — 100 à 200
-        par run, contre une poignée pour les juges. Les envelopper à la FABRICATION
-        est le seul endroit qui les couvre tous, sans modifier une ligne de
-        DeepTeam ni de PyRIT : ils continuent d'appeler `generate()` comme avant.
-
-        Instrumenter `structured()` (les juges) ne traçait que l'exception ; ici on
-        trace la règle. Inerte si LangFuse n'est pas configuré.
-    """
-    from judge.tracing import traced_model
-
-    simulator, evaluation = models
-    return (traced_model(simulator, "simulator"), traced_model(evaluation, "evaluation"))
-
-
-def _build_models(profile: str) -> JudgeModels:
-    """Fabrique les deux instances selon le profil (sans traçage)."""
-
     if profile == "final":
         key = _gemini_api_key()
         if _is_vertex_key():
@@ -422,6 +428,16 @@ def _build_models(profile: str) -> JudgeModels:
             "model_name": OLLAMA_MODEL,
             "endpoint": OLLAMA_BASE_URL.rstrip("/") + "/v1",
             "api_key": "ollama",
+        }
+
+    if profile == "openai":
+        # Endpoint OpenAI officiel. PyRIT parle nativement ce protocole : aucune
+        # adaptation, contrairement au chemin Gemini qui passe par sa couche de
+        # compatibilité.
+        return {
+            "model_name": OPENAI_MODEL,
+            "endpoint": "https://api.openai.com/v1",
+            "api_key": _openai_api_key(),
         }
 
     # dev / dry_run / ci → gpt-oss-20b via endpoint OpenAI-compatible.
@@ -494,6 +510,21 @@ def _build_models(profile: str) -> JudgeModels:
         if not os.environ.get("AUDIT_DEV_MODEL", "").strip():
             return _ollama(), _ollama()
         return _dev_llm(), _dev_llm()
+
+    if profile == "openai":
+        # Profil de VERDICT OFFICIEL alternatif à `final`.
+        #
+        # POURQUOI UN PROFIL DÉDIÉ ET NON `AUDIT_DEV_MODEL`
+        #     Le chemin `dev` mène au même code, mais il porte une règle explicite :
+        #     « ne jamais produire un verdict avec ce profil ». Réutiliser son nom
+        #     pour un audit officiel effacerait cette distinction, qui est
+        #     précisément ce qui empêche de publier un score produit par un
+        #     simulateur faible.
+        #
+        # Les modèles OpenAI facturés n'ont pas le plafond journalier serré des
+        # offres gratuites — c'est ce qui rend un audit 10 catégories (100 à 200
+        # appels) réalisable en une seule passe.
+        return _openai(), _openai()
 
     if profile == "ollama":
         # Repli hors-ligne. Deux instances du même modèle → un seul chargement VRAM.
