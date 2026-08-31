@@ -144,7 +144,7 @@ class SubprocessSandboxProvider(SandboxProvider):
 
         start = time.time()
         try:
-            result = subprocess.run(  # noqa: S603 — allowlisted subprocess in sandbox provider
+            result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,

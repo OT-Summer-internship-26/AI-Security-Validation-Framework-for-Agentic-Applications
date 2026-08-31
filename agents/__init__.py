@@ -6,15 +6,15 @@ une ou plusieurs des 3 couches de test (comportementale, statique, dynamique).
 """
 
 from agents.base_agent import (
-    BaseSecurityAgent,
     AgentResult,
+    BaseSecurityAgent,
     LayerResult,
     Vulnerability,
 )
 
 __all__ = [
-    "BaseSecurityAgent",
     "AgentResult",
+    "BaseSecurityAgent",
     "LayerResult",
     "Vulnerability",
 ]

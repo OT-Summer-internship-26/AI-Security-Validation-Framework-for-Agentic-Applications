@@ -49,7 +49,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent
 
-
 GARAK_ENABLED = True
 
 # Gravité par type. Priorité `type précis > classe > défaut` appliquée par le socle.

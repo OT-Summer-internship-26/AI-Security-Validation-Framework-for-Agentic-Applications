@@ -106,7 +106,7 @@ def evaluate(audit: dict, policy: dict) -> tuple[str, list[dict], dict]:
 
     # ── Catégories : « ignore » sort de la décision ──
     per_cat = policy.get("per_category", {})
-    action = lambda c: (per_cat.get(c) or {}).get("action", "warn")  # noqa: E731
+    action = lambda c: (per_cat.get(c) or {}).get("action", "warn")
     considered = [v for v in kept if action(v.get("asi_category", "")) != "ignore"]
     ignored = len(kept) - len(considered)
     if ignored:

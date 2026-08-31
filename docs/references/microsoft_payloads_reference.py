@@ -15,15 +15,13 @@ Run with:
 """
 
 import time
-import re
-import json
-import pytest
-from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any
 
-from agent_os.policies.schema import PolicyDocument
+import pytest
 from agent_os.policies.evaluator import PolicyEvaluator
+from agent_os.policies.schema import PolicyDocument
 
 # Paths
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -321,7 +319,7 @@ class AdversarialAuditor:
         self.policy = PolicyDocument.from_yaml(yaml_path)
         self.evaluator = PolicyEvaluator(policies=[self.policy])
 
-    def run_audit(self) -> Dict[Any, Any]:
+    def run_audit(self) -> dict[Any, Any]:
         results = []
         total_latency = 0
 
@@ -380,13 +378,13 @@ def test_redteam_scenario(scenario: AdversarialScenario, pack_name: str):
 # Report Generation (compatible with both pytest and direct execution)
 # ---------------------------------------------------------------------------
 
-def generate_report(audit_results: List[Dict[str, Any]]):
+def generate_report(audit_results: list[dict[str, Any]]):
     report_path = DOCS_DIR / "ADVERSARIAL-AUDIT-REPORT.md"
 
     with open(report_path, "w") as f:
         f.write("# Red Team Simulation Report: OWASP ASI Starter Packs\n")
         f.write("> **Methodology**: Red Team Simulation (Arcanum-Sec intelligence payloads)\n")
-        f.write(f"> **Source**: `tests/redteam/test_asi.py`\n")
+        f.write("> **Source**: `tests/redteam/test_asi.py`\n")
         f.write("> **Status**: Verified compliant with Arcanum-Sec intelligence\n\n")
 
         for result in audit_results:

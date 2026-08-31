@@ -45,7 +45,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent, LayerResult
 
-
 # DÉCISION : Garak ACTIVÉ pour ASI02 (comme ASI01), exécuté par sous-processus vers le
 # venv isolé (~/garak-venv). Ses probes dan.* testent la robustesse générale à
 # l'injection (axe complémentaire) ; l'exécution d'outils proprement dite est couverte

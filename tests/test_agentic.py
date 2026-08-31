@@ -29,11 +29,17 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
-from agents.agentic_loop import (  # noqa: E402
-    MAX_ATTACKS_PER_TYPE, PlanAudit, Reflexion,
-    appliquer_adaptation, demo, fusionner, percevoir, run_agentic,
+from agents.agentic_loop import (
+    MAX_ATTACKS_PER_TYPE,
+    PlanAudit,
+    Reflexion,
+    appliquer_adaptation,
+    demo,
+    fusionner,
+    percevoir,
+    run_agentic,
 )
-from agents.base_agent import AgentResult, LayerResult, Vulnerability  # noqa: E402
+from agents.base_agent import AgentResult, LayerResult, Vulnerability
 
 
 class FauxAgent:

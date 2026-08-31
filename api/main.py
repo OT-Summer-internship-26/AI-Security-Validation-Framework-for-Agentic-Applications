@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import os
-import queue
+import urllib.parse
 import re
 import subprocess
 import sys
@@ -198,7 +198,7 @@ _STAGES: list[tuple[str, int, str]] = [
 ]
 
 
-def _tail_exchanges(run: "Run", path: Path, stop: threading.Event) -> None:
+def _tail_exchanges(run: Run, path: Path, stop: threading.Event) -> None:
     """Suit le JSONL des échanges écrit par le runner et les pousse dans le run.
 
     POURQUOI UN FICHIER ET PAS STDOUT (bug MESURÉ le 2026-08-20)
@@ -289,9 +289,7 @@ def _drain(run: Run, stream: Any) -> None:
         low = line.lower()
         if "traceback" in low:
             level = "critical"
-        elif "error" in low or "[http_error]" in low or "warning" in low:
-            level = "warn"
-        elif "vulnérabilit" in low or "breach" in low:
+        elif "error" in low or "[http_error]" in low or "warning" in low or "vulnérabilit" in low or "breach" in low:
             level = "warn"
         else:
             level = "info"
@@ -838,6 +836,27 @@ def list_replays() -> dict[str, Any]:
 
 DVAP_API = os.environ.get("DVAP_API", "http://localhost:8080/api/v1")
 
+def _open_http(cible, timeout: float):
+    """Ouvre une URL en n'autorisant QUE http/https.
+
+    POURQUOI UN HELPER ET PAS UNE VALIDATION PAR APPEL
+        Quatre endroits ouvrent une URL ; `DVAP_API` vient de l'environnement,
+        donc une valeur `file://` ou `gopher://` y ferait lire un fichier local
+        au serveur. Valider dans chaque appelant, c'est garantir qu'un cinquième
+        appel oubliera la vérification. Ici la seule façon d'ouvrir une URL est
+        de passer par ce point.
+    """
+    import urllib.request
+
+    url = cible.full_url if isinstance(cible, urllib.request.Request) else cible
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise ValueError(f"schéma d'URL non autorisé : {url[:60]}")
+    # Schéma validé juste au-dessus, et c'est le SEUL point du module qui ouvre
+    # une URL : la validation ne peut donc pas être contournée.
+    return urllib.request.urlopen(cible, timeout=timeout)  # noqa: S310  # nosec B310
+
+
+
 #: Champs de requête/réponse acceptés par les labs, par ordre de préférence.
 _PROMPT_FIELDS = ("message", "content", "prompt", "query", "input", "description")
 _RESPONSE_FIELDS = ("response", "answer", "output", "result", "message")
@@ -875,7 +894,7 @@ def _running_instances() -> list[dict[str, Any]]:
         # de conteneur, qui est tronqué par Docker.
         try:
             import urllib.request
-            with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=5) as r:
+            with _open_http(f"http://localhost:{port}/health", 5) as r:
                 info["lab"] = json.loads(r.read()).get("lab")
         except Exception:
             pass
@@ -896,7 +915,7 @@ def _discover_endpoint(port: int) -> dict[str, Any]:
     """
     try:
         import urllib.request
-        with urllib.request.urlopen(f"http://localhost:{port}/openapi.json", timeout=8) as r:
+        with _open_http(f"http://localhost:{port}/openapi.json", 8) as r:
             spec = json.loads(r.read())
     except Exception:
         return {"path": "/chat", "prompt_field": "message", "response_field": "response"}
@@ -908,7 +927,7 @@ def _discover_endpoint(port: int) -> dict[str, Any]:
         if not post:
             continue
         ref = ((post.get("requestBody") or {}).get("content") or {})             .get("application/json", {}).get("schema", {}).get("$ref", "")
-        props = list(((schemas.get(ref.rsplit("/", 1)[-1]) or {}).get("properties") or {}))
+        props = list((schemas.get(ref.rsplit("/", 1)[-1]) or {}).get("properties") or {})
         field = next((f for f in _PROMPT_FIELDS if f in props), None)
         if not field:
             continue
@@ -940,7 +959,7 @@ def dvap_labs() -> dict[str, Any]:
     labs: list[dict[str, Any]] = []
     try:
         import urllib.request
-        with urllib.request.urlopen(f"{DVAP_API}/labs", timeout=8) as r:
+        with _open_http(f"{DVAP_API}/labs", 8) as r:
             raw = json.loads(r.read())
         labs = [{"slug": l.get("slug"), "name": l.get("name"),
                  "difficulty": l.get("difficulty"), "category": l.get("category"),
@@ -987,7 +1006,7 @@ def dvap_launch(req: LaunchLabRequest,
         f"{DVAP_API}/labs/{req.slug}/launch", data=body,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
-        urllib.request.urlopen(request, timeout=90).read()
+        _open_http(request, 90).read()
     except urllib.error.HTTPError:
         pass                      # 500 fréquent alors que le conteneur démarre
     except Exception as exc:

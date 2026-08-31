@@ -48,8 +48,12 @@ import os
 import re
 from typing import Any
 
-from agents.base_agent import BaseSecurityAgent, LayerResult, Vulnerability, is_http_error
-
+from agents.base_agent import (
+    BaseSecurityAgent,
+    LayerResult,
+    Vulnerability,
+    is_http_error,
+)
 
 GARAK_ENABLED = True
 

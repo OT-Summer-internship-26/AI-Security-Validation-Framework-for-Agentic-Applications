@@ -42,3 +42,14 @@ weasyprint
 python-dotenv
 httpx
 pydantic
+
+# --- Contrainte assumée, avec sa CVE connue -------------------------------
+# click est épinglé à 8.1.8 (NOTES.md §17.1) : les versions >= 8.4 cassent
+# deepeval et semgrep, qui sont deux axes de mesure du framework.
+#
+# ⚠️ CVE-2026-7246 touche cette version ; corrigée en 8.3.3, hors de portée du
+# pin. C'est un compromis DÉLIBÉRÉ : sans le pin, deux couches d'audit ne
+# tournent plus. Impact réel faible — click ne traite ici que des arguments de
+# ligne de commande fournis par l'opérateur, jamais une entrée distante.
+# À lever dès que deepeval/semgrep supportent click >= 8.3.3.
+click==8.1.8

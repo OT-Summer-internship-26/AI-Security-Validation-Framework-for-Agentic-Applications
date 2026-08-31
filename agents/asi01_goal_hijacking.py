@@ -35,7 +35,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent
 
-
 # DÉCISION : Garak ACTIVÉ, exécuté par SOUS-PROCESSUS vers son venv isolé (~/garak-venv,
 # via judge/garak_runner). Il ne peut pas vivre dans l'env principal (sa version sans-Rust
 # épingle openai==0.28.1, incompatible avec l'openai 2.x de DeepTeam). Nécessite le venv

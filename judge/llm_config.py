@@ -26,7 +26,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Tuple
+from typing import Any
 
 # Charge le .env de la racine du projet AVANT de lire les variables ci-dessous, pour
 # que GEMINI_API_KEY / AUDIT_LLM_PROFILE soient disponibles sans export manuel. C'est
@@ -117,7 +117,7 @@ class _RateLimiter:
     def __init__(self, max_calls: int, period: float = 60.0) -> None:
         self.max_calls = max(1, max_calls)
         self.period = period
-        self._calls: "collections.deque[float]" = collections.deque()
+        self._calls: collections.deque[float] = collections.deque()
         self._lock = threading.Lock()
 
     def _reserve(self) -> float:
@@ -229,7 +229,7 @@ def _rate_limited_dev_class() -> type:
 
 
 # (simulator, evaluation)
-JudgeModels = Tuple[DeepEvalBaseLLM, DeepEvalBaseLLM]
+JudgeModels = tuple[DeepEvalBaseLLM, DeepEvalBaseLLM]
 
 
 class DryRunModel(DeepEvalBaseLLM):
@@ -253,7 +253,7 @@ class DryRunModel(DeepEvalBaseLLM):
 
     def load_model(self) -> None:
         """Aucun modèle à charger (offline)."""
-        return None
+        return
 
     def get_model_name(self) -> str:
         return "DryRunModel (offline, réponses fixes)"
@@ -299,7 +299,7 @@ def _dev_api_key() -> str:
     )
 
 
-def _dev_llm() -> "DeepEvalBaseLLM":
+def _dev_llm() -> DeepEvalBaseLLM:
     """Instancie le modèle du profil dev (gpt-oss-20b via endpoint OpenAI-compat)."""
     cls = _rate_limited_dev_class()
     return cls(model=DEV_MODEL, api_key=_dev_api_key(), base_url=DEV_BASE_URL)
@@ -323,7 +323,7 @@ def _gemini_api_key() -> str:
     return key
 
 
-def _gemini() -> "DeepEvalBaseLLM":
+def _gemini() -> DeepEvalBaseLLM:
     """Instancie un GeminiModel Flash (profil final). EXIGE GEMINI_API_KEY.
 
     CE QUE ÇA FAIT
@@ -366,7 +366,7 @@ def get_pyrit_chat_config(profile: str | None = None) -> dict[str, str]:
     return _traced(_build_models(profile))
 
 
-def _traced(models: "JudgeModels") -> "JudgeModels":
+def _traced(models: JudgeModels) -> JudgeModels:
     """Rend les deux modèles TRAÇABLES avant de les livrer.
 
     POURQUOI ICI
@@ -385,7 +385,7 @@ def _traced(models: "JudgeModels") -> "JudgeModels":
     return (traced_model(simulator, "simulator"), traced_model(evaluation, "evaluation"))
 
 
-def _build_models(profile: str) -> "JudgeModels":
+def _build_models(profile: str) -> JudgeModels:
     """Fabrique les deux instances selon le profil (sans traçage)."""
 
     if profile == "final":
@@ -453,7 +453,7 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
     return _traced(_build_models(profile))
 
 
-def _traced(models: "JudgeModels") -> "JudgeModels":
+def _traced(models: JudgeModels) -> JudgeModels:
     """Rend les deux modèles TRAÇABLES avant de les livrer.
 
     POURQUOI ICI
@@ -472,7 +472,7 @@ def _traced(models: "JudgeModels") -> "JudgeModels":
     return (traced_model(simulator, "simulator"), traced_model(evaluation, "evaluation"))
 
 
-def _build_models(profile: str) -> "JudgeModels":
+def _build_models(profile: str) -> JudgeModels:
     """Fabrique les deux instances selon le profil (sans traçage)."""
 
     if profile == "dev":

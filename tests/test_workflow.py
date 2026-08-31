@@ -95,7 +95,11 @@ def test_allowlist_couvre_tous_les_types_de_l_etat(checkpoint_db):
     from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
     from langgraph.checkpoint.sqlite import SqliteSaver
 
-    from workflow.audit_graph import _CHECKPOINT_TYPES, build_audit_graph, run_audit_graph
+    from workflow.audit_graph import (
+        _CHECKPOINT_TYPES,
+        build_audit_graph,
+        run_audit_graph,
+    )
 
     state = run_audit_graph(CIBLE, DRY)
     config = {"configurable": {"thread_id": state.thread_id}}
@@ -212,7 +216,7 @@ def test_niveaux_de_risque_sans_trou():
     from workflow.scoring import get_risk_level
 
     attendus = {"Critique", "Élevé", "Moyen", "Faible", "Sécurisé"}
-    for centieme in range(0, 10001):
+    for centieme in range(10001):
         niveau = get_risk_level(centieme / 100)
         assert niveau in attendus, f"{centieme / 100} -> {niveau!r}"
     # Les bornes exactes de NOTES.md.

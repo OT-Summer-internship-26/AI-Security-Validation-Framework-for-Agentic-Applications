@@ -25,7 +25,8 @@ FAITS VÉRIFIÉS PAR SPIKE (pyrit 1.0.0, environnement du projet)
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from agents.base_agent import is_http_error
 from judge.llm_config import get_pyrit_chat_config
@@ -51,15 +52,15 @@ async def _run_attack_async(
     """
     global _pyrit_initialized
 
-    from pyrit.setup import initialize_pyrit_async, IN_MEMORY
-    from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-    from pyrit.models import construct_response_from_request
     from pyrit.executor.attack import (
         AttackAdversarialConfig,
         AttackScoringConfig,
         RedTeamingAttack,
     )
+    from pyrit.models import construct_response_from_request
+    from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
     from pyrit.score import SelfAskTrueFalseScorer
+    from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
     if not _pyrit_initialized:
         # Mémoire en RAM (pas de DB persistante) — vérifié requis avant tout target.
@@ -113,7 +114,7 @@ async def _run_attack_async(
     # Centralisé dans llm_config.get_pyrit_chat_config (§17/§18).
     chat_cfg = get_pyrit_chat_config(profile)
 
-    def _chat_target() -> "OpenAIChatTarget":
+    def _chat_target() -> OpenAIChatTarget:
         # endpoint = BASE OpenAI (le SDK ajoute /chat/completions). api_key = factice
         # "ollama" en dev (ignorée), vraie clé Gemini en final.
         # `headers` : uniquement pour Vertex AI, qui refuse l'auth « Bearer » du SDK

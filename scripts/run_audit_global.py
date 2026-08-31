@@ -60,8 +60,7 @@ def main() -> int:
                          "pas rejoues. L'identifiant est affiche au lancement.")
     args = ap.parse_args()
 
-    from workflow.audit_graph import AGENT_REGISTRY
-    from workflow.audit_graph import consolidate
+    from workflow.audit_graph import AGENT_REGISTRY, consolidate
 
     cats = ([c.strip() for c in args.categories.split(",")] if args.categories
             else list(AGENT_REGISTRY))
@@ -191,9 +190,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         (memoire saturee, kill) tue tout le run, la ou des sous-processus isolent.
         C'est le seul avantage restant du mode par defaut.
     """
-    from judge.summary import build_judge_summary
-    from workflow.audit_graph import run_audit_graph
-    from workflow.audit_graph import consolidate
+    from workflow.audit_graph import consolidate, run_audit_graph
     from workflow.serialization import build_agent_entry
 
     # Le thread de reprise est ecrit AVANT le premier agent, pas a la fin.

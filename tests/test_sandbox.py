@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import pathlib
 import shutil
-import subprocess
 import textwrap
 
 import pytest
 
-from sandbox.sandbox_provider import SandboxConfig, SandboxProvider, SubprocessSandboxProvider
+from sandbox.sandbox_provider import (
+    SandboxConfig,
+    SandboxProvider,
+    SubprocessSandboxProvider,
+)
 from sandbox.security_skills import scan_file
 
 RAPIDE = SandboxConfig(timeout_seconds=5, memory_mb=128, cpu_limit=0.5,

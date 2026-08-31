@@ -581,7 +581,7 @@ class timed:
         self.response: Any = None
         self._t0 = 0.0
 
-    def __enter__(self) -> "timed":
+    def __enter__(self) -> timed:
         self._t0 = time.time()
         return self
 

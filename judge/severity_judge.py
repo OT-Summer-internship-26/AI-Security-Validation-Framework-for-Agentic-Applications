@@ -17,7 +17,7 @@ FAIT VÉRIFIÉ PAR SPIKE
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator

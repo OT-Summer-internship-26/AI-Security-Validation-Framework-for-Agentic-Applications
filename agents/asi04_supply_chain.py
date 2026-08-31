@@ -36,7 +36,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent, LayerResult, Vulnerability
 
-
 GARAK_ENABLED = True
 
 # Mapping gravité ASI04 : CLASSES + TYPES précis (type prioritaire sur la classe).

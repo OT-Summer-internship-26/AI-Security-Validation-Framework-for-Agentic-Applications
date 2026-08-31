@@ -48,7 +48,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent
 
-
 # DÉCISION : Garak ACTIVÉ (sous-processus vers ~/garak-venv). Ses probes dan.* testent
 # la robustesse générale à l'injection (axe complémentaire, pas spécifique à l'identité) ;
 # l'abus d'identité proprement dit est couvert par DeepTeam (BOLA/RBAC/PromptLeakage/

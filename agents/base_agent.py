@@ -26,8 +26,9 @@ import subprocess
 import sys
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,7 @@ class BaseSecurityAgent(ABC):
                     )
                 from deepteam import red_team
                 from deepteam.frameworks import OWASP_ASI_2026
+
                 from judge.severity_judge import SeverityJudge
 
                 simulator_model, evaluation_model = get_judge_models(profile)
@@ -903,7 +905,7 @@ class BaseSecurityAgent(ABC):
         if self.target_callback is None:
             return None, [], "unavailable: target_callback manquant"
         try:
-            from judge.pyrit_runner import run_pyrit_goal_hijacking, DEFAULT_OBJECTIVE
+            from judge.pyrit_runner import DEFAULT_OBJECTIVE, run_pyrit_goal_hijacking
         except Exception as exc:
             print(f"[{self.asi_category}] PyRIT indisponible, poursuite sans lui : {exc}")
             return None, [], f"unavailable: {exc}"

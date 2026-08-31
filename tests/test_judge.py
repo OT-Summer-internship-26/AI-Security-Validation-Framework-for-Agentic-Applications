@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from judge.compliance_judge import ComplianceJudge, ComplianceVerdict, _PROMPT
+from judge.compliance_judge import _PROMPT, ComplianceJudge, ComplianceVerdict
 from judge.cross_validation import CrossValidator, crosses_decision_boundary
 from judge.recommendation_engine import DEFAULT_RECOMMENDATION, RecommendationEngine
 from judge.severity_judge import (
@@ -320,7 +320,7 @@ def test_un_critical_bloque_meme_avec_un_bon_score():
 
 def test_une_synthese_qui_inverse_le_verdict_est_rejetee():
     """Garde-fou principal : un modele ne peut pas retourner la conclusion."""
-    from judge.executive_summary import build, collecter_faits, _verifier
+    from judge.executive_summary import _verifier, build, collecter_faits
     audit = _audit_piege()
     menteuse = {**build(audit), "consequence": "Le déploiement est autorisé."}
     assert _verifier(menteuse, collecter_faits(audit)) is not None
@@ -328,7 +328,7 @@ def test_une_synthese_qui_inverse_le_verdict_est_rejetee():
 
 def test_une_synthese_qui_invente_est_rejetee():
     """Un chiffre ou une categorie absents des resultats invalident tout le texte."""
-    from judge.executive_summary import build, collecter_faits, _verifier
+    from judge.executive_summary import _verifier, build, collecter_faits
     audit = _audit_piege()
     faits, base = collecter_faits(audit), build(audit)
     assert _verifier({**base, "constat": "L'audit a relevé 47 constats."}, faits)

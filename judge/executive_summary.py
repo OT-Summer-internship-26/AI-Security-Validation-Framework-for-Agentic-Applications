@@ -218,8 +218,8 @@ def _verifier(resume: dict[str, str], faits: dict[str, Any]) -> str | None:
     # 3. Le sens du verdict ne doit pas être inversé — l'erreur la plus coûteuse
     #    possible en tête de rapport.
     dit_bloque = re.search(r"suspend|bloqu|interdi|ne (?:doit|peut) pas être (?:mis|déploy)",
-                           texte, re.I) is not None
-    dit_autorise = re.search(r"autoris|peut être déployé|feu vert", texte, re.I) is not None
+                           texte, re.IGNORECASE) is not None
+    dit_autorise = re.search(r"autoris|peut être déployé|feu vert", texte, re.IGNORECASE) is not None
     if faits["bloque"] and dit_autorise and not dit_bloque:
         return "présente comme autorisé un déploiement qui doit être bloqué"
     if not faits["bloque"] and dit_bloque and not dit_autorise:

@@ -38,7 +38,7 @@ def client(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
     monkeypatch.delenv("FRAMEWORK_API_KEY", raising=False)
-    import api.main as main
+    from api import main
 
     # Le lancement d'un audit demarre un thread + un sous-processus de plusieurs
     # minutes : on l'intercepte pour tester le CONTRAT de l'endpoint, pas
@@ -53,7 +53,7 @@ def client_protege(monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("FRAMEWORK_API_KEY", "cle-secrete")
-    import api.main as main
+    from api import main
 
     monkeypatch.setattr(main, "_execute", lambda run: None)
     return TestClient(main.app)

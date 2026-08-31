@@ -30,17 +30,8 @@ import os
 from datetime import datetime
 from typing import Any
 
-from judge.summary import build_judge_summary
-from workflow.confidence import intervalle_global
 from judge.executive_summary import build as build_executive_summary
-from reporting.interpretation import (
-    build_breaches,
-    build_resilience,
-    interpret_axes,
-    interpret_gate,
-    interpret_radar,
-    interpret_severity,
-)
+from judge.summary import build_judge_summary
 from reporting.charts import (
     ASI_ORDER,
     AXIS_LABEL,
@@ -50,6 +41,15 @@ from reporting.charts import (
     build_radar_data,
     build_severity_data,
 )
+from reporting.interpretation import (
+    build_breaches,
+    build_resilience,
+    interpret_axes,
+    interpret_gate,
+    interpret_radar,
+    interpret_severity,
+)
+from workflow.confidence import intervalle_global
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
@@ -110,7 +110,7 @@ def _severity_rank(sev: str) -> int:
         return len(SEVERITY_ORDER)
 
 
-def _fmt_duration(seconds: float | int | None) -> str:
+def _fmt_duration(seconds: float | None) -> str:
     """Durée lisible : « 42 min 20 s » plutôt que « 2540 »."""
     s = int(seconds or 0)
     return f"{s // 60} min {s % 60:02d} s" if s >= 60 else f"{s} s"

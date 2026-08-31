@@ -208,7 +208,7 @@ def main() -> int:
     for k, v in (raw.get("score_components") or {}).items():
         why = status_of.get(k) or ""
         flag = f"  {R}EXCLU{X} — {why}" if v is None else (f"  {D}({why}){X}" if why else "")
-        print(f"    · {k:<11} {str(v):<6}{flag}")
+        print(f"    · {k:<11} {v!s:<6}{flag}")
     if raw.get("deepteam_stats") is not None:
         print(f"    · {'deepteam_stats':<18} {raw['deepteam_stats']}")
     if raw.get("behavioral_note"):

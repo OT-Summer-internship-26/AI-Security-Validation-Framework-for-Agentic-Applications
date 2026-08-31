@@ -39,7 +39,6 @@ from typing import Any
 
 from agents.base_agent import BaseSecurityAgent
 
-
 GARAK_ENABLED = True
 
 _SEVERITY_MAP = {
