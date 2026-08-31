@@ -12,6 +12,7 @@ import type {
   Audit, AgentResult, Attack, Vulnerability, LayerResult,
   LayerKey, Severity, RiskLevel, LlmProfile, AuditStatus, AttackVerdict,
   JudgeSummary,
+  ScoreInterval,
 } from '@/types'
 import { ASI_CATEGORIES } from '@/types'
 
@@ -61,6 +62,7 @@ interface RawAgent {
 export interface RawAudit {
   /** Resume de fiabilite des juges, calcule par `judge/summary.py`. */
   judge_summary?: unknown
+  confidence?: unknown
   audit_id?: string
   timestamp?: string
   target_url?: string
@@ -254,5 +256,8 @@ export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
     // compteur ajoute — et les deux surfaces auraient affiche des chiffres
     // differents sur la meme donnee.
     judge_summary: (raw.judge_summary as JudgeSummary | undefined) ?? null,
+    // Meme regle : calculee UNE fois par `workflow/confidence.py` au moment ou le
+    // score est consolide, puis lue. Aucune arithmetique ici.
+    score_interval: (raw.confidence as ScoreInterval | undefined) ?? null,
   }
 }

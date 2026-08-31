@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import Any
 
 from judge.summary import build_judge_summary
+from workflow.confidence import intervalle_global
 from reporting.interpretation import (
     build_breaches,
     build_resilience,
@@ -304,6 +305,12 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # on le relit ici. Le recalculer ferait diverger rapport et dashboard.
         "judge_summary": audit.get("judge_summary")
         or build_judge_summary(audit.get("agents")),
+        # Le score est un TIRAGE, pas une mesure (NOTES.md §18 : 9,66 et 7,93 sur
+        # la meme cible). L'afficher seul le presenterait comme un fait ; la plage
+        # dit au lecteur si son ecart au seuil est significatif.
+        # Calculee avec le score par `consolidate()` et stockee dans le JSON ; on
+        # la RELIT. Repli pour les audits produits avant ce champ.
+        "confiance": audit.get("confidence") or intervalle_global(audit),
         "limits": _build_limits(audit),
         "radar": build_radar_data(cat_scores),
         "radar_reading": interpret_radar(cat_scores),

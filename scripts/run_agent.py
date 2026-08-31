@@ -258,7 +258,7 @@ def main() -> int:
     # de ceux du reste du projet sans que rien ne le signale.
     from workflow.audit_graph import consolidate
 
-    record.update(consolidate({args.category: res.score}))
+    record.update(consolidate({args.category: res.score}, record["agents"]))
     gs = record["global_score"]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

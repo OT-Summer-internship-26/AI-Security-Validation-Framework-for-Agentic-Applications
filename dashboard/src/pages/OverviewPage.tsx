@@ -40,6 +40,11 @@ export function OverviewPage() {
 
   const prev = series[1]
   const delta = prev ? Math.round((latest.global_score - prev.global_score) * 10) / 10 : null
+  const iv = latest.score_interval
+  // Un écart plus petit que le bruit irréductible du simulateur n'est pas une
+  // évolution : deux exécutions identiques varient déjà d'autant (§18). Le seuil
+  // vient du JSON — le recopier ici le ferait diverger du rapport.
+  const bruit = delta !== null && iv ? Math.abs(delta) < iv.plancher : false
 
   const scoreColor = latest.global_score >= 86 ? 'var(--sev-info)'
     : latest.global_score >= 71 ? 'var(--sev-low)'
@@ -79,13 +84,38 @@ export function OverviewPage() {
             {delta !== null && delta !== 0 && (
               <span
                 className="text-sm font-mono font-bold ml-1"
-                style={{ color: delta > 0 ? 'var(--sev-low)' : 'var(--sev-critical)' }}
-                title="vs l'audit précédent de même configuration"
+                style={{ color: bruit ? 'var(--text-muted)'
+                  : delta > 0 ? 'var(--sev-low)' : 'var(--sev-critical)' }}
+                title={bruit
+                  ? `Écart de ${delta} pt(s) INFÉRIEUR au bruit du simulateur `
+                    + `(±${iv!.plancher}) : deux exécutions identiques varient déjà `
+                    + `d'autant. Ce n'est pas une évolution mesurée.`
+                  : "vs l'audit précédent de même configuration"}
               >
-                {delta > 0 ? '+' : ''}{delta}
+                {delta > 0 ? '+' : ''}{delta}{bruit && ' ≈'}
               </span>
             )}
           </div>
+
+          {/* Plage de confiance : le score est un TIRAGE (§18 : 9,66 et 7,93 sur la
+              même cible). L'afficher nu le présenterait comme une mesure. */}
+          {iv && (
+            <div className="mt-2 text-[11px] text-text-muted leading-snug">
+              <span className="font-mono tabular">
+                {iv.bas} – {iv.haut}
+              </span>
+              <span className="opacity-70"> (±{iv.marge} pts, {iv.categories} catégorie
+                {iv.categories > 1 ? 's' : ''})</span>
+              {iv.bas < 70 && iv.haut >= 70 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded font-bold"
+                      style={{ color: 'var(--sev-medium)',
+                               background: 'color-mix(in srgb, var(--sev-medium) 14%, transparent)' }}
+                      title={iv.lecture}>
+                  chevauche le seuil
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-2 mt-4 flex-wrap">
             <RiskBadge level={latest.risk_level} />

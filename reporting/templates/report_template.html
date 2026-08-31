@@ -133,6 +133,9 @@
   @media(max-width:820px){
     section{padding:26px 22px} .verdict,.grid2{grid-template-columns:1fr}
   }
+  .ci{margin-top:6px;font-size:11px;color:#5b6b7c;line-height:1.35;text-align:center}
+  .ci span{font-variant-numeric:tabular-nums}
+  .reading.warn{border-left-color:#c47f17;background:#fff8ec}
 </style>
 </head>
 <body>
@@ -162,6 +165,11 @@
       <div class="gauge">
         <div><span class="num" style="color:{{ risk_color }}">{{ score }}</span><span class="den">/100</span></div>
         <span class="pill" style="background:{{ risk_color }}">Risque {{ risk_label }}</span>
+        {# Plage de confiance : sans elle, un tirage se lit comme une mesure. #}
+        {% if confiance %}
+        <div class="ci">± {{ confiance.marge }} pts<br>
+          <span>{{ confiance.bas }} – {{ confiance.haut }}</span></div>
+        {% endif %}
       </div>
       <div>
         {% if gate_pass %}
@@ -178,6 +186,17 @@
           {% if blocking_count %}immédiate{% else %}nulle à ce stade{% endif %}.
         </p>
         <div class="reading" style="margin-top:0"><b>Décision.</b> {{ gate_reading }}</div>
+        {% if confiance %}
+        {# Le cas qui compte : quand la plage traverse le seuil, deux exécutions du
+           MÊME audit rendraient des verdicts opposés. Le taire ferait passer un
+           coup de dés pour une décision. #}
+        <div class="reading{% if confiance.bas < gate_threshold < confiance.haut %} warn{% endif %}"
+             style="margin-top:8px"><b>Confiance du score.</b> {{ confiance.lecture }}
+          Estimée sur {{ confiance.categories }} catégorie(s) mesurée(s) ; le bruit
+          irréductible du simulateur vaut à lui seul ±{{ confiance.plancher }} points
+          — seule la part d'échantillonnage se réduit en augmentant
+          <code>attacks_per_type</code>.</div>
+        {% endif %}
         <div class="sevbar">
           {% for label in severity.labels %}
           <div class="sevbox" style="background:{{ severity.colors[loop.index0] }}">

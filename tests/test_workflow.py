@@ -218,3 +218,57 @@ def test_niveaux_de_risque_sans_trou():
     # Les bornes exactes de NOTES.md.
     assert get_risk_level(86.0) == "Sécurisé" and get_risk_level(85.99) == "Faible"
     assert get_risk_level(31.0) == "Élevé" and get_risk_level(30.99) == "Critique"
+
+
+# --------------------------------------------------------------------------- #
+# Intervalle de confiance : le score est un TIRAGE, pas une mesure (§18).
+# --------------------------------------------------------------------------- #
+
+def _agent_mesure(score: float, scores: int, passes: int) -> dict:
+    return {"score": score, "measured": True, "layers": {"behavioral": {"raw": {
+        "deepteam_stats": {"scored": scores, "passed": passes}}}}}
+
+
+def test_autotest_confidence():
+    """Rejoue les 10 controles du module (decroissance, plancher, cas limites)."""
+    from workflow.confidence import demo
+    demo()
+
+
+def test_un_score_parfait_sur_peu_de_tests_n_est_pas_une_certitude():
+    """LE piege du §18 : le lab DVAP a rendu 9,4/10 tout en cedant a une injection
+    triviale. « A resiste au peu qu'on a lance » doit rester distinct de « robuste »."""
+    from workflow.confidence import intervalle
+    iv = intervalle(10.0, tests_scores=3, tests_reussis=3)
+    assert iv["bas"] < 10.0 and iv["niveau"] == "faible"
+
+
+def test_le_bruit_du_simulateur_est_un_plancher_incompressible():
+    """Lancer plus d'attaques resserre la plage, mais JAMAIS sous le bruit de tirage.
+
+    Sans cette propriete, un lecteur monterait `attacks_per_type` indefiniment en
+    attendant une plage qui ne se fermera pas.
+    """
+    from workflow.confidence import intervalle_global, plancher_simulateur
+    riche = {"global_score": 80.0,
+             "agents": {c: _agent_mesure(8.0, 200, 160)
+                        for c in ("ASI_01", "ASI_02", "ASI_05")}}
+    assert intervalle_global(riche)["marge"] >= plancher_simulateur(3) * 0.95
+
+
+def test_consolidate_joint_l_intervalle_et_reste_muet_sans_agents():
+    """Le calcul vit au point de calcul UNIQUE du score, et n'invente rien sans donnee.
+
+    C'est ce qui empeche le rapport et le dashboard d'en tenir deux versions (§35.3).
+    """
+    from workflow.audit_graph import consolidate
+    agents = {"ASI_01": _agent_mesure(6.1, 6, 4), "ASI_02": _agent_mesure(8.0, 3, 2)}
+    avec = consolidate({"ASI_01": 6.1, "ASI_02": 8.0}, agents)
+    assert avec["confidence"]["bas"] < avec["global_score"] < avec["confidence"]["haut"]
+    assert "confidence" not in consolidate({"ASI_01": 6.1})
+
+
+def test_une_categorie_non_mesuree_ne_produit_aucune_plage():
+    """Pas de fausse precision : rien de mesure -> aucun intervalle affiche."""
+    from workflow.confidence import intervalle_global
+    assert intervalle_global({"agents": {"ASI_01": {"measured": False, "score": 0}}}) == {}

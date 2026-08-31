@@ -132,6 +132,26 @@ export interface Audit {
   confidence: 'low' | 'medium' | 'high'
   /** Fiabilite auto-declaree de la chaine de jugement (null si aucun juge n'a tourne). */
   judge_summary?: JudgeSummary | null
+  /** Plage de confiance du score /100 (null pour les audits anterieurs au champ). */
+  score_interval?: ScoreInterval | null
+}
+
+/**
+ * Plage de confiance du score global. Calculee par `workflow/confidence.py` et
+ * LUE ici : le score est un tirage (NOTES.md §18 : 9,66 et 7,93 sur la meme
+ * cible), pas une mesure.
+ */
+export interface ScoreInterval {
+  score: number
+  /** Demi-largeur de la plage, en points sur 100. */
+  marge: number
+  bas: number
+  haut: number
+  /** Nombre de categories ayant reellement contribue. */
+  categories: number
+  /** Marge incompressible : le bruit du simulateur ne se reduit pas par l'echantillon. */
+  plancher: number
+  lecture: string
 }
 
 export interface ScoreHistoryPoint {

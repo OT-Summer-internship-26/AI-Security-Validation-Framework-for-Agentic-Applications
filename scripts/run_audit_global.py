@@ -134,7 +134,7 @@ def main() -> int:
         # score : compter leur 0 dirait « totalement compromis » sans preuve.
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
                   if a.get("measured", True)}
-        record.update(consolidate(scores))
+        record.update(consolidate(scores, record["agents"]))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
                        encoding="utf-8")
@@ -207,7 +207,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         # score : compter leur 0 dirait « totalement compromis » sans preuve.
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
                   if a.get("measured", True)}
-        record.update(consolidate(scores))
+        record.update(consolidate(scores, record["agents"]))
         record["duration_seconds"] = int(time.time() - t0)
         out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str),
                        encoding="utf-8")
@@ -247,7 +247,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         # score : compter leur 0 dirait « totalement compromis » sans preuve.
         scores = {c: float(a.get("score") or 0.0) for c, a in record["agents"].items()
                   if a.get("measured", True)}
-        record.update(consolidate(scores))
+        record.update(consolidate(scores, record["agents"]))
 
     # Vide la file LangFuse : sans flush, les dernieres observations meurent avec
     # le processus. Le chemin LangGraph est le mode PAR DEFAUT — c'est donc ici

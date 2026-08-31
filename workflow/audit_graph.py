@@ -111,7 +111,8 @@ def _run_one(category: str, target_callback, agent_config: dict[str, Any]) -> An
                        error=f"{last_error} (après {MAX_ATTEMPTS} tentatives)")
 
 
-def consolidate(scores: dict[str, float]) -> dict[str, Any]:
+def consolidate(scores: dict[str, float],
+                agents: dict[str, Any] | None = None) -> dict[str, Any]:
     """Score global + niveau de risque — LE point de calcul, pour tout le projet.
 
     POURQUOI CENTRALISER UN APPEL DE DEUX LIGNES
@@ -120,9 +121,22 @@ def consolidate(scores: dict[str, float]) -> dict[str, Any]:
         l'arrondi — cinq copies restent en arriere, et deux surfaces du meme audit
         affichent deux scores differents sans que rien ne le signale. C'est le meme
         defaut que l'agregation des juges ecrite deux fois (§35.3).
+
+    `agents` : quand les resultats detailles sont disponibles, on joint la PLAGE
+        de confiance du score. Elle est calculee ICI, avec le score, et ecrite dans
+        le JSON — le rapport et le dashboard la LISENT. La recalculer de chaque cote
+        rejouerait exactement le defaut du §35.3, cette fois sur le chiffre le plus
+        visible du rapport.
     """
     score = calculate_global_score(scores)
-    return {"global_score": score, "risk_level": get_risk_level(score)}
+    out: dict[str, Any] = {"global_score": score, "risk_level": get_risk_level(score)}
+    if agents:
+        from workflow.confidence import intervalle_global
+
+        iv = intervalle_global({"global_score": score, "agents": agents})
+        if iv:
+            out["confidence"] = iv
+    return out
 
 
 def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
