@@ -149,7 +149,7 @@ def main() -> int:
 
     # Identifiant d'audit dans chaque trace : sans lui, deux runs successifs se
     # melangent dans le tableau de bord et aucune trace n'est rattachable.
-    from judge.tracing import audit_context
+    from judge.tracing import audit_context, audit_span
 
     agent = AGENT_REGISTRY[args.category](target_callback=cb, config=cfg)
 
@@ -171,8 +171,11 @@ def main() -> int:
     if disabled:
         print(f"{Y}Axes désactivés :{X} {', '.join(disabled)}")
     t0 = time.time()
+    # `audit_span` donne une RACINE aux observations de ce processus : sans lui,
+    # le mode sous-processus produit des traces orphelines la ou le mode LangGraph
+    # produit un arbre. Meme audit, deux lectures differentes selon le runner.
     with audit_context(audit_id=f"{args.category}-{datetime.now():%Y%m%d%H%M%S}",
-                       profile=args.profile):
+                       profile=args.profile), audit_span(f"audit {args.category}"):
         res = agent.run()
     dt = round(time.time() - t0, 1)
 

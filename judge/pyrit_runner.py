@@ -165,10 +165,17 @@ def run_pyrit_goal_hijacking(
     """
     from pyrit.models import AttackOutcome
 
+    # TRACE : PyRIT mene une conversation multi-tours — plusieurs appels a la
+    # cible ET a son modele adverse. C'est une part significative du temps d'une
+    # categorie, invisible tant qu'on ne trace que les appels de nos juges.
+    from judge.tracing import observe_step
+
     try:
-        result, http_errors, turns = asyncio.run(
-            _run_attack_async(http_callback, objective, max_turns, profile)
-        )
+        with observe_step("pyrit", objective=objective, max_turns=max_turns) as etape:
+            result, http_errors, turns = asyncio.run(
+                _run_attack_async(http_callback, objective, max_turns, profile)
+            )
+            etape.set_output(f"{turns} tour(s), {http_errors} erreur(s) HTTP")
     except Exception as exc:  # PyRIT/Ollama/scorer indisponible -> dégradation propre
         return None, None, f"error: {type(exc).__name__}: {exc}", {}
 

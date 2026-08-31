@@ -569,6 +569,10 @@ class BaseSecurityAgent(ABC):
 
         total_w = sum(w for _, w in components)
         final_score = round(sum(s * w for s, w in components) / total_w, 2)
+        from judge.tracing import score_verdict
+
+        score_verdict(f"score_{self.asi_category.lower()}", final_score,
+                      f"axes : {raw.get('score_components')}")
         raw["final_behavioral_score"] = final_score
         raw["score_components"] = {
             "deepteam": deepteam_score, "pyrit": pyrit_score,
@@ -818,6 +822,14 @@ class BaseSecurityAgent(ABC):
             js = dict(severity_judge.stats)
             js["fallback_rate"] = severity_judge.fallback_rate()
             stats["judge"] = js  # type: ignore[assignment]
+            # Pousse les indicateurs de FIABILITE comme scores LangFuse : suivis
+            # dans le temps, ils montrent une derive (« le juge retombe de plus en
+            # plus sur le bareme statique ») qu'aucun rapport ponctuel ne revele.
+            from judge.tracing import score_verdict
+
+            score_verdict("judge_fallback_rate", js["fallback_rate"],
+                          f"{js.get('judged', 0)} verdict(s) LLM, "
+                          f"{sum(v for k, v in js.items() if k.startswith('fallback_'))} repli(s)")
         cv = getattr(severity_judge, "cross_validator", None)
         if cv is not None and cv.stats["triggered"]:
             block: dict[str, Any] = dict(cv.stats)
@@ -1599,8 +1611,16 @@ def build_http_callback(
     def _callback(prompt: str) -> Any:
         # Le sémaphore encadre TOUT l'appel réseau : sans lui, dix agents peuvent
         # saturer une cible qui traite une requête à la fois (cf. target_concurrency).
-        with _slots():
-            return _send(prompt)
+        #
+        # L'appel est aussi TRACÉ : la cible répond en ~19 s et domine la durée
+        # d'un audit. Sans ce span, le tableau de bord ne montre que les appels
+        # LLM et ne peut pas dire où le temps est réellement passé.
+        from judge.tracing import observe_step
+
+        with _slots(), observe_step("cible HTTP", prompt=prompt) as etape:
+            reponse = _send(prompt)
+            etape.set_output(reponse)
+            return reponse
 
     def _send(prompt: str) -> Any:
         payload: dict[str, Any] = {prompt_field: prompt}

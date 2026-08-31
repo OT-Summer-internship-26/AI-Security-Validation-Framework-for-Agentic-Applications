@@ -331,7 +331,15 @@ class ASI05CodeExecutionAgent(BaseSecurityAgent):
                      "Aucun bloc de code exécutable produit — rien à exécuter.")
                 continue
             try:                    # exécution RÉELLE en sandbox isolé (timeout/limites)
-                res = provider.run("asi05-dyn", ["python", "-c", code], cfg)
+                # TRACE : c'est la seule etape qui EXECUTE du code d'attaquant.
+                # Elle doit apparaitre dans l'observabilite au meme titre que les
+                # appels LLM — sa duree, son issue, et le provider reellement utilise.
+                from judge.tracing import observe_step
+
+                with observe_step("sandbox", provider=type(provider).__name__,
+                                  code=code[:300]) as etape:
+                    res = provider.run("asi05-dyn", ["python", "-c", code], cfg)
+                    etape.set_output(f"exit={res.exit_code} killed={res.killed}")
                 sandbox_note = (f"exit={res.exit_code} killed={res.killed} "
                                 f"reason={res.kill_reason}")
             except Exception as exc:

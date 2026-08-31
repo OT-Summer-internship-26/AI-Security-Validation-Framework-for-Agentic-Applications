@@ -233,7 +233,10 @@ def observe(role: str, model: Any, prompt: str):
                 raise
             span.update(output=str(porteur.output)[:4000],
                         metadata={"role": role, **contexte,
-                                  "duration_s": round(time.time() - debut, 2)})
+                                  "duration_s": round(time.time() - debut, 2)},
+                        # Jetons et coût quand le fournisseur les donne (Gemini) ;
+                        # rien du tout sinon (Ollama) — on n'invente aucun chiffre.
+                        **porteur.usage)
     except Exception as exc:  # l'observabilité ne casse JAMAIS la production
         if not isinstance(exc, _Relancer):
             logger.debug("LangFuse : observation ignorée (%s)", exc)
@@ -248,17 +251,24 @@ class _Muet:
     """Passe-plat quand le traçage est inactif : aucun surcoût, aucune branche."""
 
     output: Any = None
+    usage: dict[str, Any]
 
-    def set_output(self, valeur: Any) -> None:
+    def __init__(self) -> None:
+        self.output = None
+        self.usage = {}
+
+    def set_output(self, valeur: Any, usage: dict[str, Any] | None = None) -> None:
         self.output = valeur
+        if usage:
+            self.usage = usage
 
 
 class _Porteur(_Muet):
-    """Recueille la sortie de l'appel pour la poser sur le span à la fermeture."""
+    """Recueille la sortie et l'usage de l'appel, posés sur le span à la fermeture."""
 
     def __init__(self, span: Any) -> None:
+        super().__init__()
         self.span = span
-        self.output = None
 
 
 def trace_llm_call(role: str, model: Any, prompt: str, response: Any,
@@ -344,7 +354,7 @@ def _wrap(original: Any, role: str, model: Any, *, is_async: bool) -> Any:
         async def enveloppe_async(prompt, *args, **kwargs):
             with observe(role, model, str(prompt)) as obs:
                 resultat = await original(prompt, *args, **kwargs)
-                obs.set_output(_sortie(resultat))
+                obs.set_output(_sortie(resultat), usage_de(resultat))
                 return resultat
 
         return enveloppe_async
@@ -352,17 +362,177 @@ def _wrap(original: Any, role: str, model: Any, *, is_async: bool) -> Any:
     def enveloppe(prompt, *args, **kwargs):
         with observe(role, model, str(prompt)) as obs:
             resultat = original(prompt, *args, **kwargs)
-            obs.set_output(_sortie(resultat))
+            obs.set_output(_sortie(resultat), usage_de(resultat))
             return resultat
 
     return enveloppe
 
 
 def _sortie(resultat: Any) -> str:
-    """Les modèles deepeval renvoient `(réponse, coût)` — on ne trace que la réponse."""
+    """Extrait la réponse d'un retour `(réponse, coût)` de deepeval."""
     if isinstance(resultat, tuple) and resultat:
         return str(resultat[0])
     return str(resultat)
+
+
+def usage_de(resultat: Any) -> dict[str, Any]:
+    """Extrait jetons et coût du second élément renvoyé par un modèle deepeval.
+
+    POURQUOI CETTE FONCTION EXISTE — une limite que je m'étais imposée à tort
+        La version précédente jetait `resultat[1]` et le module documentait que
+        « les modèles n'exposent aucun décompte ». C'est vrai pour Ollama, FAUX
+        pour Gemini : `GeminiModel.generate` renvoie
+        `EvaluationCost(cost, input_tokens, output_tokens)`, construit depuis
+        `response.usage_metadata`. Le profil `final` — le seul qui produira un
+        chiffre citable — donnait donc le coût réel d'un audit, et on l'effaçait.
+
+        Le suivi du coût est l'usage n°1 de LangFuse ; s'en priver revenait à
+        n'utiliser qu'une fraction de l'outil qu'on avait installé.
+
+    Renvoie `{}` quand le fournisseur ne dit rien (Ollama) : LangFuse affiche
+    alors un champ vide, ce qui reste honnête — on ne fabrique aucun chiffre.
+    """
+    if not (isinstance(resultat, tuple) and len(resultat) > 1):
+        return {}
+    cout = resultat[1]
+    entree = getattr(cout, "input_tokens", None)
+    sortie = getattr(cout, "output_tokens", None)
+    total = getattr(cout, "cost", None) if not isinstance(cout, (int, float)) else cout
+
+    usage: dict[str, Any] = {}
+    if entree is not None or sortie is not None:
+        usage["usage_details"] = {k: v for k, v in
+                                  (("input", entree), ("output", sortie)) if v is not None}
+    if isinstance(total, (int, float)) and total > 0:
+        usage["cost_details"] = {"total": float(total)}
+    return usage
+
+
+@contextmanager
+def audit_span(nom: str):
+    """Span RACINE d'un audit : donne un parent aux observations d'un processus.
+
+    POURQUOI
+        En mode LangGraph, tout s'imbrique naturellement sous la trace du graphe.
+        En mode sous-processus (un processus par categorie), chaque appel produit
+        une trace ORPHELINE : le meme audit se lisait donc en arbre ou en liste
+        plate selon le runner. Ce span racine donne au second la structure du
+        premier, pour que le tableau de bord soit identique dans les deux cas.
+
+    Inerte sans traçage configuré.
+    """
+    client = get_client()
+    if client is None:
+        yield _Muet()
+        return
+    contexte = current_context()
+    try:
+        with client.start_as_current_observation(name=nom, as_type="span") as span:
+            span.update(metadata=dict(contexte))
+            yield _Porteur(span)
+    except Exception as exc:
+        if not isinstance(exc, _Relancer):
+            logger.debug("LangFuse : span racine ignoré (%s)", exc)
+        raise
+
+
+@contextmanager
+def observe_step(nom: str, **details: Any):
+    """Trace une ETAPE non-LLM : appel a la cible, sous-processus, sandbox.
+
+    POURQUOI C'EST LE MANQUE LE PLUS COUTEUX DE LA VERSION PRECEDENTE
+        On ne tracait que les appels LLM. Or, sur l'audit global mesure, la CIBLE
+        repond en ~19 s par requete : c'est ELLE qui domine les 46 minutes d'un
+        audit, pas les modeles. Garak et PyRIT tournent en sous-processus, le
+        sandbox lance des conteneurs — rien de tout cela n'apparaissait.
+
+        Un tableau de bord d'observabilite qui ne peut pas repondre a « ou est
+        passe le temps ? » n'observe pas l'audit, il observe une fraction de
+        l'audit. Ces spans comblent l'ecart entre les deux.
+
+    Le type `span` (et non `generation`) est volontaire : ce ne sont pas des
+    appels de modele, et les melanger fausserait les statistiques LLM.
+    """
+    client = get_client()
+    if client is None:
+        yield _Muet()
+        return
+
+    contexte = current_context()
+    categorie = contexte.get("category", "")
+    titre = f"{categorie} · {nom}" if categorie else nom
+    debut = time.time()
+    try:
+        with client.start_as_current_observation(name=titre, as_type="span") as span:
+            porteur = _Porteur(span)
+            span.update(input={k: str(v)[:500] for k, v in details.items()} or None,
+                        metadata={"step": nom, **contexte})
+            try:
+                yield porteur
+            except Exception as exc:
+                span.update(level="ERROR", status_message=str(exc)[:500],
+                            metadata={"step": nom, **contexte,
+                                      "duration_s": round(time.time() - debut, 2)})
+                raise
+            span.update(output=str(porteur.output)[:2000] if porteur.output else None,
+                        metadata={"step": nom, **contexte,
+                                  "duration_s": round(time.time() - debut, 2)})
+    except Exception as exc:
+        if not isinstance(exc, _Relancer):
+            logger.debug("LangFuse : étape ignorée (%s)", exc)
+        raise
+
+
+def score_verdict(nom: str, valeur: float, commentaire: str = "") -> None:
+    """Pousse un SCORE LangFuse (gravité, confiance, taux de repli).
+
+    POURQUOI DES SCORES ET PAS SEULEMENT DES TRACES
+        Les traces disent ce qui s'est passe ; les scores permettent de SUIVRE la
+        qualite dans le temps. Le framework calcule deja gravites, confiance du
+        juge et taux de repli sur le bareme statique — et les jetait apres
+        affichage. Poussés comme scores, ils donnent des courbes : « la confiance
+        du juge baisse depuis qu'on a change de modele » se lit alors d'un coup
+        d'oeil, ce qu'aucun rapport statique ne montre.
+
+    Ne leve jamais : un score perdu ne doit pas interrompre un audit.
+    """
+    client = get_client()
+    if client is None:
+        return
+    try:
+        # UN SCORE SANS TRACE N'A NULLE PART OU S'ATTACHER.
+        #     Sans span actif, `create_score` part sans `trace_id` et LangFuse
+        #     refuse la requete (« Bad request ») — une fois par agent.
+        #
+        #     On verifie l'existence du span AVANT d'interroger le SDK : appeler
+        #     `get_current_trace_id()` hors contexte declenche son propre
+        #     avertissement (« No active span in current context »), qui polluait
+        #     la sortie de chaque audit sans rien apprendre a personne.
+        if not _span_actif():
+            logger.debug("LangFuse : score %r ignoré (aucune trace active)", nom)
+            return
+        trace_id = client.get_current_trace_id()
+        if not trace_id:
+            logger.debug("LangFuse : score %r ignoré (aucune trace active)", nom)
+            return
+        client.create_score(name=nom, value=float(valeur),
+                            comment=commentaire[:500] or None, trace_id=trace_id)
+    except Exception as exc:
+        logger.debug("LangFuse : score ignoré (%s)", exc)
+
+
+def _span_actif() -> bool:
+    """Sommes-nous a l'interieur d'un span OpenTelemetry valide ?
+
+    Verification silencieuse : le SDK LangFuse, lui, journalise un avertissement
+    des qu'on l'interroge hors contexte.
+    """
+    try:
+        from opentelemetry import trace as _otel
+
+        return _otel.get_current_span().get_span_context().is_valid
+    except Exception:
+        return False
 
 
 def graph_callbacks() -> list[Any]:
@@ -465,6 +635,10 @@ def demo() -> None:
 
     class FauxClient:
         flushed = 0
+        scores: list = []
+        def create_score(self, name, value, **kw): FauxClient.scores.append((name, value))
+        trace_id = "trace-test"
+        def get_current_trace_id(self): return FauxClient.trace_id
         def start_as_current_observation(self, **kw):
             enr = {"_name": kw.get("name")}
             observations.append(enr)
@@ -590,9 +764,92 @@ def demo() -> None:
             assert current_context() == {"audit_id": "PARENT", "category": "ASI_02"}
         clear_context()
 
+        # --- COUT ET JETONS : recuperes quand le fournisseur les donne ---------
+        class CoutGemini:
+            cost, input_tokens, output_tokens = 0.0021, 1500, 300
+
+        assert usage_de(("texte", CoutGemini())) == {
+            "usage_details": {"input": 1500, "output": 300},
+            "cost_details": {"total": 0.0021},
+        }
+        # Ollama ne renvoie aucun decompte -> champ VIDE, pas un chiffre invente.
+        class CoutVide:
+            cost = input_tokens = output_tokens = None
+
+        assert usage_de(("texte", CoutVide())) == {}
+        assert usage_de("pas un tuple") == {}
+
+        # Ils arrivent bien jusqu'au span.
+        observations.clear()
+        clear_context()
+
+        class ModeleFacture:
+            def get_model_name(self): return "gemini"
+            def generate(self, prompt, schema=None): return ("reponse", CoutGemini())
+
+        traced_model(ModeleFacture(), "evaluation").generate("p")
+        obs = next(o for o in observations if "usage_details" in o)
+        assert obs["usage_details"]["input"] == 1500
+        assert obs["cost_details"]["total"] == 0.0021
+
+        # --- ETAPES NON-LLM : la cible, les sous-processus, le sandbox ---------
+        observations.clear()
+        with observe_step("cible HTTP", prompt="attaque") as etape:
+            etape.set_output("reponse de la cible")
+        etape_obs = next(o for o in observations if o.get("_name") == "cible HTTP")
+        assert etape_obs["metadata"]["step"] == "cible HTTP"
+        assert "duration_s" in etape_obs["metadata"]
+
+        # Une panne d'etape est TRACEE en ERROR puis RELANCEE.
+        observations.clear()
+        leve = False
+        try:
+            with observe_step("sandbox"):
+                raise RuntimeError("conteneur tue")
+        except RuntimeError:
+            leve = True
+        assert leve, "observe_step ne doit jamais avaler une exception"
+        assert any(o.get("level") == "ERROR" for o in observations)
+
+        # --- SPAN RACINE : donne un parent aux traces du mode sous-processus ---
+        observations.clear()
+        with audit_span("audit ASI_01"):
+            pass
+        assert any(o.get("_name") == "audit ASI_01" for o in observations)
+
+        # --- SCORES : pousses vers LangFuse ------------------------------------
+        # Le span actif est simule : `_span_actif()` interroge OpenTelemetry, or
+        # le faux client n'en ouvre aucun. On teste donc les DEUX branches.
+        # `globals()` et non `import judge.tracing` : lance par `python -m`, le
+        # module tourne sous le nom `__main__` et un import en creerait une SECONDE
+        # copie — le patch ne toucherait alors pas la fonction reellement appelee.
+        espace = globals()
+        vrai_span_actif = espace["_span_actif"]
+        espace["_span_actif"] = lambda: True
+        try:
+            FauxClient.scores.clear()
+            score_verdict("judge_fallback_rate", 0.25, "3 verdicts, 1 repli")
+            assert FauxClient.scores == [("judge_fallback_rate", 0.25)], FauxClient.scores
+
+            # Trace active mais identifiant absent -> on s'abstient aussi.
+            FauxClient.scores.clear()
+            FauxClient.trace_id = None
+            score_verdict("orphelin", 1.0)
+            assert FauxClient.scores == [], "un score sans trace_id ne doit pas partir"
+            FauxClient.trace_id = "trace-test"
+
+            # SANS span actif : aucun score, et surtout aucun appel au SDK — c'est
+            # lui qui journalisait « No active span » a chaque agent.
+            espace["_span_actif"] = lambda: False
+            FauxClient.scores.clear()
+            score_verdict("hors-span", 1.0)
+            assert FauxClient.scores == [], "un score hors span ne doit pas partir"
+        finally:
+            espace["_span_actif"] = vrai_span_actif
+
         flush()
         assert FauxClient.flushed == 1
-        print("tracing : 19/19 controles OK (inerte sans cle, actif avec, "
+        print("tracing : 29/29 controles OK (inerte sans cle, actif avec, "
               "n'avale aucune exception)")
     finally:
         _client, _checked = None, False

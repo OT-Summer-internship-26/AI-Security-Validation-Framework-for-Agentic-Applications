@@ -118,12 +118,20 @@ def run_garak(
                 cmd, stdout=log_fh, stderr=subprocess.STDOUT,
                 cwd=workdir, env=env,
             )
-            try:
-                proc.wait(timeout=_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                proc.kill()
-                proc.wait()
+            # TRACE : garak tourne en sous-processus et peut occuper jusqu'a
+            # _TIMEOUT (600 s par defaut). Sans ce span, cette part — parfois la
+            # plus longue d'une categorie — n'apparait dans aucun tableau de bord.
+            from judge.tracing import observe_step
+
+            with observe_step("garak", probes=probes, generations=generations) as etape:
+                try:
+                    proc.wait(timeout=_TIMEOUT)
+                    etape.set_output(f"rc={proc.returncode}")
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    proc.kill()
+                    proc.wait()
+                    etape.set_output(f"tue apres {_TIMEOUT}s")
     except Exception as exc:  # venv cassé / exécutable introuvable
         return None, [], f"error: {type(exc).__name__}: {exc}", {}
 
