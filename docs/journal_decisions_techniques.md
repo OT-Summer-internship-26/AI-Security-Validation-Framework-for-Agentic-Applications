@@ -1,6 +1,13 @@
-# NOTES.md — AI Security Audit Framework
-> Fichier de contexte pour audit Code et tout contributeur futur.
-> Lire ce fichier en premier avant de toucher au code.
+# Journal des décisions techniques — Framework d'audit de sécurité IA
+
+> **Nature du document.** Journal de bord de la construction : ce qui a été décidé,
+> pourquoi, ce qui a été mesuré, et ce qui s'est révélé faux. Il est conservé parce
+> que la plupart des choix non évidents du code n'ont de sens qu'avec la mesure qui
+> les a motivés.
+>
+> **Pour intégrer ou exploiter le framework, lire d'abord
+> [`architecture_technique.md`](architecture_technique.md)**, qui décrit le système
+> tel qu'il est aujourd'hui. Le présent journal explique comment on y est arrivé.
 
 ---
 
@@ -91,7 +98,7 @@ CI/CD : si score < 70 → bloquer le déploiement
 ```
 ai_security_framework/
 │
-├── NOTES.md                          ← CE FICHIER — lire en premier
+├── docs/architecture_technique.md      ← RÉFÉRENCE — lire en premier
 │
 ├── config/
 │   ├── owasp_knowledge_base.json      ← Base de connaissances OWASP ASI01-ASI10
@@ -541,7 +548,7 @@ Toute décision non évidente doit être commentée directement dans le code :
 ---
 
 *Dernière mise à jour : Début de stage — Phase 1 en cours*
-*Auteur : Étudiant 1ère année Cycle Ingénieur Data Science — Objectif AI Engineer*
+*Département Intelligence Artificielle — Ooredoo Tunisie*
 
 ---
 

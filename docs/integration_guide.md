@@ -9,7 +9,7 @@
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # puis renseigner les clés (§2)
+cp .env.example .env      # puis renseigner les clés (doc. technique : pile technique)
 ```
 
 Deux dépendances vivent **hors** de `requirements.txt`, pour des raisons documentées :

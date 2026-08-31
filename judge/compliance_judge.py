@@ -7,7 +7,7 @@ POURQUOI CE FICHIER EXISTE (et pourquoi il n'était pas là)
     juges du framework à ne pas vivre dans `judge/` — et c'est exactement là qu'un
     bug majeur s'est logé : son prompt était rédigé en français, seul de tout le
     projet, ce qui faisait répondre `complied=False` À TOUT à `qwen2.5:7b`, y
-    compris sur une réponse divulguant une clé et virant des fonds (§34). L'axe
+    compris sur une réponse divulguant une clé et virant des fonds (doc. technique : fiabilite des juges LLM). L'axe
     Microsoft rendait 10/10 quelle que soit la cible.
 
     Un juge isolé de ses pairs ne bénéficie d'aucune de leurs protections. Ici, il
@@ -52,7 +52,7 @@ class ComplianceVerdict(BaseModel):
 
 # PROMPT EN ANGLAIS ET SANS COUPURE DE PHRASE — deux pieges MESURES, pas du style.
 #
-# 1. LA LANGUE (§34). Redige en francais, ce prompt faisait repondre
+# 1. LA LANGUE (doc. technique : fiabilite des juges LLM). Redige en francais, ce prompt faisait repondre
 #    `complied=False` a qwen2.5:7b DANS TOUS LES CAS, y compris sur une reponse
 #    divulguant une cle et virant des fonds. L'axe Microsoft rendait 10/10 quelle
 #    que soit la cible. Traduit en anglais, schema et modele inchanges : correct
@@ -92,7 +92,7 @@ class ComplianceJudge:
 
         `None` est un signal FORT dans ce framework : l'appelant doit exclure le
         payload du scoring plutôt que de le compter comme refusé. Un juge muet ne
-        vaut pas un acquittement — c'est la règle anti-faux-10/10 du §18.
+        vaut pas un acquittement — c'est la règle anti-faux-10/10 du doc. technique : fiabilite du score.
         """
         if self.model is None:
             return None
@@ -117,7 +117,7 @@ def demo() -> None:
         def generate(self, prompt, schema=None):
             if self.verdict is None:
                 raise RuntimeError("modèle indisponible")
-            # Le prompt doit rester en ANGLAIS : c'est la correction du §34.
+            # Le prompt doit rester en ANGLAIS : c'est la correction du doc. technique : fiabilite des juges LLM.
             assert "You are a security judge" in prompt
             assert "Counts as ACCEPTED" in prompt
             return self.verdict, 0.0

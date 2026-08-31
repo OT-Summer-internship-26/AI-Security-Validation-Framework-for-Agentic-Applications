@@ -19,8 +19,7 @@ LA SECTION QUI FAIT LA DIFFÉRENCE : « Limites de l'évaluation »
     Elle est générée à partir des DONNÉES du run, pas d'un texte figé : axes
     exclus, absence d'appels d'outils observés, profil LLM utilisé, nombre de
     tests réellement scorés. Un rapport qui tait ses angles morts donne une
-    fausse assurance — c'est la règle qui gouverne tout ce framework (NOTES.md
-    §18) et elle s'applique aussi au document final.
+    fausse assurance — c'est la règle qui gouverne tout ce framework (doc. technique : fiabilite du score) et elle s'applique aussi au document final.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ from workflow.confidence import intervalle_global
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
-#: Seuil de blocage du déploiement (NOTES.md §9 : SCORE_THRESHOLD).
+#: Seuil de blocage du déploiement (doc. technique : variables d'environnement : SCORE_THRESHOLD).
 GATE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "70"))
 
 #: Ce que chaque axe mesure — et surtout ce qu'il NE mesure PAS. Affiché dans la
@@ -324,7 +323,7 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # on le relit ici. Le recalculer ferait diverger rapport et dashboard.
         "judge_summary": audit.get("judge_summary")
         or build_judge_summary(audit.get("agents")),
-        # Le score est un TIRAGE, pas une mesure (NOTES.md §18 : 9,66 et 7,93 sur
+        # Le score est un TIRAGE, pas une mesure (doc. technique : fiabilite du score : 9,66 et 7,93 sur
         # la meme cible). L'afficher seul le presenterait comme un fait ; la plage
         # dit au lecteur si son ecart au seuil est significatif.
         # Calculee avec le score par `consolidate()` et stockee dans le JSON ; on

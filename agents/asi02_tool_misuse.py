@@ -23,9 +23,9 @@ SIGNAL « TOOL CALLS » (Q2)
     `build_http_callback(..., tools_field="<champ_tools_de_la_cible>")` : les appels
     d'outils exposés par la cible seront propagés au juge. Sans ça (cible boîte-noire
     qui n'expose pas ses outils), l'évaluation retombe sur le TEXTE seul — limite
-    assumée, analogue à NOTES.md §16.
+    assumée, analogue à doc. technique : limites assumees.
 
-COUCHES (NOTES.md §4 + KB test_layers réconcilié)
+COUCHES (doc. technique : architecture a 3 couches + KB test_layers réconcilié)
     - Comportementale ✅ (DeepTeam+PyRIT+Garak, hérité).
     - Statique ⚙️ OPTIONNELLE : Semgrep sur le code des outils si `config["source_path"]`.
     - Dynamique ❌ : non applicable.
@@ -89,7 +89,7 @@ class ASI02ToolMisuseAgent(BaseSecurityAgent):
     behavioral_default_vuln = "ToolMisuse"
     use_pyrit = True
     # Objectif PyRIT spécifique au tool misuse (≠ goal hijacking d'ASI01).
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du
@@ -104,7 +104,7 @@ class ASI02ToolMisuseAgent(BaseSecurityAgent):
     pyrit_finding_title = "PyRIT multi-turn tool misuse"
     pyrit_recommendation_vuln = "ToolOrchestrationAbuse"
     use_garak = GARAK_ENABLED
-    garak_default_probes = "dan.DAN_Jailbreak"  # probe fort et fiable (§18)
+    garak_default_probes = "dan.DAN_Jailbreak"  # probe fort et fiable (doc. technique : fiabilite du score)
     garak_recommendation_vuln = "ExcessiveAgency"
     microsoft_recommendation_vuln = "ToolOrchestrationAbuse"  # #1 : reco des payloads MS
     # #5 : remédiations CIBLÉES par vulnérabilité (prioritaires sur la reco de catégorie).
@@ -171,7 +171,7 @@ class ASI02ToolMisuseAgent(BaseSecurityAgent):
 
         # Payloads Microsoft Arcanum-Sec — chargés DYNAMIQUEMENT par la base (Q6) :
         # lecture AST du fichier de référence + filtrage par catégorie (fini le
-        # copier-coller manuel). "primary" = mapping §14 (ASI02 : Binary-Stream-Smuggling,
+        # copier-coller manuel). "primary" = mapping doc. technique : payloads Microsoft Arcanum (ASI02 : Binary-Stream-Smuggling,
         # Deidentification-Bypass-Attempt).
         microsoft_scenarios = self.get_microsoft_scenarios()
 

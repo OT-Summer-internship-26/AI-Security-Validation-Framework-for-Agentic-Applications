@@ -154,7 +154,7 @@ export interface ExecutiveSummary {
 
 /**
  * Plage de confiance du score global. Calculee par `workflow/confidence.py` et
- * LUE ici : le score est un tirage (NOTES.md §18 : 9,66 et 7,93 sur la meme
+ * LUE ici : le score est un tirage (doc. technique : fiabilite du score : 9,66 et 7,93 sur la meme
  * cible), pas une mesure.
  */
 export interface ScoreInterval {

@@ -31,7 +31,7 @@ def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class AuditState:
-    """État partagé d'un audit (voir NOTES.md §7).
+    """État partagé d'un audit (voir doc. technique : orchestration LangGraph).
 
     Les champs alimentés par les nœuds parallèles portent un reducer : c'est ce qui
     autorise les deux vagues d'agents à écrire dans le même état sans se piétiner.

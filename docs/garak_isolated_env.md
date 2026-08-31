@@ -11,7 +11,7 @@
   exigent **`openai >= 2.x`**. Installer garak dans l'env principal **casse** ces trois outils
   (`ModuleNotFoundError: No module named 'openai.types'`).
 
-DeepTeam étant le moteur d'attaque **principal** (NOTES.md §2/§5) et garak le **secondaire**
+DeepTeam étant le moteur d'attaque **principal** (doc. technique : pile technique / integration DeepTeam) et garak le **secondaire**
 (« variantes automatiques »), garak est isolé dans son propre venv.
 
 ## Installation (déjà réalisée)

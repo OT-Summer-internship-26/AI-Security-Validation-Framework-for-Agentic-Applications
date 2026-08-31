@@ -15,7 +15,7 @@ LES QUATRE JUGES
     `excerpt()` (extrait tête + queue) de `severity_judge`. Cette mise en commun
     n'est pas cosmétique : le seul juge qui vivait à l'écart, dans `base_agent`,
     est celui où un prompt en français a produit un faux 10/10 pendant des
-    semaines (NOTES.md §34).
+    semaines (doc. technique : fiabilite des juges LLM).
 
 RUNNERS (pilotent des outils, ne jugent pas)
     llm_config.py    profils de modèles (dev / ollama / final / dry_run)

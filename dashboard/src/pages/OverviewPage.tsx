@@ -43,7 +43,7 @@ export function OverviewPage() {
   const iv = latest.score_interval
   const resume = latest.executive_summary
   // Un écart plus petit que le bruit irréductible du simulateur n'est pas une
-  // évolution : deux exécutions identiques varient déjà d'autant (§18). Le seuil
+  // évolution : deux exécutions identiques varient déjà d'autant (doc. technique : fiabilite du score). Le seuil
   // vient du JSON — le recopier ici le ferait diverger du rapport.
   const bruit = delta !== null && iv ? Math.abs(delta) < iv.plancher : false
 
@@ -124,7 +124,7 @@ export function OverviewPage() {
             )}
           </div>
 
-          {/* Plage de confiance : le score est un TIRAGE (§18 : 9,66 et 7,93 sur la
+          {/* Plage de confiance : le score est un TIRAGE (doc. technique : fiabilite du score : 9,66 et 7,93 sur la
               même cible). L'afficher nu le présenterait comme une mesure. */}
           {iv && (
             <div className="mt-2 text-[11px] text-text-muted leading-snug">

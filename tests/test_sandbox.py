@@ -5,7 +5,7 @@ POURQUOI CE FICHIER
     Le sandbox execute du code ECRIT PAR UN ATTAQUANT sur la machine de
     l'auditeur. Une regression ici n'est pas un chiffre faux : c'est du code qui
     sort de son enclos. L'isolation reseau du provider Docker n'avait ete prouvee
-    QU'UNE FOIS, a la main, six semaines plus tot (§23.1) — rien ne la
+    QU'UNE FOIS, a la main, six semaines plus tot (doc. technique : agent ASI05 et sandbox) — rien ne la
     reverifiait depuis.
 
     Les controles Docker sont sautes automatiquement si Docker n'est pas
@@ -180,7 +180,7 @@ def test_scan_code_propre_ne_produit_rien(tmp_path: pathlib.Path):
 
 
 # --------------------------------------------------------------------------- #
-# Le provider Docker est PREFERE quand il est disponible (§23.1).
+# Le provider Docker est PREFERE quand il est disponible (doc. technique : agent ASI05 et sandbox).
 # --------------------------------------------------------------------------- #
 
 def test_asi05_trace_le_provider_utilise():

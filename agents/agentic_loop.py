@@ -1,6 +1,6 @@
 """
 agentic_loop.py — La boucle percevoir → planifier → agir → réfléchir → adapter
-(NOTES.md §26 #10).
+(doc. technique : feuille de route / conventions de code).
 
 LA QUESTION À LAQUELLE CE MODULE RÉPOND
     Le projet annonce « 10 agents de sécurité ». Un jury demandera légitimement en
@@ -16,7 +16,7 @@ LA CONTRAINTE QUI STRUCTURE TOUT LE MODULE
     Un modèle qui pilote un audit peut le rendre plus indulgent — réduire le
     nombre d'attaques, couper un axe gênant, s'arrêter dès que le score paraît
     bon. Ce serait un moyen SUPPLÉMENTAIRE de fabriquer le faux score rassurant
-    que tout le reste du framework combat (§18).
+    que tout le reste du framework combat (doc. technique : fiabilite du score).
 
     D'où deux règles, appliquées mécaniquement et pas par consigne au modèle :
 
@@ -29,7 +29,7 @@ LA CONTRAINTE QUI STRUCTURE TOUT LE MODULE
        faiblesse au 2ᵉ passage prouve que la cible EST faible : le score du 1ᵉʳ
        était optimiste. L'inverse n'est pas vrai — un 2ᵉ passage plus clément peut
        simplement avoir tiré des attaques plus faibles. C'est exactement la leçon
-       du §18 : un bon score dit « a résisté à ce qu'on a lancé », donc lancer
+       du doc. technique : fiabilite du score : un bon score dit « a résisté à ce qu'on a lancé », donc lancer
        plus peut seulement révéler, jamais absoudre.
 
     Conséquence assumée : la boucle ne peut MATHÉMATIQUEMENT pas améliorer un
@@ -163,7 +163,7 @@ def _contexte(agent: Any) -> str:
 def planifier(agent: Any, perception: dict[str, Any], model: Any) -> PlanAudit | None:
     """Choisit les réglages du 1ᵉʳ passage à partir de la perception.
 
-    ⚠️ RÈGLE DU §35.1 : ce prompt ne doit JAMAIS être reformaté pour la lisibilité
+    ⚠️ RÈGLE DU doc. technique : couche de jugement : ce prompt ne doit JAMAIS être reformaté pour la lisibilité
     du code. Une phrase coupée en deux par un retour à la ligne a déjà cassé un
     juge deux fois. Une phrase = une ligne logique.
     """
@@ -195,7 +195,7 @@ def planifier(agent: Any, perception: dict[str, Any], model: Any) -> PlanAudit |
 def reflechir(agent: Any, result: Any, model: Any) -> Reflexion | None:
     """Décide, après un passage, si un second est justifié — et sur quoi.
 
-    ⚠️ RÈGLE DU §35.1 : ne pas reformater ce prompt (voir `planifier`).
+    ⚠️ RÈGLE DU doc. technique : couche de jugement : ne pas reformater ce prompt (voir `planifier`).
     """
     from judge.severity_judge import structured
 
@@ -272,7 +272,7 @@ def appliquer_adaptation(agent: Any, decision: Any) -> list[str]:
     extra = (getattr(decision, "garak_probes_supplementaires", "") or "").strip()
     if extra:
         # AJOUT seulement : on ne remplace jamais le jeu de probes, sinon le modèle
-        # pourrait retirer celui qui trouve quelque chose (§18 : garak est le seul
+        # pourrait retirer celui qui trouve quelque chose (doc. technique : fiabilite du score : garak est le seul
         # axe indépendant du LLM, donc le plus difficile à contourner).
         courant = agent.config.get("garak_probes") or agent.garak_default_probes
         probes = [p.strip() for p in f"{courant},{extra}".split(",") if p.strip()]
@@ -295,7 +295,7 @@ def fusionner(premier: Any, second: Any) -> Any:
         Les deux passages sont deux tentatives valides. Si le second trouve une
         faiblesse, la cible EST faible et le premier score était optimiste. Si le
         second trouve moins, cela ne prouve rien : il a pu tirer des attaques plus
-        faibles (§18 a mesuré 9,66 et 7,93 sur la MÊME cible). Prendre la moyenne
+        faibles (doc. technique : fiabilite du score a mesuré 9,66 et 7,93 sur la MÊME cible). Prendre la moyenne
         laisserait donc un tirage clément effacer une faille démontrée.
 
     Un passage NON MESURÉ n'écrase pas un passage mesuré : son 0 n'est pas un
@@ -439,7 +439,7 @@ def demo() -> None:
     f = fusionner(a.run(), a.run())
     assert f.score == 4.0 and len(f.vulnerabilities) == 2
 
-    # 6. …et un second passage plus CLÉMENT ne l'améliore pas (leçon du §18).
+    # 6. …et un second passage plus CLÉMENT ne l'améliore pas (leçon du doc. technique : fiabilite du score).
     a = FauxAgent([4.0, 9.0])
     f = fusionner(a.run(), a.run())
     assert f.score == 4.0, "un tirage clément ne doit pas effacer une faille démontrée"

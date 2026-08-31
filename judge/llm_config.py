@@ -3,7 +3,7 @@ llm_config.py — Factory des modèles LLM pour DeepTeam (rôles simulator + eva
 
 POURQUOI CE FICHIER
     DeepTeam exige DEUX modèles : `simulator` (génère les attaques) et `evaluation`
-    (juge si l'attaque a réussi — rôle le plus sensible). NOTES.md §15 acte la
+    (juge si l'attaque a réussi — rôle le plus sensible). doc. technique : profils de modeles LLM acte la
     stratégie : profil « dev » = Ollama local (qwen2.5:7b) pour les DEUX rôles,
     gratuit et illimité. Cette factory renvoie des INSTANCES (et non des strings) :
     c'est la seule façon vérifiée de fixer le provider par rôle dans deepteam 1.0.7
@@ -47,7 +47,7 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 # débit utilisable. On bascule le profil dev sur **openai/gpt-oss-20b** servi par un
 # fournisseur OpenAI-compatible (OpenRouter par défaut, offre gratuite). Aucun GPU
 # requis, modèle bien plus fort qu'un 7B local → simulateur moins faible qu'avec
-# Ollama (cf. constat §18 : un simulateur faible produit un faux verdict rassurant).
+# Ollama (cf. constat doc. technique : fiabilite du score : un simulateur faible produit un faux verdict rassurant).
 # Ollama reste disponible via le profil « ollama » (repli hors-ligne).
 DEV_MODEL = os.environ.get("AUDIT_DEV_MODEL", "openai/gpt-oss-20b:free")
 DEV_BASE_URL = os.environ.get("AUDIT_DEV_BASE_URL", "https://openrouter.ai/api/v1")
@@ -59,7 +59,7 @@ DEV_RPM = int(os.environ.get("AUDIT_DEV_RPM", "15"))
 OLLAMA_MODEL = os.environ.get("AUDIT_OLLAMA_MODEL", "qwen2.5:7b")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
-# Profil actif : env AUDIT_LLM_PROFILE, défaut « dev » (cf. NOTES.md §15).
+# Profil actif : env AUDIT_LLM_PROFILE, défaut « dev » (cf. doc. technique : profils de modeles LLM).
 DEFAULT_PROFILE = os.environ.get("AUDIT_LLM_PROFILE", "dev")
 
 # -- Profil « final » : Gemini Flash (attaques + jugement FIABLES) ------------ #
@@ -106,7 +106,7 @@ class _RateLimiter:
         (100-200+ appels) le dépasse → 429 RESOURCE_EXHAUSTED en rafale. Ce limiteur
         GLOBAL (partagé par toutes les instances Gemini du process) espace les appels
         pour rester sous la limite. Sans facturation, c'est le seul moyen de faire un
-        run complet sur Gemini (NOTES.md §18).
+        run complet sur Gemini (doc. technique : fiabilite du score).
 
     THREAD-SAFE + ASYNC
         `acquire()` (sync, ex. SeverityJudge) et `acquire_async()` (async, DeepTeam
@@ -244,7 +244,7 @@ class DryRunModel(DeepEvalBaseLLM):
     POURQUOI
         Le mode dry-run est indispensable pour tester la plomberie du framework
         (câblage, callbacks, scoring) rapidement et gratuitement — profil « ci »
-        de NOTES.md §15.
+        de doc. technique : profils de modeles LLM.
     """
 
     def __init__(self, canned: str = "DRY-RUN: réponse simulée déterministe.") -> None:
@@ -279,7 +279,7 @@ def _ollama() -> OllamaModel:
     POURQUOI UNE FONCTION
         On crée une instance FRAÎCHE par rôle. Les deux pointent le même modèle
         (qwen2.5:7b) → Ollama ne charge qu'UN modèle en VRAM (pas de swap 8 Go),
-        conformément à NOTES.md §15.
+        conformément à doc. technique : profils de modeles LLM.
     """
     return OllamaModel(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 
@@ -333,7 +333,7 @@ def _gemini() -> DeepEvalBaseLLM:
     POURQUOI PAS LE DÉFAUT DE LA LIB
         Le défaut deepeval est gemini-2.5-pro (PAYANT depuis avril 2026) ; et
         gemini-2.0-flash a un quota free-tier = 0 (429 immédiat). On force donc un
-        alias à quota actif via GEMINI_MODEL — NOTES.md §15/§18.
+        alias à quota actif via GEMINI_MODEL — doc. technique : profils de modeles LLM / fiabilite du score.
 
     RATE-LIMITÉ
         On renvoie une instance RATE-LIMITÉE (≤ GEMINI_RPM req/min, limiteur global
@@ -355,12 +355,12 @@ def get_pyrit_chat_config(profile: str | None = None) -> dict[str, str]:
 
     POURQUOI ICI (et pas en dur dans pyrit_runner)
         Le choix du provider par profil est centralisé dans llm_config, comme pour
-        get_judge_models — un seul endroit à changer. Vérifié : constat DVAP (§18)
+        get_judge_models — un seul endroit à changer. Vérifié : constat DVAP (doc. technique : fiabilite du score)
         que l'adversaire 7B génère des attaques trop faibles → Gemini en 'final'.
 
     Retour : {"model_name", "endpoint", "api_key"} (+ "headers" JSON si Vertex).
         `endpoint` = BASE OpenAI (le SDK openai ajoute lui-même « /chat/completions »,
-        exactement comme pour Ollama /v1 — spike §17).
+        exactement comme pour Ollama /v1 — spike doc. technique : socle reutilisable).
     """
     profile = (profile or DEFAULT_PROFILE or "dev").lower()
     return _traced(_build_models(profile))
@@ -441,7 +441,7 @@ def get_judge_models(profile: str | None = None) -> JudgeModels:
         - "final"            : Gemini Flash (gemini-flash-lite-latest) pour les DEUX rôles —
                                attaques fortes + jugement fiable pour la validation /
                                soutenance. Exige google-genai + GEMINI_API_KEY
-                               (clé AI Studio gratuite). Voir NOTES.md §15/§18.
+                               (clé AI Studio gratuite). Voir doc. technique : profils de modeles LLM / fiabilite du score.
 
     POURQUOI DES INSTANCES
         `initialize_model` (deepteam) ne fixe un provider par rôle QUE si on passe
@@ -485,11 +485,11 @@ def _build_models(profile: str) -> JudgeModels:
         #     score 0 (mesuré le 2026-08-22 sur ASI07/08/09). Les autres modèles
         #     `:free` testés ne conviennent pas non plus : rate-limit immédiat, ou
         #     sortie structurée KO — or c'est elle qui porte les verdicts DeepTeam et
-        #     les 7 champs du juge (§27). Ollama qwen2.5:7b est le seul chemin gratuit
-        #     vérifié de bout en bout, schéma compris (§17.3).
+        #     les 7 champs du juge (doc. technique : juge explicatif). Ollama qwen2.5:7b est le seul chemin gratuit
+        #     vérifié de bout en bout, schéma compris (doc. technique : socle reutilisable).
         #
         # Pour repasser sur un endpoint OpenAI-compatible : définir AUDIT_DEV_MODEL
-        # (+ AUDIT_DEV_API_KEY / AUDIT_DEV_BASE_URL). Rappel §19.4 : le verdict
+        # (+ AUDIT_DEV_API_KEY / AUDIT_DEV_BASE_URL). Rappel doc. technique : pipeline comportemental centralise : le verdict
         # officiel se fait en `final`, jamais en `dev`.
         if not os.environ.get("AUDIT_DEV_MODEL", "").strip():
             return _ollama(), _ollama()
@@ -503,7 +503,7 @@ def _build_models(profile: str) -> JudgeModels:
         return DryRunModel(), DryRunModel()
 
     if profile == "final":
-        # DÉCISION (constat DVAP §18) : le simulateur 7B local génère des attaques
+        # DÉCISION (constat DVAP doc. technique : fiabilite du score) : le simulateur 7B local génère des attaques
         # TROP FAIBLES → le lab vulnérable obtenait un faux 9.4/10. On met Gemini
         # Flash sur les DEUX rôles (simulator ET evaluation) → attaques fortes +
         # jugement fiable. Exige GEMINI_API_KEY (clé AI Studio gratuite).

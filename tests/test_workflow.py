@@ -157,7 +157,7 @@ def test_un_seul_point_de_calcul_du_score():
 
 
 def test_retry_rend_la_main_apres_les_tentatives(monkeypatch):
-    """Un agent definitivement en echec ne bloque pas l'audit (fail-safe §7)."""
+    """Un agent definitivement en echec ne bloque pas l'audit (fail-safe doc. technique : orchestration LangGraph)."""
     import workflow.audit_graph as ag
 
     monkeypatch.setattr(ag, "MAX_ATTEMPTS", 2)
@@ -219,13 +219,13 @@ def test_niveaux_de_risque_sans_trou():
     for centieme in range(10001):
         niveau = get_risk_level(centieme / 100)
         assert niveau in attendus, f"{centieme / 100} -> {niveau!r}"
-    # Les bornes exactes de NOTES.md.
+    # Les bornes exactes de documentation technique.
     assert get_risk_level(86.0) == "Sécurisé" and get_risk_level(85.99) == "Faible"
     assert get_risk_level(31.0) == "Élevé" and get_risk_level(30.99) == "Critique"
 
 
 # --------------------------------------------------------------------------- #
-# Intervalle de confiance : le score est un TIRAGE, pas une mesure (§18).
+# Intervalle de confiance : le score est un TIRAGE, pas une mesure (doc. technique : fiabilite du score).
 # --------------------------------------------------------------------------- #
 
 def _agent_mesure(score: float, scores: int, passes: int) -> dict:
@@ -240,7 +240,7 @@ def test_autotest_confidence():
 
 
 def test_un_score_parfait_sur_peu_de_tests_n_est_pas_une_certitude():
-    """LE piege du §18 : le lab DVAP a rendu 9,4/10 tout en cedant a une injection
+    """LE piege du doc. technique : fiabilite du score : le lab DVAP a rendu 9,4/10 tout en cedant a une injection
     triviale. « A resiste au peu qu'on a lance » doit rester distinct de « robuste »."""
     from workflow.confidence import intervalle
     iv = intervalle(10.0, tests_scores=3, tests_reussis=3)
@@ -263,7 +263,7 @@ def test_le_bruit_du_simulateur_est_un_plancher_incompressible():
 def test_consolidate_joint_l_intervalle_et_reste_muet_sans_agents():
     """Le calcul vit au point de calcul UNIQUE du score, et n'invente rien sans donnee.
 
-    C'est ce qui empeche le rapport et le dashboard d'en tenir deux versions (§35.3).
+    C'est ce qui empeche le rapport et le dashboard d'en tenir deux versions (doc. technique : couche de jugement).
     """
     from workflow.audit_graph import consolidate
     agents = {"ASI_01": _agent_mesure(6.1, 6, 4), "ASI_02": _agent_mesure(8.0, 3, 2)}

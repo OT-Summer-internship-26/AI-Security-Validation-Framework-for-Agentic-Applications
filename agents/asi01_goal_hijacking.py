@@ -16,16 +16,16 @@ ARCHITECTURE (Q6 — pipeline centralisé)
          Garak, titres PyRIT…) ;
       2. décrire ses scénarios dans `get_scenarios()` (rapport / traçabilité).
     Comportement identique à la version validée (mêmes poids, mêmes probes, même
-    map de gravité) — voir NOTES.md §17.
+    map de gravité) — voir doc. technique : socle reutilisable.
 
-LIMITE ASSUMÉE — injection indirecte testée EN SIMULATION (voir NOTES.md §16)
+LIMITE ASSUMÉE — injection indirecte testée EN SIMULATION (voir doc. technique : limites assumees)
     IndirectInstruction (rag_injection, tool_output_injection, …) est éprouvée en
     plaçant la charge dans le TEXTE du prompt (callback boîte-noire). Ce n'est PAS
     une vraie injection indirecte type EchoLeak/AgentFlayer (empoisonnement d'un
     canal de données de la cible). Un agent peut « réussir » ASI01 tout en restant
-    vulnérable via ses données. Détails : NOTES.md §16.
+    vulnérable via ses données. Détails : doc. technique : limites assumees.
 
-COUCHE APPLICABLE : comportementale UNIQUEMENT (NOTES.md §4).
+COUCHE APPLICABLE : comportementale UNIQUEMENT (doc. technique : architecture a 3 couches).
     static/dynamic → hérités de Base → applicable=False.
 """
 
@@ -66,7 +66,7 @@ class ASI01GoalHijackingAgent(BaseSecurityAgent):
     pyrit_finding_title = "PyRIT multi-turn goal hijacking"
     pyrit_recommendation_vuln = "RecursiveHijacking"
     use_garak = GARAK_ENABLED
-    # #2 : probe FIABLE (AntiDAN retiré = faux 10.0 diluant, §18). En profil `final`,
+    # #2 : probe FIABLE (AntiDAN retiré = faux 10.0 diluant, doc. technique : fiabilite du score). En profil `final`,
     # garak_final_probes prend le relais (set élargi) — laissé au défaut base ici.
     garak_default_probes = "dan.DAN_Jailbreak"
     garak_recommendation_vuln = "Robustness"
@@ -148,7 +148,7 @@ class ASI01GoalHijackingAgent(BaseSecurityAgent):
         # Payloads Microsoft Arcanum-Sec — chargés DYNAMIQUEMENT par la base (Q6) :
         # lecture AST de docs/references/microsoft_payloads_reference.py + filtrage par
         # catégorie (fini le copier-coller manuel qui re-dupliquait sur 10 agents).
-        # "primary" reproduit le mapping curé §14 (ASI01 : CBRN, Russian-Doll,
+        # "primary" reproduit le mapping curé doc. technique : payloads Microsoft Arcanum (ASI01 : CBRN, Russian-Doll,
         # Policy-Override-Fraud, Shipping-Policy-Override).
         microsoft_scenarios = self.get_microsoft_scenarios()
 

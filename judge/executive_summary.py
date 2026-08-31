@@ -1,5 +1,5 @@
 """
-executive_summary.py — Le paragraphe d'ouverture du rapport (NOTES.md §26 #12).
+executive_summary.py — Le paragraphe d'ouverture du rapport (doc. technique : feuille de route / livrables).
 
 LE PROBLÈME QU'IL RÉSOUT
     Le rapport ouvre sur un chiffre, un badge de risque et un tableau de comptage.
@@ -46,14 +46,14 @@ logger = logging.getLogger(__name__)
 # Gravités qui exigent une action — les seules citées nommément dans la synthèse.
 BLOQUANTES = ("Critical", "High")
 
-# Seuil du contrôle de déploiement (NOTES.md §9, `SCORE_THRESHOLD`).
+# Seuil du contrôle de déploiement (doc. technique : variables d'environnement, `SCORE_THRESHOLD`).
 SEUIL = 70
 
 
 class ResumeExecutif(BaseModel):
     """Synthèse en trois parties SÉPARÉES, pour empêcher un paragraphe fourre-tout.
 
-    Le juge de gravité a montré (§34.3) qu'un modèle à qui l'on demande « un
+    Le juge de gravité a montré (doc. technique : fiabilite des juges LLM) qu'un modèle à qui l'on demande « un
     texte » rend une phrase creuse : découper la demande en champs force chaque
     élément à exister.
     """
@@ -236,7 +236,7 @@ def _verifier(resume: dict[str, str], faits: dict[str, Any]) -> str | None:
 def _prompt(faits: dict[str, Any], repere: dict[str, str]) -> str:
     """Prompt du rédacteur.
 
-    ⚠️ RÈGLE DU §35.1 : ne JAMAIS reformater ce texte pour l'esthétique du code.
+    ⚠️ RÈGLE DU doc. technique : couche de jugement : ne JAMAIS reformater ce texte pour l'esthétique du code.
     Le juge de conformité a été cassé deux fois par la forme de son prompt (une
     fois par la langue, une fois par des retours à la ligne au milieu des
     phrases). Une phrase = une ligne logique, construite par concaténation.
@@ -295,7 +295,7 @@ def build(audit: dict[str, Any], model: Any = None) -> dict[str, str]:
     motif = _verifier(candidat, faits)
     if motif:
         # On DIT pourquoi on a rejeté : un repli silencieux ferait croire qu'aucun
-        # modèle n'était configuré (même défaut que le juge muet du §34.3).
+        # modèle n'était configuré (même défaut que le juge muet du doc. technique : fiabilite des juges LLM).
         logger.warning("résumé exécutif rejeté (%s) — repli déterministe", motif)
         return {**repere, "rejet": motif}
     return {**candidat, "source": "llm"}
@@ -306,7 +306,7 @@ def build_for_profile(audit: dict[str, Any], profile: str) -> dict[str, str]:
 
     POURQUOI CE RACCOURCI EXISTE
         Les deux runners auraient sinon recopié la construction du modèle. Ils
-        ont déjà divergé une fois sur le format d'entrée d'agent (§36.7) : la
+        ont déjà divergé une fois sur le format d'entrée d'agent (doc. technique : orchestration et observabilite) : la
         seule protection qui tienne est de n'écrire la chose qu'une fois.
 
     `AUDIT_EXEC_SUMMARY=0` force la version déterministe — utile en CI, où un
@@ -407,7 +407,7 @@ def demo() -> None:
 
     assert build(audit, Panne())["source"] == "deterministe"
 
-    # 11. Le prompt n'a pas été cassé par un reformatage (garde-fou du §35.1).
+    # 11. Le prompt n'a pas été cassé par un reformatage (garde-fou du doc. technique : couche de jugement).
     p = _prompt(faits, det)
     for phrase in ("Write in FRENCH.",
                    "you may reword, never re-evaluate.",

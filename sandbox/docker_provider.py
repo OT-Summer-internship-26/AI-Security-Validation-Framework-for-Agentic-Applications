@@ -2,7 +2,7 @@
 docker_provider.py — DockerSandboxProvider : sandbox Docker éphémère RÉELLEMENT isolé.
 
 CORRIGE la limite du SubprocessSandboxProvider (Windows : pas d'isolation réseau/fs
-réelle). Ici `docker run` applique VRAIMENT l'isolation voulue par §6 :
+réelle). Ici `docker run` applique VRAIMENT l'isolation voulue par doc. technique : sandbox d'execution :
     --network none      → aucun accès réseau (VÉRIFIÉ : la résolution DNS échoue
                           dans le conteneur → le code d'exfiltration plante)
     --memory / --cpus   → limites ressources strictes (+ --memory-swap = pas de swap)

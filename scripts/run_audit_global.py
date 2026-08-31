@@ -9,7 +9,7 @@ POURQUOI CE SCRIPT EXISTE
     global après CHAQUE agent. Un plantage au 8e agent laisse les 7 premiers.
 
 POURQUOI PAS UN NOUVEAU RUNNER
-    Un sous-processus par agent donne le fail-safe (§7) gratuitement : un agent qui
+    Un sous-processus par agent donne le fail-safe (doc. technique : orchestration LangGraph) gratuitement : un agent qui
     plante ne peut pas emporter les autres, et chaque agent produit déjà son propre
     fichier lisible par le dashboard. On ne réimplémente donc ni le run, ni le format.
 
@@ -102,7 +102,7 @@ def main() -> int:
 
     t0 = time.time()
 
-    # LangGraph est le chemin par DEFAUT (§1 : « Workflow LangGraph orchestre les
+    # LangGraph est le chemin par DEFAUT (doc. technique : objectifs du framework : « Workflow LangGraph orchestre les
     # 10 agents »). Les sous-processus restent disponibles pour l'isolation.
     if not args.subprocess:
         return _run_via_graph(args, cats, record, out, t0)
@@ -174,7 +174,7 @@ def main() -> int:
 def _run_via_graph(args, cats, record, out, t0) -> int:
     """Orchestration LangGraph : deux vagues paralleles, meme fichier de sortie.
     POURQUOI CE MODE EXISTE
-        Le §1 du projet annonce que LangGraph orchestre les dix agents. Tant que
+        Le doc. technique : objectifs du framework du projet annonce que LangGraph orchestre les dix agents. Tant que
         rien ne l'appelait, c'etait du code que personne n'executait — et une
         promesse que le projet ne tenait pas.
 

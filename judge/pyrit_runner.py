@@ -111,7 +111,7 @@ async def _run_attack_async(
 
     # Adversaire + scorer selon le profil : dev/ci = Ollama local (attaques faibles
     # mais gratuites), final = Gemini Flash (attaques fortes, endpoint OpenAI-compat).
-    # Centralisé dans llm_config.get_pyrit_chat_config (§17/§18).
+    # Centralisé dans llm_config.get_pyrit_chat_config (doc. technique : socle reutilisable / fiabilite du score).
     chat_cfg = get_pyrit_chat_config(profile)
 
     def _chat_target() -> OpenAIChatTarget:

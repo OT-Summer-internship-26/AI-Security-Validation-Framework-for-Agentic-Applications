@@ -13,7 +13,7 @@ LE PROBLÈME QU'IL RÉSOUT
     parle de l'échange réellement observé.
 
 POURQUOI IL N'APPELLE AUCUN LLM LUI-MÊME
-    Le plan d'origine (§5) prévoyait « générer des recommandations via un LLM » —
+    Le plan d'origine (doc. technique : integration DeepTeam) prévoyait « générer des recommandations via un LLM » —
     donc un appel de plus par vulnérabilité. Inutile : le juge de gravité vient
     d'établir QUELLE garde a cédé et POURQUOI (`guardrail`), et quel serait
     l'impact. Il est au meilleur endroit pour dire quoi ajouter, et son appel est

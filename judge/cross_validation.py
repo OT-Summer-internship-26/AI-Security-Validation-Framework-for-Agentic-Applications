@@ -28,7 +28,7 @@ LE SECOND AVIS EST AVEUGLE — et ce n'est pas un détail
     indépendant tout en soufflant qu'il y a un doute. Le second passage ne voit
     désormais AUCUNE trace du premier — même contexte, consigne reformulée (citation
     décisive exigée AVANT le verdict, technique dont on a mesuré qu'elle fiabilise les
-    petits modèles, cf. §34). C'est le maximum d'indépendance atteignable tant qu'un
+    petits modèles, cf. doc. technique : fiabilite des juges LLM). C'est le maximum d'indépendance atteignable tant qu'un
     seul fournisseur est disponible.
 
 CE QUI DÉCLENCHE UNE RÉCONCILIATION
@@ -77,7 +77,7 @@ from typing import Any
 
 from judge.severity_judge import ALLOWED_SEVERITIES, SeverityVerdict, structured
 
-# Sous ce niveau de confiance annoncé, le verdict est réconcilié. 80 vient de §5/§26.1.
+# Sous ce niveau de confiance annoncé, le verdict est réconcilié. 80 vient de doc. technique : integration DeepTeam / feuille de route.
 CONFIDENCE_THRESHOLD = 80
 
 # Gravités qui font blocage en CI/CD (cf. config/gate_policy.json : block_all_critical
@@ -90,7 +90,7 @@ INDEPENDENCE_MIN_SAMPLE = 5
 
 # Consigne du second passage. AUCUNE mention d'un premier verdict (voir l'en-tête).
 # La citation décisive est demandée AVANT le reste : sur un petit modèle, exiger la
-# preuve avant la conclusion réduit les verdicts réflexes (mesuré, §34).
+# preuve avant la conclusion réduit les verdicts réflexes (mesuré, doc. technique : fiabilite des juges LLM).
 _BLIND_SECOND_PASS = """
 
 --- INDEPENDENT REVIEW ---

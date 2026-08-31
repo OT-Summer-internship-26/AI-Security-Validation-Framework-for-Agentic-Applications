@@ -9,7 +9,7 @@
 #      croit la brique disponible.
 #
 #      L'observabilité vit désormais dans **docker-compose.langfuse.yml**, une
-#      pile complète et vérifiée (traces réellement reçues, cf. NOTES.md) :
+#      pile complète et vérifiée (traces réellement reçues, cf. documentation technique) :
 #          docker compose -f docker-compose.langfuse.yml up -d
 #
 #  ⚠️ LE SERVICE `api` EXIGE UN Dockerfile QUI N'EXISTE PAS ENCORE

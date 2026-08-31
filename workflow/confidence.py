@@ -1,8 +1,8 @@
 """
-confidence.py — Intervalle de confiance d'un score d'audit (NOTES.md §26 #5).
+confidence.py — Intervalle de confiance d'un score d'audit (doc. technique : feuille de route / integration DeepTeam).
 
 LE PROBLÈME QU'IL RÉSOUT
-    Le rapport annonce « 77,9/100 » comme un fait. Or le §18 a mesuré, sur la
+    Le rapport annonce « 77,9/100 » comme un fait. Or le doc. technique : fiabilite du score a mesuré, sur la
     MÊME cible et la MÊME configuration, deux exécutions à **9,66** et **7,93**
     sur 10 — les attaques multi-tours sont tirées au hasard par le simulateur.
     Publier un chiffre unique revient donc à présenter un tirage comme une
@@ -13,7 +13,7 @@ LE PROBLÈME QU'IL RÉSOUT
 
 DEUX SOURCES D'INCERTITUDE, DÉLIBÉRÉMENT SÉPARÉES
     1. **Le bruit du simulateur** — irréductible sans relancer l'audit. Estimé
-       depuis l'écart mesuré du §18, exprimé en points de score.
+       depuis l'écart mesuré du doc. technique : fiabilite du score, exprimé en points de score.
     2. **La taille de l'échantillon** — un score assis sur 3 tests est bien plus
        incertain qu'un score assis sur 50. C'est l'erreur standard d'une
        proportion : elle DÉCROÎT quand on lance plus d'attaques, contrairement à
@@ -34,7 +34,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-# Écart mesuré entre deux exécutions identiques (NOTES.md §18) : 9,66 vs 7,93
+# Écart mesuré entre deux exécutions identiques (doc. technique : fiabilite du score) : 9,66 vs 7,93
 # sur 10, soit 1,73 point. Arrondi à 1,8 — la même constante que le module de
 # comparaison utilise pour refuser de conclure sous ce seuil.
 BRUIT_SIMULATEUR_SUR_10 = 1.8
@@ -204,7 +204,7 @@ def demo() -> None:
     assert grande < 1.0, "50 tests doivent etre confortables"
 
     # 2. Un score parfait sur peu de tests n'est PAS une certitude.
-    #    C'est le piege du §18 : « a resiste au peu qu'on a lance » != « robuste ».
+    #    C'est le piege du doc. technique : fiabilite du score : « a resiste au peu qu'on a lance » != « robuste ».
     iv = intervalle(10.0, tests_scores=3, tests_reussis=3)
     assert iv["bas"] < 10.0, "10/10 sur 3 tests ne doit pas donner une borne basse a 10"
     assert iv["niveau"] == "faible"

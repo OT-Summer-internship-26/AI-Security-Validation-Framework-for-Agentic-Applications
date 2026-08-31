@@ -72,7 +72,7 @@ Installation complète, profils LLM, options et intégration CI/CD :
 | [docs/integration_guide.md](docs/integration_guide.md) | Utilisation, lecture du score, CI/CD, limites |
 | [config/owasp_knowledge_base.json](config/owasp_knowledge_base.json) | Base de connaissances OWASP ASI01→ASI10 |
 | [config/threat_mapping.json](config/threat_mapping.json) | Cartographie menaces ↔ contexte opérateur télécom |
-| [NOTES.md](NOTES.md) | Journal de conception : chaque décision technique et sa raison |
+| [documentation technique](documentation technique) | Journal de conception : chaque décision technique et sa raison |
 
 ## État
 

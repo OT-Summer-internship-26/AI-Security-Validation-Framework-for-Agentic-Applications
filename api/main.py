@@ -450,7 +450,7 @@ def _execute_many(run: Run, cats: list[str]) -> None:
     """Enchaîne plusieurs agents dans une seule exécution (modes `full` et `targeted`).
 
     FAIL-SAFE : l'échec d'un agent n'interrompt pas les suivants — c'est la règle
-    du workflow (§7). Chaque agent produit son propre fichier de résultat.
+    du workflow (doc. technique : orchestration LangGraph). Chaque agent produit son propre fichier de résultat.
     """
     env = dict(os.environ, **ENV_QUIET)
     run.status = "running"

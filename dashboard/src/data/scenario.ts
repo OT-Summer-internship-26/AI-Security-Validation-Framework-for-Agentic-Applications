@@ -6,15 +6,15 @@
  * peuvent produire des combinaisons incohérentes.
  *
  * Les scores ci-dessous ne sont pas inventés : ce sont les valeurs
- * RÉELLEMENT mesurées et consignées dans NOTES.md (§18 à §25) lors des
+ * RÉELLEMENT mesurées et consignées dans documentation technique (doc. technique : fiabilite du score à doc. technique : agent ASI06) lors des
  * runs contre le lab DVAP `prompt-injection`.
  *
- *   ASI01 → 6.00  (§18 — run complet Gemini : DeepTeam 10 / PyRIT 0 / Garak 0 / MS 10)
- *   ASI02 → 8.19  (§19.6 — behavioral 8.0 ⊕ static 8.5)
- *   ASI03 → 7.00  (§21)
- *   ASI04 → 5.19  (§22 — behavioral 8.0 ⊕ static 0.5 : 4 CVE jinja2 + 1 Semgrep)
- *   ASI05 → 7.90  (§23 — behavioral 8.0 ⊕ static 8.0 ⊕ dynamic 7.5)
- *   ASI06 → 8.75  (§25 — PyRIT indisponible, exclu du calcul, jamais compté 0)
+ *   ASI01 → 6.00  (doc. technique : fiabilite du score — run complet Gemini : DeepTeam 10 / PyRIT 0 / Garak 0 / MS 10)
+ *   ASI02 → 8.19  (doc. technique : pipeline comportemental centralise — behavioral 8.0 ⊕ static 8.5)
+ *   ASI03 → 7.00  (doc. technique : agent ASI03)
+ *   ASI04 → 5.19  (doc. technique : agent ASI04 — behavioral 8.0 ⊕ static 0.5 : 4 CVE jinja2 + 1 Semgrep)
+ *   ASI05 → 7.90  (doc. technique : agent ASI05 et sandbox — behavioral 8.0 ⊕ static 8.0 ⊕ dynamic 7.5)
+ *   ASI06 → 8.75  (doc. technique : agent ASI06 — PyRIT indisponible, exclu du calcul, jamais compté 0)
  */
 import { ASI_WEIGHTS } from '@/types'
 

@@ -17,16 +17,16 @@ CE QUE TESTE CETTE CATÉGORIE
 ARCHITECTURE (socle centralisé) : agent MINCE. Le pipeline comportemental (DeepTeam +
 PyRIT + Garak) est hérité de `BaseSecurityAgent`. AUCUNE adaptation du socle.
 
-COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], §4).
+COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], doc. technique : architecture a 3 couches).
 
 AUCUN PAYLOAD MICROSOFT POUR CETTE CATÉGORIE
-    ASI-08 est absent du mapping Arcanum-Sec (§14) — vérifié par spike sur `primary`
+    ASI-08 est absent du mapping Arcanum-Sec (doc. technique : payloads Microsoft Arcanum) — vérifié par spike sur `primary`
     ET `any` : la liste est vide. Le socle renvoie alors `None` +
     « n/a: aucun payload Microsoft pour cette catégorie » -> l'axe est EXCLU de la
     pondération et renormalisé (DeepTeam 0.5 / PyRIT 0.2 / Garak 0.2), jamais compté
     comme un 10/10 gratuit. C'est le comportement voulu, pas un manque à combler.
 
-LIMITE ASSUMÉE (parallèle à ASI07, cf. §16)
+LIMITE ASSUMÉE (parallèle à ASI07, cf. doc. technique : limites assumees)
     Une cascade RÉELLE implique N agents : A tombe, B agit sur la sortie de A, C sur
     celle de B. L'audit boîte-noire ne voit qu'UN endpoint — il ne peut donc pas
     OBSERVER la propagation. Ce qu'il teste, c'est le MAILLON : la cible accepte-t-elle
@@ -74,7 +74,7 @@ class ASI08CascadingFailuresAgent(BaseSecurityAgent):
     behavioral_severity_map = _SEVERITY_MAP
     behavioral_default_vuln = "Robustness"
     use_pyrit = True
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du
@@ -142,7 +142,7 @@ class ASI08CascadingFailuresAgent(BaseSecurityAgent):
              "note": "sous-processus vers ~/garak-venv (requiert config['target_url'])."},
             {"kind": "microsoft_arcanum", "name": "(aucun payload pour ASI-08)",
              "enabled": False,
-             "note": "ASI-08 est absent du mapping Arcanum-Sec (§14). L'axe est exclu "
+             "note": "ASI-08 est absent du mapping Arcanum-Sec (doc. technique : payloads Microsoft Arcanum). L'axe est exclu "
                      "de la pondération et renormalisé — jamais compté 10/10."},
         ]
         return vulnerabilities + attacks + self.get_microsoft_scenarios() + others

@@ -33,9 +33,9 @@ ARCHITECTURE (socle centralisé) : agent MINCE. Le pipeline comportemental (Deep
 PyRIT + Garak + payloads Microsoft) est hérité de `BaseSecurityAgent`. AUCUNE
 adaptation du socle.
 
-COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], §4).
+COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], doc. technique : architecture a 3 couches).
 
-LIMITE ASSUMÉE (comme ASI07/ASI08, cf. §16)
+LIMITE ASSUMÉE (comme ASI07/ASI08, cf. doc. technique : limites assumees)
     `agent_collusion` et `goal_propagation_attacks` supposent PLUSIEURS agents.
     L'audit boîte-noire n'en voit qu'un : il teste si la cible ACCEPTE de coopérer à
     une collusion ou de relayer un objectif corrompu, pas la collusion réellement

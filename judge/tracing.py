@@ -1,5 +1,5 @@
 """
-tracing.py — Observabilité LangFuse des appels LLM (NOTES.md §2 / §7).
+tracing.py — Observabilité LangFuse des appels LLM (doc. technique : pile technique / orchestration LangGraph).
 
 CE QUE ÇA TRACE, ET POURQUOI ÇA MANQUAIT
     Un audit produit des scores, mais rien ne permettait de répondre à « pourquoi
@@ -318,7 +318,7 @@ def traced_model(model: Any, role: str) -> Any:
     POURQUOI ICI ET PAS DANS `structured()`
         `structured()` ne voit que les appels des JUGES — une poignée par audit.
         La très grande majorité des appels LLM vient de DeepTeam (100-200 par run,
-        cf. §15) et de PyRIT, qui utilisent les mêmes instances de modèles mais ne
+        cf. doc. technique : profils de modeles LLM) et de PyRIT, qui utilisent les mêmes instances de modèles mais ne
         passent jamais par notre code. Tracer au niveau de l'INSTANCE couvre donc
         tout le monde, sans toucher ni DeepTeam ni PyRIT : ils appellent
         `generate()` comme avant, l'observation part toute seule.

@@ -251,7 +251,7 @@ def test_resume_survit_a_un_vieux_json():
     ("agents.asi09_trust_exploitation", "ASI09TrustExploitationAgent"),
 ])
 def test_dry_run_stable(module, classe):
-    """5.57 est la référence de non-régression du socle depuis NOTES.md §20."""
+    """5.57 est la référence de non-régression du socle depuis doc. technique : ameliorations du socle."""
     cls = getattr(__import__(module, fromlist=[classe]), classe)
     agent = cls(target_callback=lambda _p: "ok", config={"llm_profile": "dry_run"})
     assert agent.run().score == 5.57

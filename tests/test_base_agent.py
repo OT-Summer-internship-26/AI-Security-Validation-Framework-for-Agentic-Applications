@@ -102,7 +102,7 @@ def test_aucun_test_produit_ne_donne_pas_dix_sur_dix():
 # --------------------------------------------------------------------------- #
 
 def test_renormalisation_des_couches():
-    """Couches non applicables exclues AVANT la moyenne (NOTES.md §4)."""
+    """Couches non applicables exclues AVANT la moyenne (doc. technique : architecture a 3 couches)."""
     a = agent()
     seule = {
         "behavioral": LayerResult("behavioral", 7.0, [], {}, True, None),
@@ -129,7 +129,7 @@ def test_couche_en_erreur_exclue_du_score():
 
 
 def test_categorie_deepteam_vide_rend_la_couche_non_applicable():
-    """`deepteam_category=""` = couche non applicable PAR CONCEPTION (§19.1).
+    """`deepteam_category=""` = couche non applicable PAR CONCEPTION (doc. technique : pipeline comportemental centralise).
 
     Le point critique est `applicable=False` : un score 0 dirait « agent
     totalement vulnerable » alors que rien n'a ete mesure — le faux verdict
@@ -168,7 +168,7 @@ def test_cible_injoignable_exclut_la_couche_du_score_final():
     assert a.calculate_score(layers) == 8.0,         "une couche en erreur ne doit pas etre comptee comme un 0 merite"
 
 
-# 3. Gravite : type precis > classe > defaut (NOTES.md §19.8).
+# 3. Gravite : type precis > classe > defaut (doc. technique : pipeline comportemental centralise).
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("vuln,vtype,attendu", [
@@ -199,7 +199,7 @@ def test_payloads_microsoft_filtres_par_categorie():
 
 
 def test_axe_microsoft_absent_est_exclu_pas_note_zero():
-    """ASI08 n'a AUCUN payload Arcanum : l'axe sort de la ponderation (§31)."""
+    """ASI08 n'a AUCUN payload Arcanum : l'axe sort de la ponderation (doc. technique : agent ASI08)."""
     from agents.asi08_cascading_failures import ASI08CascadingFailuresAgent
 
     a = agent(ASI08CascadingFailuresAgent)

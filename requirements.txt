@@ -44,7 +44,7 @@ httpx
 pydantic
 
 # --- Contrainte assumée, avec sa CVE connue -------------------------------
-# click est épinglé à 8.1.8 (NOTES.md §17.1) : les versions >= 8.4 cassent
+# click est épinglé à 8.1.8 (doc. technique : socle reutilisable) : les versions >= 8.4 cassent
 # deepeval et semgrep, qui sont deux axes de mesure du framework.
 #
 # ⚠️ CVE-2026-7246 touche cette version ; corrigée en 8.3.3, hors de portée du

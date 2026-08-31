@@ -14,13 +14,13 @@ ARCHITECTURE (socle centralisé) : agent MINCE. Le pipeline comportemental (Deep
 PyRIT + Garak + payloads Microsoft) est hérité de `BaseSecurityAgent`. AUCUNE adaptation
 du socle nécessaire — DeepTeam couvre l'empoisonnement via l'attaque ContextPoisoning.
 
-COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], §4).
+COUCHE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], doc. technique : architecture a 3 couches).
 
-LIMITE ASSUMÉE — empoisonnement de la MÉMOIRE PERSISTANTE testé EN SIMULATION (comme §16)
+LIMITE ASSUMÉE — empoisonnement de la MÉMOIRE PERSISTANTE testé EN SIMULATION (comme doc. technique : limites assumees)
     Le faux contexte est injecté dans le TEXTE du prompt (attaque ContextPoisoning via le
     callback boîte-noire). Ce n'est PAS un empoisonnement du STORE mémoire/RAG persistant
     de la cible (ex. injecter un faux souvenir que l'agent relira ensuite de lui-même).
-    La mesure « déviation avant/après » via DeepEval (ContextualRelevancyMetric, §5)
+    La mesure « déviation avant/après » via DeepEval (ContextualRelevancyMetric, doc. technique : integration DeepTeam)
     exigerait `retrieval_context` = le contexte empoisonné réel de la cible → nécessite un
     HOOK mémoire (`config["memory_inject"]`) exposant le canal mémoire de la cible, hors
     périmètre boîte-noire. Un agent peut donc « réussir » ASI06 tout en restant vulnérable
@@ -63,7 +63,7 @@ class ASI06MemoryPoisoningAgent(BaseSecurityAgent):
     behavioral_severity_map = _SEVERITY_MAP
     behavioral_default_vuln = "MemoryPoisoning"
     use_pyrit = True
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du

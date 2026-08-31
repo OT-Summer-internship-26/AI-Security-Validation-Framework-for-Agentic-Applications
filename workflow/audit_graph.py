@@ -9,7 +9,7 @@ agrège toutes les vulnérabilités, et renvoie un `AuditState`.
 FAIL-SAFE : un agent qui plante → score 0 pour sa catégorie, les autres continuent.
 
 `build_audit_graph()` construit le StateGraph LangGraph en DEUX VAGUES PARALLÈLES
-(§7) : ASI01-05, puis ASI06-10, puis consolidation. Le merge concurrent repose sur les
+(doc. technique : orchestration LangGraph) : ASI01-05, puis ASI06-10, puis consolidation. Le merge concurrent repose sur les
 reducers d'`AuditState`. `run_audit()` reste le point d'entrée séquentiel recommandé
 quand la cible ne supporte pas cinq conversations simultanées.
 
@@ -67,7 +67,7 @@ def _build_callback(target_url: str, cfg: dict[str, Any]):
     )
 
 
-# Reprise sur échec (NOTES.md §7). Deux tentatives, pause doublée entre chaque.
+# Reprise sur échec (doc. technique : orchestration LangGraph). Deux tentatives, pause doublée entre chaque.
 MAX_ATTEMPTS = int(os.environ.get("AUDIT_MAX_ATTEMPTS", "2"))
 BACKOFF_SECONDS = float(os.environ.get("AUDIT_BACKOFF_SECONDS", "5"))
 
@@ -84,7 +84,7 @@ def _run_one(category: str, target_callback, agent_config: dict[str, Any]) -> An
         aggraver une saturation qu'on vient peut-être de provoquer.
 
         L'échec définitif reste FAIL-SAFE : score 0 pour cette catégorie, l'audit
-        continue. Un agent ne peut jamais emporter les autres (§7).
+        continue. Un agent ne peut jamais emporter les autres (doc. technique : orchestration LangGraph).
     """
     from agents.base_agent import AgentResult
 
@@ -122,12 +122,12 @@ def consolidate(scores: dict[str, float],
         runner global, run_agent). Le jour ou la ponderation change — ou simplement
         l'arrondi — cinq copies restent en arriere, et deux surfaces du meme audit
         affichent deux scores differents sans que rien ne le signale. C'est le meme
-        defaut que l'agregation des juges ecrite deux fois (§35.3).
+        defaut que l'agregation des juges ecrite deux fois (doc. technique : couche de jugement).
 
     `agents` : quand les resultats detailles sont disponibles, on joint la PLAGE
         de confiance du score. Elle est calculee ICI, avec le score, et ecrite dans
         le JSON — le rapport et le dashboard la LISENT. La recalculer de chaque cote
-        rejouerait exactement le defaut du §35.3, cette fois sur le chiffre le plus
+        rejouerait exactement le defaut du doc. technique : couche de jugement, cette fois sur le chiffre le plus
         visible du rapport.
     """
     score = calculate_global_score(scores)
@@ -182,7 +182,7 @@ def run_audit(target_url: str, target_config: dict[str, Any] | None = None,
 
 
 def build_audit_graph(categories: list[str] | None = None):
-    """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (§7).
+    """Construit le StateGraph LangGraph : DEUX VAGUES PARALLÈLES → consolidation (doc. technique : orchestration LangGraph).
 
     Chaque nœud ne renvoie QUE sa propre écriture ; ce sont les reducers d'`AuditState`
     qui fusionnent les écritures concurrentes. Renvoyer l'état complet fonctionnerait
@@ -238,7 +238,7 @@ def build_audit_graph(categories: list[str] | None = None):
         graph.add_node(cat, _make_node(cat))
     graph.add_node("consolidate", _consolidate)
 
-    # DEUX VAGUES PARALLÈLES (NOTES.md §7), et pas dix nœuds en parallèle.
+    # DEUX VAGUES PARALLÈLES (doc. technique : orchestration LangGraph), et pas dix nœuds en parallèle.
     #
     # POURQUOI DEUX VAGUES ET NON TOUT D'UN COUP
     #     Le goulot d'étranglement n'est ni le CPU ni le réseau : c'est la CIBLE
@@ -255,7 +255,7 @@ def build_audit_graph(categories: list[str] | None = None):
     #     Le merge concurrent est assuré par les reducers d'`AuditState`
     #     (`workflow/state.py`) : sans eux, cinq écritures simultanées sur `results`
     #     n'en laisseraient qu'une, et quatre agents disparaîtraient du rapport.
-    # Les vagues suivent le decoupage du §7 (ASI01-05 / ASI06-10), INTERSECTE avec
+    # Les vagues suivent le decoupage du doc. technique : orchestration LangGraph (ASI01-05 / ASI06-10), INTERSECTE avec
     # ce qui est demande. Un sous-ensemble entierement dans la premiere moitie
     # tourne en une seule vague, au lieu d'une vague vide qui bloquerait le graphe.
     first_half = set(known[:5])
@@ -276,7 +276,7 @@ def build_audit_graph(categories: list[str] | None = None):
 
 
 # ---------------------------------------------------------------------------- #
-# Orchestration LangGraph — le chemin d'exécution principal (NOTES.md §1 / §7).
+# Orchestration LangGraph — le chemin d'exécution principal (doc. technique : objectifs du framework / orchestration LangGraph).
 # ---------------------------------------------------------------------------- #
 
 # Types de l'état à autoriser explicitement à la relecture d'un checkpoint.

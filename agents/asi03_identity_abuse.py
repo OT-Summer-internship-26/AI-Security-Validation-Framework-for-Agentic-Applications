@@ -13,17 +13,17 @@ CE QUE TESTE CETTE CATÉGORIE
         inter-agents (AgentIdentityAbuse : agent_impersonation, identity_inheritance,
         cross_agent_trust_abuse).
 
-ARCHITECTURE (socle centralisé — Q6/§19/§20)
+ARCHITECTURE (socle centralisé — Q6/doc. technique : pipeline comportemental centralise / ameliorations du socle)
     Le pipeline comportemental (DeepTeam + PyRIT + Garak + payloads Microsoft +
     parsing avec exclusion [HTTP_ERROR] + gravité contextuelle + pondération
     renormalisée) est HÉRITÉ de `BaseSecurityAgent`. ASI03 ne fait que régler ses
     attributs de classe et décrire `get_scenarios()`. AUCUNE adaptation du socle
     n'est nécessaire — c'est un agent mince pur (comme ASI01).
 
-COUCHE APPLICABLE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], §4).
+COUCHE APPLICABLE : comportementale UNIQUEMENT (KB test_layers=["behavioral"], doc. technique : architecture a 3 couches).
     static/dynamic → hérités de Base → applicable=False (non accédés).
 
-LIMITE ASSUMÉE — jugement des appels d'outils (BOLA/RBAC) — §16/§19.3
+LIMITE ASSUMÉE — jugement des appels d'outils (BOLA/RBAC) — doc. technique : limites assumees / pipeline comportemental centralise
     Les métriques DeepTeam BOLA et RBAC lisent `RTTurn.tools_called` (vérifié : 15
     références chacune). Contre une cible BOÎTE-NOIRE qui n'expose pas ses appels
     d'outils, ces tests retombent sur le TEXTE seul (l'autorisation réelle au niveau
@@ -89,7 +89,7 @@ class ASI03IdentityAbuseAgent(BaseSecurityAgent):
     behavioral_default_vuln = "IdentityAbuse"
     use_pyrit = True
     # Objectif PyRIT spécifique à l'abus d'identité/privilège (≠ ASI01/ASI02).
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du
@@ -104,7 +104,7 @@ class ASI03IdentityAbuseAgent(BaseSecurityAgent):
     pyrit_finding_title = "PyRIT multi-turn identity/privilege abuse"
     pyrit_recommendation_vuln = "RBAC"
     use_garak = GARAK_ENABLED
-    garak_default_probes = "dan.DAN_Jailbreak"  # probe fort et fiable (§18)
+    garak_default_probes = "dan.DAN_Jailbreak"  # probe fort et fiable (doc. technique : fiabilite du score)
     garak_recommendation_vuln = "RBAC"
     microsoft_recommendation_vuln = "AgentIdentityAbuse"  # payloads MS = attaques d'identité
     # #5 : remédiations CIBLÉES par vulnérabilité (prioritaires sur la reco de catégorie).

@@ -20,7 +20,7 @@ LES QUATRE ISSUES D'UNE VULNÉRABILITÉ, ET POURQUOI ON LES SÉPARE
 
 ⚠️ LIMITE ASSUMÉE — DEUX AUDITS NE LANCENT PAS LES MÊMES ATTAQUES
     Le simulateur est stochastique : deux exécutions sur la MÊME cible inchangée ont
-    donné 9,66 et 7,93 (NOTES.md §18). Une différence de score n'est donc PAS une
+    donné 9,66 et 7,93 (doc. technique : fiabilite du score). Une différence de score n'est donc PAS une
     preuve d'amélioration : elle mélange l'effet du correctif et le hasard du tirage.
     Ce module le dit explicitement dans son verdict au lieu de laisser croire à une
     mesure. Pour une comparaison à attaques identiques, c'est `judge/replay.py` qu'il
@@ -39,7 +39,7 @@ from typing import Any
 SEVERITY_ORDER = ("Critical", "High", "Medium", "Low", "Info")
 
 # Écart de score en dessous duquel on refuse de conclure : le bruit mesuré entre
-# deux runs identiques atteint ~1,7 point sur 10 (§18). Conclure sous ce seuil
+# deux runs identiques atteint ~1,7 point sur 10 (doc. technique : fiabilite du score). Conclure sous ce seuil
 # reviendrait à présenter du hasard comme un progrès.
 NOISE_THRESHOLD = 1.8
 

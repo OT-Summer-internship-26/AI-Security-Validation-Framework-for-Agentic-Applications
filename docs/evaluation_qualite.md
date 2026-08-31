@@ -45,7 +45,7 @@ après : 8,0×2,5 + 7,0×2,0 + 5,5×2,0 + 7,5×1,5 + 9,5×1,5 + 9,5×0,5 = 75,25
 **Choix de conception sur le 2ᵉ correctif** : un helper unique plutôt que quatre
 validations recopiées. Valider dans chaque appelant, c'est garantir qu'un
 cinquième appel oubliera la vérification — c'est l'anti-pattern que ce projet
-combat partout ailleurs (§35.3). `DVAP_API` venant de l'environnement, le risque
+combat partout ailleurs (doc. technique : couche de jugement). `DVAP_API` venant de l'environnement, le risque
 n'était pas théorique : une valeur `file://` y faisait lire un fichier local du
 serveur.
 
@@ -82,7 +82,7 @@ signalement de style contre une classe de vulnérabilité éliminée — bon éc
 | 🟠 Réelle | `PLW1510` subprocess sans `check` | 11 | **À corriger** : un `docker`/`semgrep`/`garak` qui échoue passe inaperçu. Le projet a des garde-fous ailleurs (parsing du code retour), mais la règle pointe un vrai risque de faux négatif silencieux — le défaut que ce projet combat partout. |
 | 🟠 Réelle | `S110`/`S112` `except: pass` / `continue` | 20 | **À examiner au cas par cas** : légitime dans un fail-safe, dangereux si l'erreur n'est pas comptée. |
 | ✅ **Corrigé** | `I001` imports non triés, `F401` inutilisés, `UP*` | 51 → **0** | Éliminés par `ruff check --fix`. |
-| 🟢 Faux positif assumé | `BLE001` blind-except | **83** (32 %) | **À ignorer** : c'est le principe fail-safe documenté (§10 de NOTES.md) — aucune couche ne doit faire tomber l'audit. Le supprimer dégraderait le design. |
+| 🟢 Faux positif assumé | `BLE001` blind-except | **83** (32 %) | **À ignorer** : c'est le principe fail-safe documenté (doc. technique : conventions de code de documentation technique) — aucune couche ne doit faire tomber l'audit. Le supprimer dégraderait le design. |
 | 🟢 Faux positif | `RUF012` mutable-class-default | 15 | Attributs de configuration des agents, jamais mutés en place. |
 | 🟢 Négligeable | `DTZ005` datetime sans fuseau | 16 | Horodatage de rapport local. |
 
@@ -148,10 +148,10 @@ Complexité cyclomatique moyenne : **B (5,90)** sur 318 blocs — bon. Mais la d
 
 **Oui pour 90 % du projet, non pour `base_agent.py`.**
 
-- **En faveur** : chaque module a un docstring expliquant *pourquoi* et pas seulement *quoi* ; les décisions non évidentes sont commentées à l'endroit du code ; `NOTES.md` tient le journal des raisonnements, y compris des erreurs. Un nouvel arrivant comprend les intentions — c'est rare et c'est un vrai atout.
+- **En faveur** : chaque module a un docstring expliquant *pourquoi* et pas seulement *quoi* ; les décisions non évidentes sont commentées à l'endroit du code ; `documentation technique` tient le journal des raisonnements, y compris des erreurs. Un nouvel arrivant comprend les intentions — c'est rare et c'est un vrai atout.
 - **Contre** : `base_agent.py` fait **687 lignes de logique** avec deux fonctions à CC 47-48. Modifier `_run_behavioral_layer` sans rien casser demande de tenir en tête 48 chemins d'exécution. La densité de commentaires compense la lisibilité, elle ne compense pas le risque de régression.
 
-**Le paradoxe est assumé et documenté** : cette centralisation est ce qui rend les 10 agents minces (§19.1). La dette est concentrée en un point plutôt que dupliquée dix fois — c'est le bon arbitrage, mais la dette existe.
+**Le paradoxe est assumé et documenté** : cette centralisation est ce qui rend les 10 agents minces (doc. technique : pipeline comportemental centralise). La dette est concentrée en un point plutôt que dupliquée dix fois — c'est le bon arbitrage, mais la dette existe.
 
 ---
 
@@ -170,7 +170,7 @@ Complexité cyclomatique moyenne : **B (5,90)** sur 318 blocs — bon. Mais la d
 |---|---|---|
 | 🟢 **Hors périmètre** | `jupyterlab` (7), `jupyter-server` (2), `scikit-learn` (2), `nltk`, `datasets`, `mistune` (19), `pypdf` (15) | Aucun n'est importé par le framework. Ce sont des résidus de l'installation Python globale. **À isoler dans un venv, pas à corriger.** |
 | 🟠 **Transitives réelles** | `aiohttp` 3.14.1 (3), `werkzeug` 3.0.6 (3), `tornado` 6.5.5 (4), `cryptography` 49.0.0, `h2`, `idna` (2) | Tirées par FastAPI/LangChain/LangFuse. Correctifs disponibles, montée de version mineure. **Acceptable à court terme, à traiter avant une mise en production.** |
-| ✅ **Documenté** | `click` 8.1.8 → 8.3.3 | **Épinglé volontairement** (§17.1) pour protéger deepeval/semgrep. La **CVE-2026-7246 est désormais nommée dans `requirements.txt`**, avec la raison du compromis, l'impact réel (click ne traite ici que des arguments CLI de l'opérateur, jamais une entrée distante) et la condition de levée. Une CVE assumée et écrite n'est plus une CVE oubliée. |
+| ✅ **Documenté** | `click` 8.1.8 → 8.3.3 | **Épinglé volontairement** (doc. technique : socle reutilisable) pour protéger deepeval/semgrep. La **CVE-2026-7246 est désormais nommée dans `requirements.txt`**, avec la raison du compromis, l'impact réel (click ne traite ici que des arguments CLI de l'opérateur, jamais une entrée distante) et la condition de levée. Une CVE assumée et écrite n'est plus une CVE oubliée. |
 
 **1 seule CVE sans correctif disponible** sur les 79.
 
@@ -191,7 +191,7 @@ Complexité cyclomatique moyenne : **B (5,90)** sur 318 blocs — bon. Mais la d
 | 9 | Catalogue de recommandations | ✅ |
 | 10 | Documentation + CI/CD | ✅ |
 
-**Une seule réserve, mais elle compte** : le §1 promet un score `/100` bloquant à 70. Un audit global 10 catégories n'a **jamais été produit sur cible réelle en profil fiable** (bloqué par la clé Gemini, pas par le code). La promesse centrale est implémentée et testée, non démontrée.
+**Une seule réserve, mais elle compte** : le doc. technique : objectifs du framework promet un score `/100` bloquant à 70. Un audit global 10 catégories n'a **jamais été produit sur cible réelle en profil fiable** (bloqué par la clé Gemini, pas par le code). La promesse centrale est implémentée et testée, non démontrée.
 
 ### b) Cohérence de l'architecture — forte
 
@@ -214,7 +214,7 @@ Pointer le framework vers un nouvel agent cible se fait entièrement par configu
 
 | Manque | Impact |
 |---|---|
-| **Clé LLM de production** | 🔴 Bloquant. Le profil `final` exige Gemini/Vertex ; la clé actuelle est expirée. Le profil `ollama` ne produit **pas** un verdict fiable (§18/§19.4). |
+| **Clé LLM de production** | 🔴 Bloquant. Le profil `final` exige Gemini/Vertex ; la clé actuelle est expirée. Le profil `ollama` ne produit **pas** un verdict fiable (doc. technique : fiabilite du score / pipeline comportemental centralise). |
 | **Isolation des dépendances** | 🟠 Aucun venv ni image figée : l'environnement porte 79 CVE hors projet. |
 | **Authentification** | 🟠 Une seule clé API statique en variable d'environnement. Pas de rotation, pas de rôles. |
 | **Persistance** | 🟠 Résultats en fichiers JSON sur disque. Pas de base, pas de rétention, pas de sauvegarde. |
@@ -228,7 +228,7 @@ Pointer le framework vers un nouvel agent cible se fait entièrement par configu
 1. **Une doctrine anti-faux-score appliquée systématiquement, pas déclarée.** Cible injoignable → exclue ; axe absent → `None`, jamais 10/10 ; catégorie sans mesure → `measured=False` hors du score ; boucle agentique → réglages uniquement durcissables et score = minimum des passages. Chaque règle a son test de non-régression.
 2. **Quatre défauts silencieux trouvés et corrigés par la mesure, pas par la relecture** : juge répondant `False` à tout (prompt en français), LangGraph dupliquant 35 vulnérabilités au lieu de 10, faux zéro polluant le score global, dérogation CI à date illisible traitée comme active. Aucun ne levait d'exception — tous produisaient un chiffre plausible.
 3. **Aucun calcul dupliqué entre Python et TypeScript.** Score, agrégats de juges, intervalle de confiance et synthèse sont calculés une fois côté Python et **écrits dans le JSON** ; rapport et dashboard les lisent.
-4. **Architecture multi-axes empiriquement justifiée** : DeepTeam seul donnait 10/10 sur une cible où PyRIT et Garak ont détecté le détournement (§18). Le score est passé de « faux 9,4 » à 6,0 → CI/CD bloque.
+4. **Architecture multi-axes empiriquement justifiée** : DeepTeam seul donnait 10/10 sur une cible où PyRIT et Garak ont détecté le détournement (doc. technique : fiabilite du score). Le score est passé de « faux 9,4 » à 6,0 → CI/CD bloque.
 5. **146 tests sans réseau ni LLM**, exécutables en CI sur une machine nue.
 6. **Un journal de décisions techniques de 39 sections**, incluant les hypothèses invalidées. Rare à ce niveau.
 
@@ -237,10 +237,10 @@ Pointer le framework vers un nouvel agent cible se fait entièrement par configu
 | Faiblesse | Impact |
 |---|---|
 | `base_agent.py` : 2 fonctions à CC 47-48, maintenabilité C | 🔴 **Élevé** — c'est le fichier que tout modifie |
-| Aucun audit global sur cible réelle en profil fiable | 🔴 **Élevé** — la promesse du §1 reste non démontrée |
+| Aucun audit global sur cible réelle en profil fiable | 🔴 **Élevé** — la promesse du doc. technique : objectifs du framework reste non démontrée |
 | Runners et scripts non testés (0 % de couverture) | 🟠 Moyen — ce sont les points d'entrée réels |
 | `api/main.py` : 558 lignes, 38 % couverts, 35 signalements Ruff | 🟠 Moyen |
-| Injection indirecte testée en simulation, pas via un vrai canal de données | 🟡 Faible — limite assumée et documentée (§16) |
+| Injection indirecte testée en simulation, pas via un vrai canal de données | 🟡 Faible — limite assumée et documentée (doc. technique : limites assumees) |
 | `judge/replay.py` et `garak_runner.py` : 0 % de couverture | 🟡 Faible |
 
 ---
@@ -262,8 +262,8 @@ Pointer le framework vers un nouvel agent cible se fait entièrement par configu
 
 | # | Action | Impact | Effort |
 |---|---|---|---|
-| **1** | **Obtenir une clé LLM fonctionnelle et lancer UN audit global 10 catégories sur cible réelle.** Une clé AI Studio gratuite (`AIza…`) suffit — le code détecte le préfixe et bascule seul. | 🔴 **Maximal.** C'est la promesse centrale du §1. Sans ce run, le score `/100` et le blocage CI/CD restent théoriques, et le jury le verra. | 1 h + ~1 h de run |
-| **2** | **Préparer la réponse sur `base_agent.py`.** La question « pourquoi une fonction à complexité 48 ? » viendra. La réponse existe déjà (§19.1 : dette concentrée en un point plutôt que dupliquée dix fois) — il faut l'avoir formulée, pas l'improviser. | 🟠 Élevé | 20 min |
+| **1** | **Obtenir une clé LLM fonctionnelle et lancer UN audit global 10 catégories sur cible réelle.** Une clé AI Studio gratuite (`AIza…`) suffit — le code détecte le préfixe et bascule seul. | 🔴 **Maximal.** C'est la promesse centrale du doc. technique : objectifs du framework. Sans ce run, le score `/100` et le blocage CI/CD restent théoriques, et le jury le verra. | 1 h + ~1 h de run |
+| **2** | **Préparer la réponse sur `base_agent.py`.** La question « pourquoi une fonction à complexité 48 ? » viendra. La réponse existe déjà (doc. technique : pipeline comportemental centralise : dette concentrée en un point plutôt que dupliquée dix fois) — il faut l'avoir formulée, pas l'improviser. | 🟠 Élevé | 20 min |
 | ~~3~~ | ~~`ruff check --fix`~~ | ✅ **FAIT** — 260 → 194 signalements | — |
 | ~~4~~ | ~~Valider le schéma des 4 `urlopen`~~ | ✅ **FAIT** — Bandit MEDIUM 5 → 1 | — |
 | ~~5~~ | ~~Documenter la CVE `click` assumée~~ | ✅ **FAIT** — nommée dans `requirements.txt` | — |
@@ -281,7 +281,7 @@ correctifs techniques sont appliqués, mesurés et vérifiés (146 tests verts).
 | **Découper `_run_behavioral_layer` et `_parse_deepteam`** | Fait passer la maintenabilité de C à A sur le fichier central. Doit être fait **avec** la suite de tests, jamais sans. |
 | **Tests des runners** (`run_agent.py`, `run_audit_global.py`, actuellement à 0 %) | Ce sont les points d'entrée réels du framework. |
 | **Isolation en venv + image Docker figée** | Élimine 79 CVE d'un coup et rend l'installation reproductible. |
-| **Hook d'injection indirecte réelle** (`config["rag_inject"]`) | Lève la limite assumée du §16 : tester le canal de données, pas seulement le prompt. |
+| **Hook d'injection indirecte réelle** (`config["rag_inject"]`) | Lève la limite assumée du doc. technique : limites assumees : tester le canal de données, pas seulement le prompt. |
 | **Persistance en base + rétention** | Prérequis à un usage multi-utilisateur. |
 | **Réduire la durée d'un audit** (parallélisme plus fin, cache des attaques) | Rend possible un gate de PR synchrone. |
 

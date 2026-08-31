@@ -8,10 +8,10 @@ CE QUE TESTE CETTE CATÉGORIE
       - imitation/contrefaçon (IntellectualProperty) ;
       - dépendances Python vulnérables (CVE) et code source dangereux (couche statique).
 
-ARCHITECTURE (socle centralisé — Q6/§19/§20)
+ARCHITECTURE (socle centralisé — Q6/doc. technique : pipeline comportemental centralise / ameliorations du socle)
     - Couche COMPORTEMENTALE : héritée de BaseSecurityAgent (DeepTeam + PyRIT + Garak +
       payloads Microsoft). ASI04 ne règle que ses attributs de classe.
-    - Couche STATIQUE (propre à ASI04, §4) : **pip-audit** (CVE des dépendances) +
+    - Couche STATIQUE (propre à ASI04, doc. technique : architecture a 3 couches) : **pip-audit** (CVE des dépendances) +
       **Semgrep** (patterns dangereux du code). Activée si `config["requirements_path"]`
       et/ou `config["source_path"]` fournis ; sinon applicable=False (exclue du scoring).
     - Dynamique : non applicable (appartient à ASI05).
@@ -50,7 +50,7 @@ _SEVERITY_MAP = {
 }
 
 # -- Couche statique -------------------------------------------------------- #
-# Rulesets Semgrep VÉRIFIÉS (les rulesets du brief n'existent pas → 404 ; cf. §14/ASI02).
+# Rulesets Semgrep VÉRIFIÉS (les rulesets du brief n'existent pas → 404 ; cf. doc. technique : payloads Microsoft Arcanum/ASI02).
 # _SEMGREP_RULESETS gardé pour get_scenarios ; scoring/severity Semgrep dans
 # base_agent._run_semgrep (runner centralisé #1). pip-audit reste propre à ASI04.
 _SEMGREP_RULESETS = ("p/default", "p/security-audit")
@@ -70,7 +70,7 @@ class ASI04SupplyChainAgent(BaseSecurityAgent):
     behavioral_severity_map = _SEVERITY_MAP
     behavioral_default_vuln = "SupplyChainAbuse"
     use_pyrit = True
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du

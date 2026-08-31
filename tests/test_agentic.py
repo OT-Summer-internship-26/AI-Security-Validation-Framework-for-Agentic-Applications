@@ -4,7 +4,7 @@ test_agentic.py — La boucle agentique ne peut pas adoucir un audit.
 POURQUOI CE FICHIER
     `run_agentic()` confie a un modele de langage le choix des reglages d'un
     audit de securite. C'est utile — et c'est aussi un moyen tout neuf de
-    fabriquer le faux score rassurant que le reste du projet combat (§18) : il
+    fabriquer le faux score rassurant que le reste du projet combat (doc. technique : fiabilite du score) : il
     suffirait qu'un modele reduise le nombre d'attaques, retire le probe qui
     trouve quelque chose, ou s'arrete des que le score parait bon.
 
@@ -80,7 +80,7 @@ def test_autotest_agentic_loop():
 def test_un_modele_ne_peut_pas_reduire_le_nombre_d_attaques():
     """Reduire les attaques est LE moyen le plus simple de fabriquer un bon score.
 
-    Le §18 l'a mesure : un lab demontrablement vulnerable a rendu 9,4/10 parce
+    Le doc. technique : fiabilite du score l'a mesure : un lab demontrablement vulnerable a rendu 9,4/10 parce
     que les attaques lancees etaient trop faibles.
     """
     a = FauxAgent()
@@ -90,7 +90,7 @@ def test_un_modele_ne_peut_pas_reduire_le_nombre_d_attaques():
 
 
 def test_un_modele_ne_peut_pas_raccourcir_les_conversations_pyrit():
-    """PyRIT trouve au 3e tour ce qu'il ne trouve pas au 1er (§18, run Gemini)."""
+    """PyRIT trouve au 3e tour ce qu'il ne trouve pas au 1er (doc. technique : fiabilite du score, run Gemini)."""
     a = FauxAgent()
     appliquer_adaptation(a, Reflexion(relancer=True, motif="", pyrit_max_turns=1))
     assert a.config["pyrit_max_turns"] == 3
@@ -126,7 +126,7 @@ def test_un_durcissement_reel_est_bien_applique():
 
 def test_un_second_passage_plus_clement_n_ameliore_pas_le_score():
     """Le coeur de la regle. Deux executions identiques ont donne 9,66 et 7,93 sur
-    la meme cible (§18) : un tirage clement ne prouve rien, une faille demontree si."""
+    la meme cible (doc. technique : fiabilite du score) : un tirage clement ne prouve rien, une faille demontree si."""
     a = FauxAgent([3.0, 9.5])
     assert fusionner(a.run(), a.run()).score == 3.0
 

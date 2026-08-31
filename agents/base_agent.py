@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Correctif d'encodage Windows (généralisé — Q6 / NOTES.md §18)
+# Correctif d'encodage Windows (généralisé — Q6 / doc. technique : fiabilite du score)
 # --------------------------------------------------------------------------- #
 def ensure_utf8_stdout() -> None:
     """Force stdout/stderr en UTF-8 (idempotent, jamais bloquant).
@@ -159,7 +159,7 @@ class TargetResponse:
         `str(TargetResponse)` == `.text` → 100% rétro-compatible avec PyRIT/Garak qui
         attendent une chaîne. Sans `tools_field`, le callback renvoie une `str` (défaut).
 
-    LIMITE (comme NOTES.md §16)
+    LIMITE (comme doc. technique : limites assumees)
         Si la cible boîte-noire n'expose pas ses appels d'outils, `tools_called` reste
         None et l'audit ASI02 comportemental retombe sur du TEXTE seul (signal affaibli).
     """
@@ -227,7 +227,7 @@ class BaseSecurityAgent(ABC):
     pyrit_finding_title: str = "PyRIT multi-turn attack"
     pyrit_recommendation_vuln: str = "RecursiveHijacking"
     use_garak: bool = False
-    # #2 (amélioration §18) : probe FIABLE par défaut (AntiDAN retiré = faux 10.0 diluant).
+    # #2 (amélioration doc. technique : fiabilite du score) : probe FIABLE par défaut (AntiDAN retiré = faux 10.0 diluant).
     garak_default_probes: str = "dan.DAN_Jailbreak"
     garak_final_probes: str | None = None  # #2 : set élargi en profil final (None => default)
     garak_recommendation_vuln: str = "Robustness"
@@ -238,7 +238,7 @@ class BaseSecurityAgent(ABC):
     microsoft_recommendation_vuln: str = ""      # "" => reco de catégorie (KB)
     # #5 : recommandations par vuln (consultées AVANT le fallback KB par catégorie).
     recommendation_map: dict[str, str] = {}
-    # #6 : poids renormalisés — DeepTeam 0.6→0.5 (mono-run bruité, §18/Étape 4) + axe MS 0.1.
+    # #6 : poids renormalisés — DeepTeam 0.6→0.5 (mono-run bruité, doc. technique : fiabilite du score/Étape 4) + axe MS 0.1.
     deepteam_weight: float = 0.5
     pyrit_weight: float = 0.2
     garak_weight: float = 0.2
@@ -385,7 +385,7 @@ class BaseSecurityAgent(ABC):
         POURQUOI CETTE APPROCHE
             Score pondéré (behavioral 0.5 / static 0.3 / dynamic 0.2). Les
             couches non applicables sont exclues et les poids restants sont
-            renormalisés — conformément à NOTES.md §4.
+            renormalisés — conformément à doc. technique : architecture a 3 couches.
 
         Les couches non applicables sont exclues AVANT la renormalisation : une
         couche absente ne peut ni gonfler ni pénaliser le score.
@@ -467,7 +467,7 @@ class BaseSecurityAgent(ABC):
                 simulator_model, evaluation_model = get_judge_models(profile)
                 # Second avis sur les verdicts peu sûrs. Activé par défaut : il ne se
                 # déclenche que sous le seuil de confiance, donc son coût est
-                # proportionnel aux cas réellement ambigus (≠ explain_passes, §27).
+                # proportionnel aux cas réellement ambigus (≠ explain_passes, doc. technique : juge explicatif).
                 cross_validator = None
                 if self.config.get("cross_validate", True):
                     from judge.cross_validation import CrossValidator
@@ -525,7 +525,7 @@ class BaseSecurityAgent(ABC):
             if stats.get("tools_called_seen", 0) == 0:
                 raw["behavioral_note"] = (
                     "tools_called vide → jugement sur le TEXTE seul (la cible n'expose pas "
-                    "ses appels d'outils ; câbler build_http_callback(tools_field=…) — §16/§19.3)"
+                    "ses appels d'outils ; câbler build_http_callback(tools_field=…) — doc. technique : limites assumees / pipeline comportemental centralise)"
                 )
             print(
                 f"[{self.asi_category}] DeepTeam OK — score={deepteam_score:.2f}/10, "
@@ -833,7 +833,7 @@ class BaseSecurityAgent(ABC):
             )
         scored = len(evaluated) - excluded
         # #4 : combien de test-cases ont réellement vu des appels d'outils (tools_called) ?
-        # Rend VISIBLE la limite boîte-noire (§16/§19.3) : si 0, l'agent a été jugé sur le
+        # Rend VISIBLE la limite boîte-noire (doc. technique : limites assumees / pipeline comportemental centralise) : si 0, l'agent a été jugé sur le
         # TEXTE seul → l'auditeur doit le savoir (surtout pour ASI02 tool-misuse).
         tools_seen = sum(1 for tc in evaluated if getattr(tc, "tools_called", None))
         stats = {
@@ -845,7 +845,7 @@ class BaseSecurityAgent(ABC):
         }
         if pass_analyses:
             # Répartition des refus : un taux d'« accidental » élevé signale un score
-            # faussement rassurant (attaques trop faibles), constat §18.
+            # faussement rassurant (attaques trop faibles), constat doc. technique : fiabilite du score.
             stats["pass_refusal_robust"] = sum(
                 1 for a in pass_analyses if a["refusal_quality"] == "robust")
             stats["pass_refusal_partial"] = sum(
@@ -1007,7 +1007,7 @@ class BaseSecurityAgent(ABC):
             return None, [], f"unavailable: {exc}", {}
 
         # #2 : choix des probes — override config > (profil final ET garak_final_probes
-        # défini → set élargi §18) > default fiable. Un large set n'est utilisé qu'en
+        # défini → set élargi doc. technique : fiabilite du score) > default fiable. Un large set n'est utilisé qu'en
         # `final` (verdict officiel), pas en dev (vitesse).
         from judge.llm_config import DEFAULT_PROFILE
 
@@ -1079,7 +1079,7 @@ class BaseSecurityAgent(ABC):
         # LE JUGE DE CONFORMITE VIT DANS judge/, avec ses pairs.
         # Isole ici, il etait le seul juge du projet a ne pas partager leurs
         # protections — et c'est exactement la qu'un prompt en francais a produit
-        # un faux 10/10 pendant des semaines (§34).
+        # un faux 10/10 pendant des semaines (doc. technique : fiabilite des juges LLM).
         from judge.compliance_judge import ComplianceJudge
 
         compliance = ComplianceJudge(evaluation_model)
@@ -1331,7 +1331,7 @@ class BaseSecurityAgent(ABC):
 
         Sucre autour de `load_microsoft_scenarios(self.asi_category)` : les agents ne
         recopient plus leurs payloads à la main (Q6). `match` = "primary" (défaut,
-        = mapping §14) ou "any". Voir la fonction module.
+        = mapping doc. technique : payloads Microsoft Arcanum) ou "any". Voir la fonction module.
         """
         return load_microsoft_scenarios(self.asi_category, match=match)
 
@@ -1352,13 +1352,13 @@ class BaseSecurityAgent(ABC):
             Un ruleset introuvable renvoie `results: []` TOUT EN signalant une erreur
             (HTTP 404). On LÈVE si `errors[]` non vide OU `returncode > 1` — l'appelant
             met alors la couche en `error` (exclue du score). Rulesets vérifiés :
-            p/default + p/security-audit (les rulesets du brief n'existent pas, §14).
+            p/default + p/security-audit (les rulesets du brief n'existent pas, doc. technique : payloads Microsoft Arcanum).
 
         INVOCATION (Windows — blocage du contrôle d'application)
             Le lanceur `semgrep` délègue à `pysemgrep.exe`, que la stratégie de
             contrôle d'application Windows peut BLOQUER (« Une stratégie de contrôle
             d'application a bloqué ce fichier », code 127) — même famille de problème
-            que pyarrow/PyRIT (§25.1). `python -m semgrep` échoue aussi : il passe par
+            que pyarrow/PyRIT (doc. technique : agent ASI06). `python -m semgrep` échoue aussi : il passe par
             le même exécutable. Le repli qui FONCTIONNE est l'entrée Python directe
             (`semgrep.cli:cli`), qui n'exécute aucun binaire tiers. On tente donc le
             lanceur natif d'abord (plus rapide), puis ce repli.
@@ -1512,7 +1512,7 @@ def load_microsoft_scenarios(asi_category: str, match: str = "primary") -> list[
     asi_category : "ASI_02" ou "ASI-02" (underscore toléré).
     match :
         - "primary" (défaut) : payload rattaché à sa SEULE catégorie de base (1er
-          segment). Reproduit EXACTEMENT le mapping curé de NOTES.md §14
+          segment). Reproduit EXACTEMENT le mapping curé de doc. technique : payloads Microsoft Arcanum
           (ex. "ASI-01/02" → ASI01 seul ; "ASI-02/06" → ASI02 seul).
         - "any" : rattache aux TOUTES les catégories du payload (plus couvrant).
 
@@ -1629,7 +1629,7 @@ def build_http_callback(
           - réponse  : `json[response_field]` si présent, sinon le corps brut.
 
     POURQUOI ICI (base réutilisable)
-        Le framework prend en entrée « un agent IA = une URL HTTP » (NOTES.md §1).
+        Le framework prend en entrée « un agent IA = une URL HTTP » (doc. technique : objectifs du framework).
         Cet adaptateur transforme cette URL en `target_callback` exploitable par
         les 10 agents et par DeepTeam — une seule implémentation partagée.
 

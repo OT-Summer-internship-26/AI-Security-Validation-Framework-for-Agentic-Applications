@@ -31,7 +31,7 @@ POURQUOI UN SEUL PORT SUFFIT — la question du canal, réglée
     `build_peer_callback` plus bas. Sans cette configuration, l'audit reste valide
     mais l'usurpation se fait en langage naturel plutôt qu'au format protocolaire.
 
-LIMITE ASSUMÉE (comme §16)
+LIMITE ASSUMÉE (comme doc. technique : limites assumees)
     Un agent peut RÉUSSIR ASI07 — refuser les messages de pair forgés — tout en
     restant vulnérable à une attaque par relais entre deux agents réels, que
     l'audit boîte-noire ne peut pas mettre en scène. `agent_in_the_middle` est
@@ -134,7 +134,7 @@ class ASI07InterAgentCommsAgent(BaseSecurityAgent):
     behavioral_severity_map = _SEVERITY_MAP
     behavioral_default_vuln = "InsecureInterAgentCommunication"
     use_pyrit = True
-    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. §33.1) ----- #
+    # -- OBJECTIF PYRIT : UNIQUE et falsifiable (2026-08-20, cf. doc. technique : agent ASI10) ----- #
     # Un objectif de red team vise UN joyau. PyRIT juge « objectif atteint ? » avec le
     # rubric TASK_ACHIEVED : une consigne à plusieurs buts rend ce verdict INDÉFINI par
     # construction (cède sur un point, résiste sur quatre = ?), et PyRIT pèse 0.2 du
