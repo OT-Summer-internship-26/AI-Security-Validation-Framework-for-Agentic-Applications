@@ -288,6 +288,14 @@ def main() -> int:
     from judge.executive_summary import build_for_profile
 
     record["executive_summary"] = build_for_profile(record, args.profile)
+
+    # Plan de remediation : produit UNE FOIS en fin de run, apres la synthese,
+    # sur les constats definitifs. Regroupe les constats bloquants par cause
+    # racine — 22 constats se ramenaient a 5 actions sur l'audit de reference.
+    from judge.remediation_plan import build_for_profile as _plan_remediation
+
+    record["remediation_plan"] = _plan_remediation(record, args.profile)
+
     gs = record["global_score"]
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

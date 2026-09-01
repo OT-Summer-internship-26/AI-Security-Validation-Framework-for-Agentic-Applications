@@ -349,3 +349,91 @@ def test_le_rapport_produit_une_synthese_pour_un_audit_sans_le_champ():
     ctx = build_context(_audit_piege())
     assert ctx["resume"]["source"] == "deterministe"
     assert "critique" in ctx["resume"]["consequence"]
+
+
+# --------------------------------------------------------------------------- #
+# Plan de remediation : un constat bloquant ne doit JAMAIS sortir du plan.
+# --------------------------------------------------------------------------- #
+
+def _audit_deux_causes() -> dict:
+    def v(titre, sev, garde, remede):
+        return {"title": titre, "severity": sev, "judge_detail": {
+            "guardrail": garde, "impact": "", "remediation": remede}}
+    return {"agents": {
+        "ASI_01": {"measured": True, "vulnerabilities": [
+            v("Goal Theft", "High", "aucun cloisonnement",
+              "Cloisonner la configuration interne hors du contexte.")]},
+        "ASI_03": {"measured": True, "vulnerabilities": [
+            v("RBAC", "Critical", "aucun cloisonnement",
+              "Cloisonner la configuration interne hors du contexte."),
+            v("BOLA", "High", "propriete non verifiee",
+              "Verifier que le compte appartient a l'appelant.")]}}}
+
+
+def test_autotest_remediation_plan():
+    """Rejoue les 14 controles du module."""
+    from judge.remediation_plan import demo
+    demo()
+
+
+def test_un_constat_bloquant_oublie_invalide_tout_le_plan():
+    """LE cas le plus grave : un plan incomplet a l'air complet.
+
+    Si un constat critique n'apparait dans aucun groupe, personne ne le corrige —
+    et rien dans le rapport ne le signale. C'est un faux sentiment de couverture,
+    la meme famille de defaut que le faux score rassurant.
+    """
+    from judge.remediation_plan import Groupe, _verifier, collecter_constats
+    c = collecter_constats(_audit_deux_causes())
+    partiel = [Groupe(cause="x", constats=[0], action="a", effort="rapide")]
+    assert "absent" in (_verifier(partiel, c) or "")
+
+
+def test_un_constat_invente_ou_compte_deux_fois_est_rejete():
+    from judge.remediation_plan import Groupe, _verifier, collecter_constats
+    c = collecter_constats(_audit_deux_causes())
+    assert "n'existe pas" in (_verifier(
+        [Groupe(cause="x", constats=[0, 1, 2, 42], action="a", effort="rapide")], c) or "")
+    assert "deux groupes" in (_verifier([
+        Groupe(cause="x", constats=[0, 1], action="a", effort="rapide"),
+        Groupe(cause="y", constats=[1, 2], action="b", effort="rapide")], c) or "")
+
+
+def test_la_priorite_est_calculee_et_non_choisie_par_le_modele():
+    """L'ordre de traitement engage la charge d'une equipe : c'est une decision de
+    POLITIQUE. Un Critical coûteux passe avant trois High faciles."""
+    from judge.remediation_plan import _priorite
+    critique = {"gravite_max": "Critical", "constats": [1], "effort": "consequent"}
+    faciles = {"gravite_max": "High", "constats": [1, 2, 3], "effort": "rapide"}
+    assert _priorite(critique) > _priorite(faciles)
+
+
+def test_seuls_les_constats_bloquants_entrent_dans_le_plan():
+    """Y mêler les Medium/Low noierait les actions qui comptent."""
+    from judge.remediation_plan import collecter_constats
+    a = _audit_deux_causes()
+    a["agents"]["ASI_01"]["vulnerabilities"].append(
+        {"title": "Bruit", "severity": "Low", "judge_detail": {}})
+    assert all(x["gravite"] in ("Critical", "High") for x in collecter_constats(a))
+
+
+def test_sans_modele_un_plan_existe_quand_meme():
+    """Le repli regroupe par recouvrement de remediations : moins fin, jamais faux."""
+    from judge.remediation_plan import build
+    p = build(_audit_deux_causes())
+    assert p["source"] == "deterministe" and p["n_actions"] == 2
+    assert p["groupes"][0]["gravite_max"] == "Critical", "le pire d'abord"
+
+
+def test_aucun_constat_bloquant_ne_produit_aucun_plan():
+    """Pas un plan VIDE, qui se lirait comme un plan oublie."""
+    from judge.remediation_plan import build
+    assert build({"agents": {"ASI_01": {"measured": True, "vulnerabilities": [
+        {"title": "Bruit", "severity": "Low", "judge_detail": {}}]}}}) == {}
+
+
+def test_le_rapport_produit_un_plan_pour_un_audit_sans_le_champ():
+    """Compatibilite : un audit anterieur au champ doit quand meme avoir son plan."""
+    from reporting.report_generator import build_context
+    ctx = build_context(_audit_deux_causes())
+    assert ctx["plan"]["n_actions"] >= 1

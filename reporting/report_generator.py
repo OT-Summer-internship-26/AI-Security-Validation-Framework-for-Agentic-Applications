@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Any
 
 from judge.executive_summary import build as build_executive_summary
+from judge.remediation_plan import build as build_remediation_plan
 from judge.summary import build_judge_summary
 from reporting.charts import (
     ASI_ORDER,
@@ -335,6 +336,10 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # jamais sans synthese, et sans modele ici (rendre un rapport doit rester
         # instantane et hors ligne).
         "resume": audit.get("executive_summary") or build_executive_summary(audit),
+        # Plan d'action : les constats bloquants regroupes par cause racine. Une
+        # liste de 22 constats ne dit pas combien de correctifs distincts il y a
+        # ni par lequel commencer ; c'est ce bloc qui le dit.
+        "plan": audit.get("remediation_plan") or build_remediation_plan(audit),
         # Mode agentique : les décisions prises DOIVENT être lisibles, sinon un
         # audit dont les réglages ont bougé n'est plus contestable.
         "agentic": _collect_agentic(audit),

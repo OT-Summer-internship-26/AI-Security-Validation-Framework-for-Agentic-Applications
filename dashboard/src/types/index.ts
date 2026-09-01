@@ -136,6 +136,38 @@ export interface Audit {
   score_interval?: ScoreInterval | null
   /** Synthese d'ouverture (null pour les audits anterieurs au champ). */
   executive_summary?: ExecutiveSummary | null
+  /** Plan de remediation par cause racine (null pour les audits anterieurs). */
+  remediation_plan?: RemediationPlan | null
+}
+
+/**
+ * Plan d'action : les constats bloquants regroupes par cause racine, ordonnes.
+ * Calcule par `judge/remediation_plan.py` et LU ici. `source` distingue un
+ * regroupement par modele — VERIFIE contre les constats reels — d'un
+ * regroupement mecanique par recouvrement de remediations.
+ *
+ * L'ORDRE N'EST PAS CHOISI PAR UN MODELE : il vient d'un bareme (gravite max,
+ * puis nombre de constats fermes, puis effort). L'ordre de traitement engage la
+ * charge d'une equipe : c'est une decision de politique, pas une analyse.
+ */
+export interface RemediationGroup {
+  rang: number
+  cause: string
+  action: string
+  effort: 'rapide' | 'modere' | 'consequent'
+  gravite_max: Severity
+  categories: string[]
+  titres: string[]
+  constats: number[]
+}
+
+export interface RemediationPlan {
+  groupes: RemediationGroup[]
+  source: 'llm' | 'deterministe'
+  n_constats: number
+  n_actions: number
+  lecture: string
+  rejet?: string
 }
 
 /**

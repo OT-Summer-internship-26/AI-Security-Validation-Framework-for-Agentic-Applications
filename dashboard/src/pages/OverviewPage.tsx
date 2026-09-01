@@ -42,6 +42,7 @@ export function OverviewPage() {
   const delta = prev ? Math.round((latest.global_score - prev.global_score) * 10) / 10 : null
   const iv = latest.score_interval
   const resume = latest.executive_summary
+  const plan = latest.remediation_plan
   // Un écart plus petit que le bruit irréductible du simulateur n'est pas une
   // évolution : deux exécutions identiques varient déjà d'autant (doc. technique : fiabilite du score). Le seuil
   // vient du JSON — le recopier ici le ferait diverger du rapport.
@@ -81,6 +82,46 @@ export function OverviewPage() {
                 + "l'audit, et vérifiée contre eux."
               : 'Générée mécaniquement depuis les résultats'
                 + (resume.rejet ? ` — reformulation rejetée (${resume.rejet}).` : '.')}
+          </div>
+        </motion.div>
+      )}
+
+      {/* ─── Plan d'action : combien de correctifs distincts, et dans quel ordre.
+              Une liste de 22 constats ne répond à aucune des deux questions. ─── */}
+      {plan && plan.groupes.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="card p-6"
+        >
+          <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-text-muted">
+              Plan de remédiation
+            </div>
+            <div className="text-[11px] text-text-muted">
+              {plan.source === 'llm'
+                ? 'Regroupement par modèle, vérifié contre les constats'
+                : 'Regroupement mécanique'
+                  + (plan.rejet ? ` — modèle rejeté (${plan.rejet})` : '')}
+            </div>
+          </div>
+          <p className="text-[13px] mb-4">{plan.lecture}</p>
+          <div className="space-y-2">
+            {plan.groupes.map(g => (
+              <div key={g.rang} className="flex gap-3 items-start p-3 rounded-lg border border-border">
+                <div className="font-mono font-bold text-[15px] tabular w-6 shrink-0
+                                text-text-muted">{g.rang}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold">{g.cause}</div>
+                  <div className="text-[12.5px] text-text-muted mt-0.5">{g.action}</div>
+                  <div className="text-[10.5px] text-text-muted mt-1.5 flex gap-2 flex-wrap">
+                    <span className="font-mono">{g.categories.join(' · ')}</span>
+                    <span>·</span><span>effort {g.effort}</span>
+                    <span>·</span><span>ferme {g.constats.length} constat(s)</span>
+                  </div>
+                </div>
+                <SeverityBadge severity={g.gravite_max} />
+              </div>
+            ))}
           </div>
         </motion.div>
       )}

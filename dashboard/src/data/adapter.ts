@@ -14,6 +14,7 @@ import type {
   JudgeSummary,
   ScoreInterval,
   ExecutiveSummary,
+  RemediationPlan,
 } from '@/types'
 import { ASI_CATEGORIES } from '@/types'
 
@@ -65,6 +66,7 @@ export interface RawAudit {
   judge_summary?: unknown
   confidence?: unknown
   executive_summary?: unknown
+  remediation_plan?: unknown
   audit_id?: string
   timestamp?: string
   target_url?: string
@@ -262,5 +264,6 @@ export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
     // score est consolide, puis lue. Aucune arithmetique ici.
     score_interval: (raw.confidence as ScoreInterval | undefined) ?? null,
     executive_summary: (raw.executive_summary as ExecutiveSummary | undefined) ?? null,
+    remediation_plan: (raw.remediation_plan as RemediationPlan | undefined) ?? null,
   }
 }

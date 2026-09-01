@@ -278,6 +278,34 @@
     </div>
     {% endif %}
 
+    {# Plan d'action : ce que l'equipe doit corriger, et dans quel ordre. #}
+    {% if plan and plan.groupes %}
+    <h3>Plan de remédiation</h3>
+    <p class="note">{{ plan.lecture }}
+      {% if plan.source == 'llm' %}Regroupement par cause racine établi par modèle de
+      langage, <b>vérifié</b> : chaque constat bloquant appartient à exactement un
+      groupe, aucun n'est omis ni inventé.
+      {% else %}Regroupement mécanique par recouvrement de remédiations
+      {% if plan.rejet %}— le regroupement par modèle a été rejeté ({{ plan.rejet }}){% endif %}.
+      {% endif %}
+      L'ordre est calculé : gravité maximale, puis nombre de constats fermés, puis
+      effort — jamais choisi par un modèle.</p>
+    <table class="tbl">
+      <tr><th>#</th><th>Cause racine</th><th>Action</th><th>Gravité</th>
+          <th>Effort</th><th>Ferme</th></tr>
+      {% for g in plan.groupes %}
+      <tr>
+        <td><b>{{ g.rang }}</b></td>
+        <td>{{ g.cause }}<br><span class="mono">{{ g.categories | join(' · ') }}</span></td>
+        <td>{{ g.action }}</td>
+        <td>{{ g.gravite_max }}</td>
+        <td>{{ g.effort }}</td>
+        <td>{{ g.constats | length }} constat(s)</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
     {# Mode agentique : les réglages ont été choisis par un modèle. Sans cette
        trace, l'audit n'est plus reproductible NI contestable. #}
     {% if agentic %}
