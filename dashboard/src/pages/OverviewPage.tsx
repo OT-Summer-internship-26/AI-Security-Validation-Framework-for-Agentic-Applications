@@ -61,6 +61,109 @@ export function OverviewPage() {
   return (
     <div className="p-6 space-y-6 max-w-[1500px] mx-auto pb-16">
 
+      {/* ─── Posture — le score AVEC son contexte de mesure ─── */}
+      <motion.div
+        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+        className="card p-7 grid gap-8 lg:grid-cols-[minmax(300px,400px)_1fr] items-start"
+      >
+        <div>
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={15} className="text-brand" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-text-muted">
+              Dernier audit
+            </span>
+          </div>
+
+          <div className="flex items-baseline gap-2 mt-2">
+            <motion.span
+              initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.08, type: 'spring', stiffness: 180, damping: 20 }}
+              className="text-[86px] leading-[0.85] font-bold font-mono tabular"
+              style={{ color: scoreColor }}
+            >
+              {latest.global_score}
+            </motion.span>
+            <span className="text-xl text-text-muted font-medium">/100</span>
+            {delta !== null && delta !== 0 && (
+              <span
+                className="text-sm font-mono font-bold ml-1"
+                style={{ color: bruit ? 'var(--text-muted)'
+                  : delta > 0 ? 'var(--sev-low)' : 'var(--sev-critical)' }}
+                title={bruit
+                  ? `Écart de ${delta} pt(s) INFÉRIEUR au bruit du simulateur `
+                    + `(±${iv!.plancher}) : deux exécutions identiques varient déjà `
+                    + `d'autant. Ce n'est pas une évolution mesurée.`
+                  : "vs l'audit précédent de même configuration"}
+              >
+                {delta > 0 ? '+' : ''}{delta}{bruit && ' ≈'}
+              </span>
+            )}
+          </div>
+
+          {/* Plage de confiance : le score est un TIRAGE (doc. technique : fiabilite du score : 9,66 et 7,93 sur la
+              même cible). L'afficher nu le présenterait comme une mesure. */}
+          {iv && (
+            <div className="mt-2 text-[11px] text-text-muted leading-snug">
+              <span className="font-mono tabular">
+                {iv.bas} – {iv.haut}
+              </span>
+              <span className="opacity-70"> (±{iv.marge} pts, {iv.categories} catégorie
+                {iv.categories > 1 ? 's' : ''})</span>
+              {iv.bas < 70 && iv.haut >= 70 && (
+                <span className="ml-1.5 px-1.5 py-0.5 rounded font-bold"
+                      style={{ color: 'var(--sev-medium)',
+                               background: 'color-mix(in srgb, var(--sev-medium) 14%, transparent)' }}
+                      title={iv.lecture}>
+                  chevauche le seuil
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 mt-4 flex-wrap">
+            <RiskBadge level={latest.risk_level} />
+            <ConfidenceBadge confidence={latest.confidence} />
+            <span
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wide
+                         flex items-center gap-1.5"
+              style={{ color: gateMeta.color,
+                       background: `color-mix(in srgb, ${gateMeta.color} 11%, transparent)` }}
+            >
+              {gate.verdict === 'BLOCKED' && <Ban size={12} />}{gateMeta.short}
+            </span>
+          </div>
+
+          {/* Contexte de mesure : sans lui, le score n'est pas interprétable. */}
+          <div className="mt-5 pt-4 border-t border-border space-y-1.5 text-xs">
+            <Line k="Cible" v={targetOf(latest)} mono />
+            <Line k="Mode" v={MODE_LABEL[mode]} />
+            <Line k="Axes exécutés" v={axes.join(' · ') || 'aucun'} mono />
+            <Line k="Profil LLM" v={`${latest.profile} · ${latest.model}`} mono />
+          </div>
+
+          {mode !== 'complete' && (
+            <p className="text-[11px] text-severity-high mt-3 flex items-start gap-1.5">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              Configuration partielle — ce score ne se compare qu'à d'autres audits
+              lancés dans le même mode.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-text-primary">Couverture OWASP ASI</h3>
+            <button
+              onClick={() => goto(latest.id, 'attacks')}
+              className="text-xs text-brand hover:underline flex items-center gap-1"
+            >
+              Voir les attaques <ArrowRight size={12} />
+            </button>
+          </div>
+          <AsioRadarChart audit={latest} size={280} />
+        </div>
+      </motion.div>
+
       {/* ─── Synthèse d'ouverture : ce que l'audit a trouvé, en une lecture.
               Sans elle, le lecteur reconstitue le verdict depuis des compteurs. ─── */}
       {resume && (
@@ -168,109 +271,6 @@ export function OverviewPage() {
           </div>
         </motion.div>
       )}
-
-      {/* ─── Posture — le score AVEC son contexte de mesure ─── */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-        className="card p-7 grid gap-8 lg:grid-cols-[minmax(300px,400px)_1fr] items-start"
-      >
-        <div>
-          <div className="flex items-center gap-2">
-            <ShieldAlert size={15} className="text-brand" />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-text-muted">
-              Dernier audit
-            </span>
-          </div>
-
-          <div className="flex items-baseline gap-2 mt-2">
-            <motion.span
-              initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.08, type: 'spring', stiffness: 180, damping: 20 }}
-              className="text-[86px] leading-[0.85] font-bold font-mono tabular"
-              style={{ color: scoreColor }}
-            >
-              {latest.global_score}
-            </motion.span>
-            <span className="text-xl text-text-muted font-medium">/100</span>
-            {delta !== null && delta !== 0 && (
-              <span
-                className="text-sm font-mono font-bold ml-1"
-                style={{ color: bruit ? 'var(--text-muted)'
-                  : delta > 0 ? 'var(--sev-low)' : 'var(--sev-critical)' }}
-                title={bruit
-                  ? `Écart de ${delta} pt(s) INFÉRIEUR au bruit du simulateur `
-                    + `(±${iv!.plancher}) : deux exécutions identiques varient déjà `
-                    + `d'autant. Ce n'est pas une évolution mesurée.`
-                  : "vs l'audit précédent de même configuration"}
-              >
-                {delta > 0 ? '+' : ''}{delta}{bruit && ' ≈'}
-              </span>
-            )}
-          </div>
-
-          {/* Plage de confiance : le score est un TIRAGE (doc. technique : fiabilite du score : 9,66 et 7,93 sur la
-              même cible). L'afficher nu le présenterait comme une mesure. */}
-          {iv && (
-            <div className="mt-2 text-[11px] text-text-muted leading-snug">
-              <span className="font-mono tabular">
-                {iv.bas} – {iv.haut}
-              </span>
-              <span className="opacity-70"> (±{iv.marge} pts, {iv.categories} catégorie
-                {iv.categories > 1 ? 's' : ''})</span>
-              {iv.bas < 70 && iv.haut >= 70 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded font-bold"
-                      style={{ color: 'var(--sev-medium)',
-                               background: 'color-mix(in srgb, var(--sev-medium) 14%, transparent)' }}
-                      title={iv.lecture}>
-                  chevauche le seuil
-                </span>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 mt-4 flex-wrap">
-            <RiskBadge level={latest.risk_level} />
-            <ConfidenceBadge confidence={latest.confidence} />
-            <span
-              className="px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wide
-                         flex items-center gap-1.5"
-              style={{ color: gateMeta.color,
-                       background: `color-mix(in srgb, ${gateMeta.color} 11%, transparent)` }}
-            >
-              {gate.verdict === 'BLOCKED' && <Ban size={12} />}{gateMeta.short}
-            </span>
-          </div>
-
-          {/* Contexte de mesure : sans lui, le score n'est pas interprétable. */}
-          <div className="mt-5 pt-4 border-t border-border space-y-1.5 text-xs">
-            <Line k="Cible" v={targetOf(latest)} mono />
-            <Line k="Mode" v={MODE_LABEL[mode]} />
-            <Line k="Axes exécutés" v={axes.join(' · ') || 'aucun'} mono />
-            <Line k="Profil LLM" v={`${latest.profile} · ${latest.model}`} mono />
-          </div>
-
-          {mode !== 'complete' && (
-            <p className="text-[11px] text-severity-high mt-3 flex items-start gap-1.5">
-              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-              Configuration partielle — ce score ne se compare qu'à d'autres audits
-              lancés dans le même mode.
-            </p>
-          )}
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-text-primary">Couverture OWASP ASI</h3>
-            <button
-              onClick={() => goto(latest.id, 'attacks')}
-              className="text-xs text-brand hover:underline flex items-center gap-1"
-            >
-              Voir les attaques <ArrowRight size={12} />
-            </button>
-          </div>
-          <AsioRadarChart audit={latest} size={280} />
-        </div>
-      </motion.div>
 
       {/* ─── Indicateurs actionnables ─── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
