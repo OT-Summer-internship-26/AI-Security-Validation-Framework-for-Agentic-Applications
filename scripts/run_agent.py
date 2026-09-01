@@ -39,6 +39,13 @@ G, R, Y, B, D, X = "\033[92m", "\033[91m", "\033[93m", "\033[1m", "\033[90m", "\
 
 
 def main() -> int:
+    # Compteurs d'execution remis a zero : deux audits dans le meme
+    # processus additionneraient leurs couts, et le second afficherait
+    # la facture des deux.
+    from judge.metrics import reset as _reset_metriques
+
+    _reset_metriques()
+
     from workflow.audit_graph import AGENT_REGISTRY
 
     ap = argparse.ArgumentParser()

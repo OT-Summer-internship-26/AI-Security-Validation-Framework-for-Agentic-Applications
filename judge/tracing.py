@@ -344,25 +344,61 @@ def traced_model(model: Any, role: str) -> Any:
     return model
 
 
+def _mesurer(role: str, debut: float, resultat: Any = None,
+             erreur: bool = False) -> None:
+    """Verse l'appel aux compteurs LOCAUX, que LangFuse soit configuré ou non.
+
+    POURQUOI DOUBLER L'OBSERVATION
+        LangFuse est optionnel — c'est même son état par défaut. Sans lui, un
+        audit ne laissait AUCUNE trace de son exécution : ni volume d'appels, ni
+        jetons, ni coût. Le rapport parlait des attaques et jamais du travail qui
+        les avait produites. Ces compteurs, eux, ne dépendent de rien.
+    """
+    from judge import metrics
+
+    u = usage_de(resultat) if resultat is not None else {}
+    d = u.get("usage_details") or {}
+    metrics.record_llm(
+        role, time.time() - debut,
+        jetons_entree=int(d.get("input") or 0),
+        jetons_sortie=int(d.get("output") or 0),
+        cout=float((u.get("cost_details") or {}).get("total") or 0.0),
+        erreur=erreur)
+
+
 def _wrap(original: Any, role: str, model: Any, *, is_async: bool) -> Any:
     """Construit la version tracée d'un `generate` / `a_generate`.
 
     L'appel est ENCADRÉ par l'observation (et non tracé après coup) : c'est ce qui
-    donne à LangFuse une latence exacte plutôt qu'un événement instantané.
+    donne à LangFuse une latence exacte plutôt qu'un événement instantané. Les
+    compteurs locaux sont alimentés au même endroit, y compris en cas d'erreur —
+    un appel qui échoue a coûté du temps, et l'ignorer sous-estimerait l'audit.
     """
     if is_async:
         async def enveloppe_async(prompt, *args, **kwargs):
+            debut = time.time()
             with observe(role, model, str(prompt)) as obs:
-                resultat = await original(prompt, *args, **kwargs)
+                try:
+                    resultat = await original(prompt, *args, **kwargs)
+                except BaseException:
+                    _mesurer(role, debut, erreur=True)
+                    raise
                 obs.set_output(_sortie(resultat), usage_de(resultat))
+                _mesurer(role, debut, resultat)
                 return resultat
 
         return enveloppe_async
 
     def enveloppe(prompt, *args, **kwargs):
+        debut = time.time()
         with observe(role, model, str(prompt)) as obs:
-            resultat = original(prompt, *args, **kwargs)
+            try:
+                resultat = original(prompt, *args, **kwargs)
+            except BaseException:
+                _mesurer(role, debut, erreur=True)
+                raise
             obs.set_output(_sortie(resultat), usage_de(resultat))
+            _mesurer(role, debut, resultat)
             return resultat
 
     return enveloppe
@@ -453,15 +489,27 @@ def observe_step(nom: str, **details: Any):
     Le type `span` (et non `generation`) est volontaire : ce ne sont pas des
     appels de modele, et les melanger fausserait les statistiques LLM.
     """
+    from judge import metrics
+
+    debut = time.time()
     client = get_client()
+
+    # MESURE D'ABORD, TRAÇAGE ENSUITE. Sans LangFuse configuré, l'ancienne
+    # version sortait ici sans rien compter : un audit ne laissait alors aucune
+    # trace de son exécution. Or c'est la CIBLE qui domine le temps (~19 s par
+    # requête sur l'audit mesuré), et c'est précisément ce que l'on veut voir.
     if client is None:
-        yield _Muet()
+        try:
+            yield _Muet()
+        except BaseException:
+            metrics.record_step(nom, time.time() - debut, erreur=True)
+            raise
+        metrics.record_step(nom, time.time() - debut)
         return
 
     contexte = current_context()
     categorie = contexte.get("category", "")
     titre = f"{categorie} · {nom}" if categorie else nom
-    debut = time.time()
     try:
         with client.start_as_current_observation(name=titre, as_type="span") as span:
             porteur = _Porteur(span)
@@ -477,7 +525,11 @@ def observe_step(nom: str, **details: Any):
             span.update(output=str(porteur.output)[:2000] if porteur.output else None,
                         metadata={"step": nom, **contexte,
                                   "duration_s": round(time.time() - debut, 2)})
+        metrics.record_step(nom, time.time() - debut)
     except Exception as exc:
+        # L'étape a coûté du temps même en échouant : l'omettre sous-estimerait
+        # la durée de l'audit et masquerait justement les étapes qui échouent.
+        metrics.record_step(nom, time.time() - debut, erreur=True)
         if not isinstance(exc, _Relancer):
             logger.debug("LangFuse : étape ignorée (%s)", exc)
         raise

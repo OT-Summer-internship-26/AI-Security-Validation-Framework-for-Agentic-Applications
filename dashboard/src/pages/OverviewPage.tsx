@@ -43,6 +43,7 @@ export function OverviewPage() {
   const iv = latest.score_interval
   const resume = latest.executive_summary
   const plan = latest.remediation_plan
+  const exec = latest.execution
   // Un écart plus petit que le bruit irréductible du simulateur n'est pas une
   // évolution : deux exécutions identiques varient déjà d'autant (doc. technique : fiabilite du score). Le seuil
   // vient du JSON — le recopier ici le ferait diverger du rapport.
@@ -122,6 +123,48 @@ export function OverviewPage() {
                 <SeverityBadge severity={g.gravite_max} />
               </div>
             ))}
+          </div>
+        </motion.div>
+      )}
+
+      {/* ─── Conduite de l'audit : ce qu'il a coûté. Sans ce bloc, l'interface
+              montre les attaques et jamais le travail qui les a produites. ─── */}
+      {exec && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="card p-6"
+        >
+          <div className="text-[11px] font-bold uppercase tracking-wide text-text-muted mb-3">
+            Conduite de l'audit
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              ['Appels de modèle', exec.appels_llm.toLocaleString('fr-FR'),
+               exec.erreurs_llm ? `${exec.erreurs_llm} en erreur` : null],
+              ['Jetons', exec.jetons.toLocaleString('fr-FR'), null],
+              ['Coût estimé', exec.cout_usd ? `${exec.cout_usd} $` : '—', null],
+              ['Durée', `${Math.round(exec.secondes_total / 60)} min`,
+               exec.parallelisme_effectif
+                 ? `parallélisme ${exec.parallelisme_effectif}` : null],
+            ].map(([label, valeur, note]) => (
+              <div key={label as string}>
+                <div className="text-[10.5px] uppercase tracking-wide text-text-muted">
+                  {label}
+                </div>
+                <div className="text-[20px] font-bold font-mono tabular mt-0.5">
+                  {valeur}
+                </div>
+                {note && <div className="text-[10.5px] text-text-muted">{note}</div>}
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-text-muted mt-4 leading-snug">
+            {Math.round(exec.secondes_attente / 60)} min cumulées passées à
+            attendre la cible, les modèles et les sous-processus.
+            {' '}Détail : {Object.entries(exec.par_role)
+              .map(([r, v]) => `${r} ${v.n}`).join(' · ')}
+            {Object.keys(exec.par_etape).length > 0 && ' · '}
+            {Object.entries(exec.par_etape).map(([s, v]) => `${s} ${v.n}`).join(' · ')}
           </div>
         </motion.div>
       )}

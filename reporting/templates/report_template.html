@@ -142,6 +142,7 @@
   .exec-prio{border-top:1px solid #e3e9ef;padding-top:8px;margin-top:10px!important}
   .exec-src{font-size:10.5px;color:#8494a3;margin-top:8px;font-style:italic}
   .mono{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#5b6b7c}
+  h4{font-size:12.5px;margin:14px 0 6px;color:#33475b}
 </style>
 </head>
 <body>
@@ -304,6 +305,72 @@
       </tr>
       {% endfor %}
     </table>
+    {% endif %}
+
+    {# Conduite de l'audit : le travail qui a produit les constats. Sans lui, le
+       rapport laisse croire que les attaques sortent de nulle part. #}
+    {% if execution %}
+    <h3>Conduite de l'audit</h3>
+    <p class="note">Mesuré pendant l'exécution, indépendamment de toute plateforme
+      d'observabilité externe. Ces chiffres permettent de budgéter un audit et de
+      savoir où passe son temps.</p>
+
+    <table class="tbl">
+      <tr>
+        <td>Appels de modèle</td>
+        <td><b>{{ execution.appels_llm }}</b>
+          {% if execution.erreurs_llm %}<span style="color:#c0392b">
+            · {{ execution.erreurs_llm }} en erreur (retentés)</span>{% endif %}</td>
+        <td>Jetons consommés</td><td><b>{{ '{:,}'.format(execution.jetons).replace(',', ' ') }}</b></td>
+      </tr>
+      <tr>
+        <td>Coût estimé</td>
+        <td><b>{% if execution.cout_usd %}{{ execution.cout_usd }} USD{% else %}non facturé{% endif %}</b></td>
+        <td>Durée totale</td><td><b>{{ (execution.secondes_total / 60) | round(0) | int }} min</b></td>
+      </tr>
+      <tr>
+        <td>Attente des modèles</td><td>{{ (execution.secondes_llm / 60) | round(1) }} min</td>
+        <td>Attente de la cible et des outils</td>
+        <td>{{ (execution.secondes_etapes / 60) | round(1) }} min</td>
+      </tr>
+    </table>
+
+    <div class="reading"><b>Où passe le temps.</b>
+      L'audit a passé <b>{{ (execution.secondes_attente / 60) | round(0) | int }} minutes
+      cumulées à attendre</b> — la cible, les modèles, les sous-processus — pour
+      {{ (execution.secondes_total / 60) | round(0) | int }} minutes réellement
+      écoulées.
+      {% if execution.parallelisme_effectif %}
+      Soit un parallélisme effectif de <b>{{ execution.parallelisme_effectif }}</b> :
+      l'audit attendait {{ execution.parallelisme_effectif }} choses à la fois en
+      moyenne.{% endif %}
+      Le temps de calcul local est négligeable devant l'attente : c'est le
+      parallélisme des vagues qui détermine la durée, pas l'optimisation du code.</div>
+
+    <h4>Par rôle de modèle</h4>
+    <table class="tbl">
+      <tr><th>Rôle</th><th>Appels</th><th>Erreurs</th><th>Temps</th>
+          <th>Jetons</th><th>Coût</th></tr>
+      {% for role, v in execution.par_role.items() %}
+      <tr><td>{{ role }}</td><td>{{ v.n }}</td>
+        <td>{% if v.erreurs %}<span style="color:#c0392b">{{ v.erreurs }}</span>{% else %}—{% endif %}</td>
+        <td>{{ (v.secondes / 60) | round(1) }} min</td>
+        <td>{{ v.jetons_entree + v.jetons_sortie }}</td>
+        <td>{% if v.cout %}{{ v.cout }} $/{% else %}—{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+
+    {% if execution.par_etape %}
+    <h4>Par étape hors modèle</h4>
+    <table class="tbl">
+      <tr><th>Étape</th><th>Occurrences</th><th>Échecs</th><th>Temps cumulé</th></tr>
+      {% for nom, v in execution.par_etape.items() %}
+      <tr><td>{{ nom }}</td><td>{{ v.n }}</td>
+        <td>{% if v.erreurs %}<span style="color:#c0392b">{{ v.erreurs }}</span>{% else %}—{% endif %}</td>
+        <td>{{ (v.secondes / 60) | round(1) }} min</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
     {% endif %}
 
     {# Mode agentique : les réglages ont été choisis par un modèle. Sans cette

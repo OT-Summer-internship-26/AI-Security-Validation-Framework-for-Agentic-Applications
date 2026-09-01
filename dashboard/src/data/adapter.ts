@@ -15,6 +15,7 @@ import type {
   ScoreInterval,
   ExecutiveSummary,
   RemediationPlan,
+  AuditExecution,
 } from '@/types'
 import { ASI_CATEGORIES } from '@/types'
 
@@ -67,6 +68,7 @@ export interface RawAudit {
   confidence?: unknown
   executive_summary?: unknown
   remediation_plan?: unknown
+  execution?: unknown
   audit_id?: string
   timestamp?: string
   target_url?: string
@@ -265,5 +267,6 @@ export function adaptAudit(raw: RawAudit, fallbackId: string): Audit {
     score_interval: (raw.confidence as ScoreInterval | undefined) ?? null,
     executive_summary: (raw.executive_summary as ExecutiveSummary | undefined) ?? null,
     remediation_plan: (raw.remediation_plan as RemediationPlan | undefined) ?? null,
+    execution: (raw.execution as AuditExecution | undefined) ?? null,
   }
 }

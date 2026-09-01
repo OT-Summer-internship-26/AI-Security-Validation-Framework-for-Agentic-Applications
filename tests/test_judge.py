@@ -452,3 +452,70 @@ def test_le_rapport_produit_un_plan_pour_un_audit_sans_le_champ():
     from reporting.report_generator import build_context
     ctx = build_context(_audit_deux_causes())
     assert ctx["plan"]["n_actions"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# Compteurs d'execution : l'observabilite ne depend d'aucun service optionnel.
+# --------------------------------------------------------------------------- #
+
+def test_autotest_metrics():
+    """Rejoue les 6 controles des compteurs."""
+    from judge.metrics import demo, reset
+    try:
+        demo()
+    finally:
+        reset()
+
+
+def test_les_etapes_sont_mesurees_SANS_langfuse(monkeypatch):
+    """LE point : l'observabilite vivait entierement dans LangFuse, qui est
+    OPTIONNEL. Sans lui, un audit ne laissait aucune trace de son execution —
+    ni volume d'appels, ni duree par axe. Et c'est la CIBLE qui domine le temps.
+
+    LangFuse est FORCE a l'arret plutot que suppose absent : une premiere version
+    supposait, la machine l'avait configure, et la suite entiere s'est bloquee
+    dix minutes sur des connexions reseau. Un test ne doit rien devoir a
+    l'environnement de qui le lance.
+    """
+    import time as _t
+    from judge import metrics, tracing
+
+    monkeypatch.setattr(tracing, "_client", None)
+    monkeypatch.setattr(tracing, "_checked", True)
+    from judge.tracing import get_client, observe_step
+
+    assert get_client() is None
+    metrics.reset()
+    try:
+        with observe_step("cible_http"):
+            _t.sleep(0.02)
+        try:
+            with observe_step("garak"):
+                raise RuntimeError("sous-processus en echec")
+        except RuntimeError:
+            pass
+        s = metrics.snapshot()
+        assert s["par_etape"]["cible_http"]["n"] == 1
+        # Une etape qui ECHOUE a quand meme coute du temps : l'omettre
+        # sous-estimerait l'audit et masquerait ce qui echoue.
+        assert s["par_etape"]["garak"]["erreurs"] == 1
+    finally:
+        metrics.reset()
+
+
+def test_consolidate_joint_les_compteurs_d_execution():
+    """Le rapport doit pouvoir dire ce que l'audit a coute, pas seulement ce
+    qu'il a trouve."""
+    from judge import metrics
+    from workflow.audit_graph import consolidate
+    metrics.reset()
+    try:
+        metrics.record_llm("severity", 1.0, jetons_entree=100, jetons_sortie=20,
+                           cout=0.001)
+        agents = {"ASI_01": {"score": 6.0, "measured": True, "layers": {"behavioral": {
+            "raw": {"deepteam_stats": {"scored": 4, "passed": 3}}}}}}
+        out = consolidate({"ASI_01": 6.0}, agents)
+        assert out["execution"]["appels_llm"] == 1
+        assert out["execution"]["jetons"] == 120
+    finally:
+        metrics.reset()

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -46,6 +47,15 @@ ROOT = Path(__file__).resolve().parent.parent
 from workflow.paths import results_dir
 
 RESULTS_DIR = results_dir()
+
+# Format de journal choisi par l'environnement (`LOG_FORMAT=json` en production).
+# Installe ICI, a l'import du module : uvicorn configure les siens au demarrage,
+# et une configuration posee plus tard laisserait passer les premieres lignes au
+# mauvais format — precisement celles qui disent pourquoi le service n'a pas
+# demarre.
+from api.logging_config import configurer as _configurer_journal
+
+LOG_FORMAT = _configurer_journal()
 REPLAYS_DIR = ROOT / "data" / "replays"
 RUNNER = ROOT / "scripts" / "run_agent.py"
 
@@ -579,6 +589,26 @@ def health() -> dict[str, Any]:
     with _RUNS_LOCK:
         services["active_runs"] = sum(1 for r in _RUNS.values() if r.status == "running")
     return {"status": "ok", "version": app.version, "services": services}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    """Compteurs au format d'exposition Prometheus.
+
+    POURQUOI CET ENDPOINT EXISTE
+        La supervision d'entreprise COLLECTE : elle tire periodiquement un
+        `/metrics` en texte. Sans lui, le seul moyen de savoir ce que fait ce
+        service est d'ouvrir un tableau de bord tiers optionnel — autant dire
+        qu'il n'est pas supervise.
+
+    Ouvert sans authentification, comme `/health` : un collecteur Prometheus ne
+    porte pas de cle d'API, et proteger cet endpoint reviendrait a ne rien
+    exposer. Les compteurs ne contiennent ni prompt, ni reponse, ni identifiant
+    de cible — uniquement des volumes et des durees.
+    """
+    from judge.metrics import prometheus
+
+    return prometheus()
 
 
 @app.get("/agents")

@@ -343,6 +343,10 @@ def build_context(audit: dict[str, Any]) -> dict[str, Any]:
         # Mode agentique : les décisions prises DOIVENT être lisibles, sinon un
         # audit dont les réglages ont bougé n'est plus contestable.
         "agentic": _collect_agentic(audit),
+        # Conduite de l'audit : ce qu'il a réellement coûté. Un rapport qui ne
+        # montre que les attaques laisse croire qu'elles sortent de nulle part —
+        # et ne permet ni de budgéter un audit, ni de savoir quel axe le ralentit.
+        "execution": audit.get("execution") or {},
         "limits": _build_limits(audit),
         "radar": build_radar_data(cat_scores),
         "radar_reading": interpret_radar(cat_scores),

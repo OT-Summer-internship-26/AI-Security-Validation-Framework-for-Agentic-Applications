@@ -61,6 +61,13 @@ def _slug_cible(url: str) -> str | None:
 
 
 def main() -> int:
+    # Compteurs d'execution remis a zero : deux audits dans le meme
+    # processus additionneraient leurs couts, et le second afficherait
+    # la facture des deux.
+    from judge.metrics import reset as _reset_metriques
+
+    _reset_metriques()
+
     ap = argparse.ArgumentParser(description="Audit global 10 catégories → score /100")
     ap.add_argument("--target", required=True)
     ap.add_argument("--profile", default="final", choices=["dev", "ollama", "openai", "final", "dry_run"])

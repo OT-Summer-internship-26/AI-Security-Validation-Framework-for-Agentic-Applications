@@ -149,6 +149,16 @@ def consolidate(scores: dict[str, float],
         js = build_judge_summary(agents)
         if js:
             out["judge_summary"] = js
+
+        # Ce que l'audit a REELLEMENT coute : appels de modele, jetons, cout,
+        # duree par axe et par categorie. Mesure sans dependre de LangFuse, qui
+        # est optionnel — sans ces compteurs, le rapport parlait des attaques et
+        # jamais du travail qui les avait produites.
+        from judge.metrics import snapshot as _metriques
+
+        m = _metriques()
+        if m:
+            out["execution"] = m
     return out
 
 

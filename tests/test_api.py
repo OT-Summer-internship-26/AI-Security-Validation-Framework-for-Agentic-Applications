@@ -240,3 +240,43 @@ def test_le_repertoire_de_resultats_suit_la_configuration(monkeypatch, tmp_path)
     from workflow.paths import results_dir
     assert results_dir() == (tmp_path / "volume").resolve()
     assert results_dir().is_absolute()
+
+
+# --------------------------------------------------------------------------- #
+# Supervision : compteurs et journal structure.
+# --------------------------------------------------------------------------- #
+
+def test_metrics_repond_au_format_prometheus(client):
+    """La supervision d'entreprise COLLECTE : elle tire un /metrics en texte.
+
+    Sans cet endpoint, le seul moyen de savoir ce que fait ce service est
+    d'ouvrir un tableau de bord tiers OPTIONNEL — autant dire qu'il n'est pas
+    supervise.
+    """
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "# HELP " in r.text and "# TYPE " in r.text
+
+
+def test_metrics_repond_meme_sans_aucune_mesure(client):
+    """Un collecteur qui recoit une page blanche marque la cible en panne."""
+    from judge.metrics import reset
+    reset()
+    r = client.get("/metrics")
+    assert r.status_code == 200 and r.text.strip()
+
+
+def test_metrics_reste_ouvert_avec_une_cle_d_api(client_protege):
+    """Un collecteur Prometheus ne porte pas de cle. Proteger cet endpoint
+    reviendrait a ne rien exposer."""
+    assert client_protege.get("/metrics").status_code == 200
+
+
+def test_autotest_journal_structure():
+    """Rejoue les 6 controles du formateur JSON."""
+    from api.logging_config import configurer, demo
+    try:
+        demo()
+    finally:
+        configurer(force_json=False)

@@ -138,6 +138,36 @@ export interface Audit {
   executive_summary?: ExecutiveSummary | null
   /** Plan de remediation par cause racine (null pour les audits anterieurs). */
   remediation_plan?: RemediationPlan | null
+  /** Ce que l'audit a coute : appels, jetons, duree. Mesure sans LangFuse. */
+  execution?: AuditExecution | null
+}
+
+/**
+ * Compteurs d'execution, mesures par `judge/metrics.py` PENDANT l'audit.
+ *
+ * Ils ne dependent d'aucune plateforme d'observabilite : LangFuse est optionnel,
+ * et sans ces compteurs un audit ne laissait aucune trace de son execution — le
+ * tableau de bord montrait les attaques et jamais le travail qui les a produites.
+ */
+export interface AuditExecution {
+  appels_llm: number
+  erreurs_llm: number
+  jetons: number
+  cout_usd: number
+  secondes_llm: number
+  secondes_etapes: number
+  secondes_total: number
+  secondes_attente: number
+  /** Attente cumulee / temps ecoule. 1 = sequentiel, 4,5 = 4,5 choses a la fois. */
+  parallelisme_effectif: number | null
+  par_role: Record<string, {
+    n: number; erreurs: number; secondes: number
+    jetons_entree: number; jetons_sortie: number; cout: number
+  }>
+  par_etape: Record<string, { n: number; erreurs: number; secondes: number }>
+  par_categorie: Record<string, {
+    appels_llm: number; etapes: number; secondes: number; jetons: number; cout: number
+  }>
 }
 
 /**

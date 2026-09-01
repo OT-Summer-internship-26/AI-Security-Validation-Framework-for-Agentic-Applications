@@ -61,6 +61,7 @@ def build_judge_summary(agents: dict[str, Any] | None) -> dict[str, Any]:
     reco = dict.fromkeys(RECO_KEYS, 0)
     refusal = dict.fromkeys(REFUSAL_KEYS, 0)
     ms = dict.fromkeys(MS_KEYS, 0)
+    juges_reels = 0
     warnings: list[str] = []
 
     for category, agent in (agents or {}).items():
@@ -88,8 +89,25 @@ def build_judge_summary(agents: dict[str, Any] | None) -> dict[str, Any]:
         for key in MS_KEYS:
             ms[key] += _int(raw.get("microsoft_judge"), key)
 
+        # Constats portant REELLEMENT un verdict de juge, tous axes confondus.
+        #
+        # POURQUOI COMPTER LES CONSTATS ET PAS SEULEMENT LE COMPTEUR DEEPTEAM
+        #     `deepteam_stats.judge` ne connait que son axe. Mesure sur un audit
+        #     reel : DeepTeam n'avait rien trouve (5 tests, 5 resistes), donc
+        #     `judged = 0` — alors qu'un constat de l'axe Microsoft portait les
+        #     7 champs du juge et une confiance de 85. Le rapport annoncait
+        #     « aucun jugement » a cote d'un verdict de juge affiche en clair.
+        juges_reels += sum(1 for v in (agent or {}).get("vulnerabilities") or []
+                           if v.get("judge_detail"))
+
+    # Le compteur d'axe sous-estime : on retient le plus grand des deux.
+    judged = max(judged, juges_reels)
+
     total = judged + fallbacks
-    if not total and not cv["triggered"] and not sum(refusal.values()):
+    if (not total and not cv["triggered"] and not sum(refusal.values())
+            and not sum(ms.values())):
+        # Le juge de conformite Microsoft peut avoir travaille seul : l'ignorer
+        # ici faisait disparaitre TOUT le bloc de fiabilite du rapport.
         return {}
 
     summary = {
