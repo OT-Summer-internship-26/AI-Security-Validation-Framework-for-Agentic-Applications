@@ -29,7 +29,7 @@ except Exception:
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
-from workflow.paths import results_dir
+from workflow.paths import affichable, results_dir
 
 RESULTS = results_dir()
 REPLAYS = ROOT / "data" / "replays"
@@ -122,7 +122,7 @@ def main() -> int:
         "repeat": args.repeat,
         **res,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\n{G}Enregistré :{X} {out.relative_to(ROOT)}")
+    print(f"\n{G}Enregistré :{X} {affichable(out)}")
     return 0
 
 

@@ -8,7 +8,7 @@
 python scripts/gen_best_practices.py
 ```
 
-*Généré le 2026-08-24 — source : Version 2026, publiée décembre 2025.*
+*Généré le 2026-09-01 — source : Version 2026, publiée décembre 2025.*
 
 *CC BY-SA 4.0 - attribution requise : "OWASP Top 10 for LLMs - GenAI Red Teaming Guide" / genai.owasp.org*
 

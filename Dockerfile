@@ -36,10 +36,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY requirements.txt .
 
-# Les paquets vont dans un préfixe isolé, recopié tel quel dans l'image finale.
-RUN pip install --prefix=/deps -r requirements.txt
+# `requirements.lock` fige les 167 paquets de l'arbre complet, versions exactes.
+#
+# POURQUOI LE VERROU ET NON `requirements.txt`
+#     `requirements.txt` ne contraint que les dépendances DIRECTES. Le résolveur
+#     choisit le reste au moment du build — donc une image construite dans six
+#     mois n'embarque pas les versions qui ont été testées. Ce n'est pas une
+#     hypothèse : le premier build de cette image a échoué parce que le
+#     résolveur avait pris un exportateur OpenTelemetry dont la dépendance
+#     exacte n'était plus disponible.
+#
+# RÉGÉNÉRER LE VERROU (à faire sous Linux, jamais sous Windows où semgrep ne
+# se construit pas) :
+#     docker run --rm -v "$PWD":/w -w /w python:3.11-slim sh -c '
+#       pip install -q pip-tools &&
+#       pip-compile --strip-extras --output-file=requirements.lock requirements.txt'
+COPY requirements.lock .
+
+# `--no-deps` : le verrou est déjà l'arbre COMPLET et résolu. Laisser pip
+# re-résoudre lui permettrait de tirer autre chose, ce qui viderait le verrou de
+# son sens.
+RUN pip install --prefix=/deps --no-deps -r requirements.lock
 
 
 # --------------------------------------------------------------------------- #

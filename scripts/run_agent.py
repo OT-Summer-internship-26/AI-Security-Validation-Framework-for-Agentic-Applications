@@ -32,7 +32,7 @@ except Exception:
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
-from workflow.paths import results_dir
+from workflow.paths import affichable, results_dir
 
 OUT_DIR = results_dir()
 G, R, Y, B, D, X = "\033[92m", "\033[91m", "\033[93m", "\033[1m", "\033[90m", "\033[0m"
@@ -305,7 +305,7 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{args.category}_{args.profile}.json"
     out.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    print(f"\n{G}Enregistré :{X} {out.relative_to(ROOT)}")
+    print(f"\n{G}Enregistré :{X} {affichable(out)}")
     print(f"{D}Visible dans le dashboard (page Historique / Attaques).{X}\n")
     return 0
 

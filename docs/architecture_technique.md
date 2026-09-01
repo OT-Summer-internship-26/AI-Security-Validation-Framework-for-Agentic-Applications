@@ -1127,9 +1127,11 @@ exacte `opentelemetry-proto==1.33.1` n'était plus résolvable, et
 peuplé — visible au premier build propre. Les trois paquets sont désormais
 épinglés à la combinaison vérifiée.
 
-> **Prochaine étape recommandée** : un fichier de verrouillage
-> (`pip-compile`, `uv lock`). Sans lui, une image construite dans six mois tire
-> des versions différentes de celles qui ont été testées.
+> **Résolu** : `requirements.lock` fige les **168 paquets** de l'arbre complet,
+> généré sous Linux (jamais sous Windows, où semgrep ne se construit pas). Le
+> `Dockerfile` installe avec `--no-deps` : laisser pip re-résoudre viderait le
+> verrou de son sens. La commande de régénération est écrite dans le
+> `Dockerfile`, à côté de l'instruction qui le consomme.
 
 **Git Bash déforme les chemins absolus.** Sous Windows, MSYS convertit
 `-e AUDIT_DATA_DIR=/var/lib/ai-security` en
@@ -1138,7 +1140,31 @@ peuplé — visible au premier build propre. Les trois paquets sont désormais
 préfixer d'une barre oblique supplémentaire (`//var/lib/…`). L'image porte déjà
 la variable : il n'y a normalement pas à la passer.
 
-### 17.10 🟡 Portabilité
+### 17.10 🟡 Deux pannes que seul un audit RÉEL dans l'image révèle
+
+Construire l'image et la démarrer ne suffit pas : il faut y faire tourner un
+audit. Deux pannes n'apparaissaient qu'à ce moment.
+
+**`deepeval` importe `sentry_sdk` sans le déclarer.** Ses métadonnées ne
+mentionnent pas cette dépendance ; un environnement de développement l'a déjà
+(une autre bibliothèque l'installe), une image construite depuis le verrou ne
+l'a pas. Conséquence : `/health` répondait, l'API démarrait — et le **premier
+audit échouait à l'import**. Le paquet est désormais déclaré explicitement, avec
+la raison écrite dans `requirements.txt`.
+
+**Les runners plantaient à la toute fin.** Ils affichaient
+`chemin.relative_to(RACINE)`, ce qui suppose que la sortie vit sous le dépôt.
+Dès que les résultats pointent vers un volume — le cas normal en conteneur —
+cet appel lève `ValueError` **après un audit d'une heure réussi**. Le fichier
+était bien écrit ; seul l'affichage tuait le processus. Corrigé au point unique
+(`workflow.paths.affichable`).
+
+> **Leçon d'exploitation** : une image qui démarre n'est pas une image qui
+> fonctionne. La recette de validation minimale est
+> `docker exec <conteneur> python scripts/run_agent.py ASI_01 --profile dry_run`,
+> qui doit rendre **5.57** et écrire son fichier sur le volume.
+
+### 17.11 🟡 Portabilité
 
 | Point | État |
 |---|---|
@@ -1148,7 +1174,7 @@ la variable : il n'y a normalement pas à la passer.
 
 ---
 
-### 17.11 Récapitulatif — la trajectoire d'industrialisation
+### 17.12 Récapitulatif — la trajectoire d'industrialisation
 
 | Étape | Ce qu'elle débloque | Effort |
 |---|---|---|

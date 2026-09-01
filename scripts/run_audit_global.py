@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT))
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
-from workflow.paths import results_dir
+from workflow.paths import affichable, results_dir
 
 OUT_DIR = results_dir()
 RUNNER = ROOT / "scripts" / "run_agent.py"
@@ -203,7 +203,7 @@ def main() -> int:
     print(f"  seuil CI/CD 70 → {'PASSE' if record['global_score'] >= 70 else 'BLOQUE'}")
     record.setdefault("duration_seconds", int(time.time() - t0))
     print(f"  {len(record['agents'])} catégories · {record['duration_seconds']}s")
-    print(f"\nEnregistré : {out.relative_to(ROOT)}")
+    print(f"\nEnregistré : {affichable(out)}")
     return 0
 
 
@@ -326,7 +326,7 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
     print(f"  seuil CI/CD 70 → {'PASSE' if record['global_score'] >= 70 else 'BLOQUE'}")
     record.setdefault("duration_seconds", int(time.time() - t0))
     print(f"  {len(record['agents'])} catégories · {record['duration_seconds']}s")
-    print(f"\nEnregistré : {out.relative_to(ROOT)}")
+    print(f"\nEnregistré : {affichable(out)}")
     return 0
 
 

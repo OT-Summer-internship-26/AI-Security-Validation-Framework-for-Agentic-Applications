@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
-from workflow.paths import results_dir
+from workflow.paths import affichable, results_dir
 
 RESULTS = results_dir()
 REPORTS = ROOT / "data" / "reports"
@@ -76,7 +76,7 @@ def main() -> int:
         REPORTS / f"comparaison_{datetime.now():%Y%m%d_%H%M%S}.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_comparison(c), encoding="utf-8")
-    print(f"Rapport : {out.relative_to(ROOT)}")
+    print(f"Rapport : {affichable(out)}")
     return 0
 
 

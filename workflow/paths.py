@@ -82,6 +82,24 @@ def checkpoints_path() -> Path:
     return _depuis_env("AUDIT_CHECKPOINTS", data_dir() / "checkpoints.sqlite")
 
 
+def affichable(chemin: Path) -> str:
+    """Chemin à montrer à l'utilisateur : relatif au dépôt quand c'est possible.
+
+    POURQUOI CETTE FONCTION EXISTE
+        Les runners affichaient `chemin.relative_to(RACINE)`, ce qui suppose que
+        la sortie vit SOUS le dépôt. Dès que les résultats pointent vers un
+        volume — le cas normal en conteneur — cet appel lève `ValueError` et
+        fait planter le runner À LA TOUTE FIN, après un audit d'une heure
+        réussi. Panne constatée en exécutant un audit dans l'image.
+
+        Un chemin absolu est parfaitement lisible ; un plantage ne l'est pas.
+    """
+    try:
+        return str(chemin.relative_to(RACINE))
+    except ValueError:
+        return str(chemin)
+
+
 def demo() -> None:
     """Auto-test : défauts, surcharge, résolution absolue. Aucun effet de bord."""
     import tempfile
@@ -139,7 +157,12 @@ def demo() -> None:
         finally:
             os.environ.pop("AUDIT_RESULTS_DIR", None)
 
-    print("workflow.paths : 6/6 controles OK")
+    # 7. Un chemin HORS du depot reste affichable au lieu de faire planter le
+    #    runner a la toute fin d'un audit d'une heure.
+    assert affichable(RACINE / "data" / "x.json") == str(Path("data") / "x.json")
+    assert affichable(Path("/var/lib/ai-security/x.json")).endswith("x.json")
+
+    print("workflow.paths : 7/7 controles OK")
 
 
 if __name__ == "__main__":

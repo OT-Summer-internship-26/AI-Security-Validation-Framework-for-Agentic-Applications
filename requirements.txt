@@ -12,6 +12,12 @@ langchain-community
 # Red Teaming
 deepteam
 deepeval
+# Dependance NON DECLAREE par deepeval : son code fait `import sentry_sdk` sans
+# l'inscrire dans ses metadonnees. Un environnement de developpement l'a deja
+# (une autre bibliotheque l'installe), une image construite depuis le verrou ne
+# l'a PAS — et l'audit echoue au premier import, pas au demarrage de l'API.
+# Constate en lancant l'image : /health repondait, `import deepteam` echouait.
+sentry-sdk
 # garak : NE PAS installer dans cet environnement. La version récente exige Rust (build de litellm),
 # et la version sans-Rust (0.9.0.11, via `--only-binary=:all:`) épingle openai==0.28.1, ce qui CASSE
 # deepteam / deepeval / langchain-openai (openai 2.x). Les deux ne peuvent pas coexister.

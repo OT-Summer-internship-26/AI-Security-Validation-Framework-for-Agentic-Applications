@@ -60,7 +60,7 @@ sys.path.insert(0, str(RACINE))
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
-from workflow.paths import results_dir
+from workflow.paths import affichable, results_dir
 
 RESULTATS = results_dir()
 VERITE = RACINE / "config" / "dvap_ground_truth.json"
@@ -377,7 +377,7 @@ def ecrire_rapport(res: dict, verite: dict, chemin: Path) -> None:
         "",
     ]
     chemin.write_text("\n".join(lignes) + "\n", encoding="utf-8")
-    print(f"\nRapport écrit : {chemin.relative_to(RACINE)}")
+    print(f"\nRapport écrit : {affichable(chemin)}")
 
 
 def main() -> int:

@@ -23,6 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from workflow.paths import affichable
+sys.path.insert(0, str(ROOT))
+
 KB_PATH = ROOT / "config" / "owasp_knowledge_base.json"
 OUT = ROOT / "docs" / "security_best_practices.md"
 
@@ -147,7 +150,7 @@ def main() -> int:
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(L), encoding="utf-8")
-    print(f"Écrit : {OUT.relative_to(ROOT)} "
+    print(f"Écrit : {affichable(OUT)} "
           f"({len(L)} lignes, {len(kb['vulnerabilities'])} catégories)")
     return 0
 
