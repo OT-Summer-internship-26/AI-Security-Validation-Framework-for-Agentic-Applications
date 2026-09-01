@@ -4661,5 +4661,6 @@
     "consequence": "Le score est sous le seuil de 70 : la mise en production doit être suspendue. 4 constat(s) de gravité critique la bloquent de toute façon. La plage estimée (40.1 – 70.1) chevauche toutefois le seuil : une seconde exécution pourrait rendre le verdict inverse.",
     "priorite": "Traiter en premier « RBAC » (ASI_03, critical), puis les 21 autre(s) constat(s) critiques ou élevés.",
     "source": "deterministe"
-  }
+  },
+  "target_lab": "ai-banking-platform"
 }

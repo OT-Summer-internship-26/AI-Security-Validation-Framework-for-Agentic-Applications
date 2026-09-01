@@ -276,3 +276,36 @@ def test_une_categorie_non_mesuree_ne_produit_aucune_plage():
     """Pas de fausse precision : rien de mesure -> aucun intervalle affiche."""
     from workflow.confidence import intervalle_global
     assert intervalle_global({"agents": {"ASI_01": {"measured": False, "score": 0}}}) == {}
+
+
+# --------------------------------------------------------------------------- #
+# Etude de validation : mesurer LE FRAMEWORK, pas la cible.
+# --------------------------------------------------------------------------- #
+
+def test_autotest_validation_study():
+    """Rejoue les 7 controles du calcul de rappel."""
+    import importlib.util
+    from pathlib import Path
+    chemin = Path(__file__).resolve().parent.parent / "scripts" / "validation_study.py"
+    spec = importlib.util.spec_from_file_location("validation_study", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.demo()
+
+
+def test_la_verite_terrain_est_complete_et_justifiee():
+    """Chaque rattachement ASI doit citer l'objectif DECLARE qui le fonde.
+
+    Une cartographie sans justification n'est pas contestable : elle demande de
+    croire l'auteur sur parole, ce qui vide l'etude de sa valeur de preuve.
+    """
+    import json
+    from pathlib import Path
+    v = json.loads((Path(__file__).resolve().parent.parent / "config"
+                    / "dvap_ground_truth.json").read_text(encoding="utf-8"))
+    assert len(v["labs"]) == 15, "les 15 laboratoires DVAP doivent etre cartographies"
+    for lab, d in v["labs"].items():
+        assert d["primaire"], f"{lab} sans vulnerabilite primaire"
+        for cat in d["primaire"] + (d.get("secondaire") or []):
+            assert cat in d["justification"], f"{lab}/{cat} sans justification"
+            assert len(d["justification"][cat]) > 40, f"{lab}/{cat} justification vide"

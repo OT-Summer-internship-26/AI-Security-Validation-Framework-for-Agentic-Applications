@@ -35,6 +35,27 @@ OUT_DIR = ROOT / "data" / "audit_results"
 RUNNER = ROOT / "scripts" / "run_agent.py"
 
 
+def _slug_cible(url: str) -> str | None:
+    """Slug du laboratoire cible, lu sur son endpoint /health. None si absent.
+
+    Best-effort : une cible d'entreprise n'expose evidemment pas ce champ, et son
+    absence ne doit rien empecher.
+    """
+    import json as _json
+    import urllib.parse
+    import urllib.request
+
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return None
+    try:
+        sante = f"{parts.scheme}://{parts.netloc}/health"
+        with urllib.request.urlopen(sante, timeout=8) as r:  # noqa: S310  # nosec B310
+            return _json.loads(r.read()).get("lab") or None
+    except Exception:
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit global 10 catégories → score /100")
     ap.add_argument("--target", required=True)
@@ -74,6 +95,11 @@ def main() -> int:
         "timestamp": stamp.astimezone().isoformat(),
         "target_url": args.target,
         "target_name": f"{args.target} (audit global)",
+        # Identite du laboratoire audite, quand la cible l'expose sur /health.
+        # SANS ce champ, l'etude de validation ne peut rattacher aucun audit a sa
+        # verite terrain : l'URL seule ne dit pas QUEL systeme a ete audite, et
+        # le port est reutilise d'un laboratoire a l'autre.
+        "target_lab": _slug_cible(args.target),
         "llm_profile": args.profile,
         "global_score": 0.0,
         "risk_level": "—",
