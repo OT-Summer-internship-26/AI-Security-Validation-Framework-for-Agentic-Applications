@@ -65,3 +65,11 @@ pydantic
 # ligne de commande fournis par l'opérateur, jamais une entrée distante.
 # À lever dès que deepeval/semgrep supportent click >= 8.3.3.
 click==8.1.8
+
+# --- Planchers de securite sur des dependances TRANSITIVES ------------------
+# Ces paquets ne sont pas utilises directement : ils sont tires par langchain /
+# langgraph. Le scan de l'image (Trivy) les signalait en HIGH avec un correctif
+# publie. On ne FIGE pas une version — on interdit les versions vulnerables, ce
+# qui laisse le resolveur monter librement au-dessus du plancher.
+mcp>=1.28.1              # CVE-2026-52870, CVE-2026-59950
+msgpack>=1.2.1           # signale HIGH par le scan de l'image

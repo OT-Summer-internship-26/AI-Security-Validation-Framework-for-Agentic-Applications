@@ -1,0 +1,15 @@
+# 139 Mo de dépendances et les artefacts de construction sont RECONSTRUITS dans
+# l'image : les expédier au démon Docker ne ferait qu'allonger chaque build.
+node_modules
+dist
+.vite
+
+# Secrets : `VITE_API_BASE` est fixé dans le Dockerfile, et tout ce qui traîne
+# dans un `.env.local` n'a rien à faire dans une couche d'image — `docker history`
+# ressort ce qu'une couche ultérieure aurait effacé.
+.env
+.env.*
+
+# Bruit local
+.DS_Store
+*.log

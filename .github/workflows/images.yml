@@ -1,0 +1,227 @@
+# ==============================================================================
+#  Construction et analyse des images de conteneur
+#
+#  POURQUOI CE WORKFLOW EXISTE
+#      Les images se construisaient uniquement à la main, sur un poste. Personne
+#      ne vérifiait qu'elles se construisent encore après une modification — et
+#      les deux pannes les plus coûteuses de ce projet ne se voyaient QUE dans
+#      une image : une dépendance non déclarée par `deepeval` qui faisait
+#      échouer le premier audit, et un affichage de chemin qui tuait le runner
+#      après une heure de travail réussi.
+#
+#      Une image qui DÉMARRE n'est pas une image qui FONCTIONNE : ce workflow
+#      exécute donc un audit réel dedans, et vérifie son score.
+#
+#  ET POURQUOI ON SCANNE
+#      Un outil de sécurité qui ne scanne pas sa propre image est indéfendable
+#      en revue. Le scan ne BLOQUE que sur les vulnérabilités corrigeables de
+#      gravité haute ou critique : bloquer sur une faille sans correctif publié
+#      arrêterait la chaîne sans qu'aucune action ne soit possible.
+# ==============================================================================
+name: Images de conteneur
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements.txt"
+      - "requirements.lock"
+      - "docker-compose.yml"
+      - "dashboard/**"
+      - ".github/workflows/images.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write      # dépôt des résultats de scan dans l'onglet Security
+
+jobs:
+  # ------------------------------------------------------------------------ #
+  # Image de l'API — construite, DÉMARRÉE, et éprouvée par un audit réel.
+  # ------------------------------------------------------------------------ #
+  api:
+    name: API — construction, exécution, scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construire l'image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true                    # charge dans le démon local pour la tester
+          tags: ai-security-framework:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Le verrou est-il à jour ?
+        # `requirements.txt` peut gagner une dépendance sans que le verrou soit
+        # régénéré. L'image se construirait quand même, avec un arbre périmé.
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w python:3.11-slim sh -c '
+            pip install -q pip-tools &&
+            pip-compile --quiet --strip-extras --output-file=/tmp/lock.check requirements.txt'
+          if ! diff -q <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/lock.check) >/dev/null 2>&1; then
+            echo "::warning::requirements.lock diverge de requirements.txt — le régénérer"
+          fi
+
+      - name: Démarrer le conteneur
+        run: |
+          docker run -d --name api-ci -p 8000:8000 ai-security-framework:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health
+
+      - name: Un audit RÉEL doit tourner dedans
+        # Le contrôle qui aurait attrapé les deux pannes de production : le
+        # profil hors ligne rend toujours 5.57, et le fichier doit atterrir sur
+        # le volume, pas dans /app.
+        run: |
+          docker exec api-ci python scripts/run_agent.py ASI_01 --profile dry_run \
+            | tee /tmp/audit.txt
+          grep -q "score=5.57" /tmp/audit.txt \
+            || { echo "::error::score de référence 5.57 non obtenu"; exit 1; }
+          docker exec api-ci sh -c \
+            'ls /var/lib/ai-security/audit_results/*.json >/dev/null' \
+            || { echo "::error::aucun résultat écrit sur le volume"; exit 1; }
+
+      - name: Les durcissements tiennent-ils ?
+        run: |
+          test "$(docker exec api-ci id -u)" = "10001" \
+            || { echo "::error::le conteneur ne tourne pas en utilisateur non privilégié"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/dvap/labs)
+          test "$code" = "404" \
+            || { echo "::error::endpoints de laboratoire ouverts (reçu $code)"; exit 1; }
+
+      - name: Scanner l'image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-framework:ci
+          format: sarif
+          output: trivy-api.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true          # une faille sans correctif ne se corrige pas
+
+      - name: Publier le rapport de scan
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-api.sarif
+          category: image-api
+
+      - name: Arrêter le conteneur
+        if: always()
+        run: docker rm -f api-ci || true
+
+  # ------------------------------------------------------------------------ #
+  # Image du dashboard — construite, démarrée, en-têtes vérifiés.
+  # ------------------------------------------------------------------------ #
+  dashboard:
+    name: Dashboard — construction, exécution, scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construire l'image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard
+          load: true
+          tags: ai-security-dashboard:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Démarrer et vérifier
+        run: |
+          docker run -d --name dash-ci -p 8080:8080 ai-security-dashboard:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/healthz
+
+          # Repli d'application monopage : un rechargement sur une route gérée
+          # côté navigateur doit rendre 200, pas le 404 de nginx.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/audits/xyz)" = "200" \
+            || { echo "::error::le repli monopage ne fonctionne pas"; exit 1; }
+
+          # Les en-têtes de sécurité ne sont PAS hérités par nginx : ils se
+          # perdent en silence dès qu'un bloc `location` pose son propre
+          # en-tête. C'est arrivé une fois, ce contrôle empêche le retour.
+          n=$(curl -sI http://localhost:8080/ \
+                | grep -icE 'x-frame-options|x-content-type-options|content-security-policy|referrer-policy')
+          test "$n" = "4" \
+            || { echo "::error::$n en-têtes de sécurité sur 4 attendus"; exit 1; }
+
+          test "$(docker exec dash-ci id -u)" = "101" \
+            || { echo "::error::nginx ne tourne pas en utilisateur non privilégié"; exit 1; }
+
+      - name: Scanner l'image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-dashboard:ci
+          format: sarif
+          output: trivy-dashboard.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Publier le rapport de scan
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-dashboard.sarif
+          category: image-dashboard
+
+      - name: Arrêter le conteneur
+        if: always()
+        run: docker rm -f dash-ci || true
+
+  # ------------------------------------------------------------------------ #
+  # La pile complète doit se lever et se parler.
+  # ------------------------------------------------------------------------ #
+  pile:
+    name: Pile complète — le dashboard joint-il l'API ?
+    runs-on: ubuntu-latest
+    needs: [api, dashboard]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lever la pile
+        run: |
+          # `env_file: .env` est obligatoire dans le compose ; en CI le fichier
+          # n'existe pas et aucun secret n'est nécessaire pour ce contrôle.
+          cp .env.example .env
+          docker compose up -d --build
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
+            sleep 3
+          done
+
+      - name: Le relais atteint-il vraiment l'API ?
+        # Le piège vérifié : avec un `proxy_pass` par variable, la barre oblique
+        # finale ne retire plus le préfixe et l'API répond 404. Le relais
+        # « fonctionne » alors sans rien servir.
+        run: |
+          curl -fsS http://localhost:8080/api/health | tee /tmp/h.json
+          grep -q '"status":"ok"' /tmp/h.json \
+            || { echo "::error::le relais /api n'atteint pas l'API"; exit 1; }
+          curl -fsS http://localhost:8080/api/agents >/dev/null \
+            || { echo "::error::/api/agents inaccessible via le relais"; exit 1; }
+
+      - name: Journaux en cas d'échec
+        if: failure()
+        run: docker compose logs --tail=60
+
+      - name: Démonter
+        if: always()
+        run: docker compose down -v || true

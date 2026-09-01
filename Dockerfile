@@ -24,7 +24,17 @@
 # --------------------------------------------------------------------------- #
 # Étage 1 — compilation des dépendances
 # --------------------------------------------------------------------------- #
-FROM python:3.11-slim AS build
+# IMAGE DE BASE ÉPINGLÉE PAR EMPREINTE
+#     `python:3.11-slim` est une étiquette MOBILE : elle change à chaque
+#     correctif Debian. Figer 168 paquets Python et laisser flotter tout le
+#     système d'exploitation serait incohérent — la moitié de la reproductibilité
+#     seulement. L'empreinte fige les deux.
+#
+#     METTRE À JOUR (à faire délibérément, pas subir) :
+#         docker pull python:3.11-slim
+#         docker inspect python:3.11-slim --format '{{index .RepoDigests 0}}'
+#     puis reporter l'empreinte ici ET rejouer la suite de tests.
+FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0 AS build
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -63,7 +73,9 @@ RUN pip install --prefix=/deps --no-deps -r requirements.lock
 # --------------------------------------------------------------------------- #
 # Étage 2 — image d'exécution
 # --------------------------------------------------------------------------- #
-FROM python:3.11-slim AS runtime
+# Même empreinte que l'étage de compilation : les deux doivent bouger ensemble,
+# sinon les bibliothèques natives ne correspondent plus aux paquets compilés.
+FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0 AS runtime
 
 # Bibliothèques natives exigées à l'EXÉCUTION par weasyprint (rendu PDF des
 # rapports). Sans elles, l'import réussit et la génération de PDF échoue au
@@ -79,6 +91,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /deps /usr/local
+
+# L'outillage pip (pip, setuptools, wheel) porte ses propres vulnérabilités : le
+# scan de l'image signalait `wheel`, `jaraco.context` et `setuptools` en HIGH,
+# tous corrigeables. Ils ne viennent pas de nos dépendances.
+#
+# ⚠️ CETTE LIGNE DOIT VENIR APRÈS LE `COPY` — jamais avant.
+#    Placée au-dessus, la copie du préfixe /deps réinstallait par-dessus la
+#    version vulnérable, et le scan continuait de signaler `setuptools`. Le
+#    correctif « fonctionnait » sans rien corriger : trouvé en rescannant, pas
+#    en relisant.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# PIP EST ENSUITE RETIRÉ DE L'IMAGE D'EXÉCUTION.
+#
+# POURQUOI
+#     1. Sécurité de surface : une image applicative n'installe rien à chaud.
+#        Laisser pip, c'est laisser à qui obtient l'exécution de code un moyen
+#        commode de télécharger la suite.
+#     2. pip EMBARQUE ses propres dépendances vendorisées (`pip/_vendor/…`), qui
+#        portent leurs propres vulnérabilités : le scan de l'image signalait
+#        `msgpack 1.1.2` alors que la version INSTALLÉE était 1.2.2. Deux jours
+#        d'investigation évités à qui lira le rapport de scan.
+#
+# `setuptools` et `wheel` restent : certaines bibliothèques les importent à
+# l'exécution (`pkg_resources`).
+RUN pip uninstall -y pip && rm -rf /usr/local/lib/python3.11/site-packages/pip*
 
 # Utilisateur non privilégié. Un outil qui attaque des systèmes ne tourne pas en
 # root : si sa cible le compromet en retour, l'escalade doit s'arrêter là.
