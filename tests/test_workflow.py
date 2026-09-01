@@ -278,6 +278,34 @@ def test_une_categorie_non_mesuree_ne_produit_aucune_plage():
     assert intervalle_global({"agents": {"ASI_01": {"measured": False, "score": 0}}}) == {}
 
 
+def test_une_categorie_non_mesuree_EST_EXCLUE_MEME_AVEC_DES_STATISTIQUES():
+    """LE cas qui compte, et que le test precedent ne voyait pas.
+
+    Un agent `measured=False` PORTE souvent des statistiques : la cible a sature
+    en cours de route, ses tests sont tombes en [HTTP_ERROR], mais le compteur
+    `scored` n'est pas nul. Le test precedent utilisait un agent SANS couches, il
+    sortait donc par « aucun test score » — jamais par le controle `measured`.
+    Retirer ce controle ne le cassait pas : un test de mutation l'a montre.
+
+    Ici l'agent a des statistiques ET `measured=False` : seul le controle
+    `measured` peut l'exclure. Sans lui, son 0 redescendrait dans le score global
+    comme une vraie mesure — la panne exacte qui avait fait afficher 72,5 au lieu
+    de 77,9.
+    """
+    from workflow.confidence import intervalle_global
+
+    def agent(score, mesure):
+        return {"score": score, "measured": mesure, "layers": {"behavioral": {
+            "raw": {"deepteam_stats": {"scored": 6, "passed": 4}}}}}
+
+    audit = {"global_score": 60.0, "agents": {
+        "ASI_01": agent(6.0, True), "ASI_09": agent(0.0, False)}}
+    iv = intervalle_global(audit)
+    assert iv["categories"] == 1, (
+        "une categorie non mesuree ne doit pas entrer dans la plage, meme "
+        "lorsqu'elle porte des statistiques")
+
+
 # --------------------------------------------------------------------------- #
 # Etude de validation : mesurer LE FRAMEWORK, pas la cible.
 # --------------------------------------------------------------------------- #

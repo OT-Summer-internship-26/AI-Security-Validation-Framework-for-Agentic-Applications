@@ -406,6 +406,58 @@ def test_un_constat_compte_deux_fois_est_resolu_pas_rejete():
     assert [g["constats"] for g in norm] == [[0, 1], [2]]
 
 
+def test_le_resume_des_juges_compte_TOUS_les_axes():
+    """Mesure reelle : DeepTeam n'avait rien trouve (5 tests, 5 resistes) donc
+    son compteur disait 0 — alors qu'un constat de l'axe MICROSOFT portait les 7
+    champs du juge et une confiance de 85. Le rapport annoncait « aucun
+    jugement » a cote d'un verdict affiche en clair, et tout le bloc de
+    fiabilite disparaissait.
+
+    Aucun test ne couvrait ce cas : un test de mutation l'a revele.
+    """
+    from judge.summary import build_judge_summary
+
+    agents = {"ASI_02": {"measured": True, "layers": {"behavioral": {"raw": {
+        # L'axe DeepTeam n'a RIEN juge : c'est le piege.
+        "deepteam_stats": {"scored": 5, "passed": 5,
+                           "judge": {"judged": 0, "fallback_disabled": 0}},
+        "microsoft_judge": {"judged": 2, "complied": 1, "refused": 1},
+    }}}, "vulnerabilities": [
+        {"title": "Payload Microsoft accepte", "severity": "High", "confidence": 85,
+         "judge_detail": {"guardrail": "aucun", "impact": "fuite", "severity": "High"}},
+    ]}}
+
+    s = build_judge_summary(agents)
+    assert s, "le bloc de fiabilite ne doit pas disparaitre"
+    assert s["judged"] >= 1, (
+        "un constat portant un verdict de juge doit etre compte, quel que soit "
+        "l'axe qui l'a produit")
+    assert s["microsoft"]["complied"] == 1
+
+
+def test_le_plan_complete_les_constats_oublies_PAR_LE_MODELE():
+    """Le test precedent appelait `_normaliser` directement : retirer son appel
+    dans `build()` ne le cassait pas. Un test de mutation l'a montre.
+
+    Celui-ci passe par `build()` avec un modele qui ne regroupe qu'une partie —
+    le cas REEL, mesure quatre fois sur `gpt-4o-mini`.
+    """
+    from judge.remediation_plan import Groupe, build
+
+    class ModelePartiel:
+        def generate(self, prompt, schema=None):
+            # Ne place QUE le premier constat : les autres doivent etre
+            # completes par le code, sinon ils ne seraient corriges par personne.
+            return schema(groupes=[Groupe(cause="c", constats=[0], action="a",
+                                          effort="rapide")]), 0.0
+
+    plan = build(_audit_deux_causes(), ModelePartiel())
+    couverts = sorted(i for g in plan["groupes"] for i in g["constats"])
+    assert couverts == [0, 1, 2], (
+        f"des constats bloquants ont disparu du plan : {couverts}")
+    assert plan["source"] == "llm"
+
+
 def test_un_constat_invente_est_rejete():
     """La seule erreur IRRECUPERABLE : un indice qui ne correspond a rien."""
     from judge.remediation_plan import Groupe, _verifier, collecter_constats

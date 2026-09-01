@@ -56,3 +56,12 @@ runs/                    # rapports .jsonl produits par garak a chaque run
 reports/                 # sorties de bandit / radon / pip-audit
 garak.log
 -p/                      # dossier ne d'un « mkdir -p » interprete par cmd.exe
+# Base d'etat des executions et des cles : elle contient des empreintes de cles
+# d'API et l'historique des audits d'un poste. Elle s'est retrouvee commitee une
+# fois par un `git add -A` — une base d'EXECUTION n'a rien a faire dans un depot.
+data/state.sqlite
+data/state.sqlite-wal
+data/state.sqlite-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

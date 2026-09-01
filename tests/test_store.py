@@ -89,6 +89,51 @@ def test_deux_ouvriers_ne_prennent_pas_le_meme_travail(magasin):
     assert magasin.prendre_run("worker-b") is None
 
 
+def test_la_condition_atomique_du_UPDATE_protege_vraiment(magasin, monkeypatch):
+    """La prise repose sur DEUX barrieres, et le sequentiel n'en eprouve qu'une.
+
+    `prendre_run` filtre d'abord par `SELECT ... WHERE status='queued'`, puis
+    verrouille par `UPDATE ... WHERE id=? AND status='queued'`. En sequentiel le
+    SELECT suffit : retirer la condition du UPDATE ne casse rien de visible.
+    Une premiere version de ce test ecrivait son PROPRE UPDATE — elle eprouvait
+    donc SQLite, pas `prendre_run`. Un test de mutation l'a montre.
+
+    C'est pourtant la seconde barriere qui compte : en concurrence, deux ouvriers
+    passent le SELECT ensemble avant que l'un des deux n'ecrive. On reproduit
+    exactement cette fenetre en forcant le SELECT a designer une execution DEJA
+    prise ; `prendre_run` doit alors rendre None, sinon l'audit tourne deux fois.
+    """
+    magasin.creer_run("run-1", REQUETE)
+    assert magasin.prendre_run("worker-a")["run_id"] == "run-1"   # elle est 'running'
+
+    vrai_conn = magasin._conn
+
+    class ConnexionQuiRejoueLaCourse:
+        """Fait voir au SELECT une execution que `worker-a` vient de prendre."""
+
+        def __init__(self, reelle):
+            self._reelle = reelle
+
+        def execute(self, sql, params=()):
+            if sql.lstrip().upper().startswith("SELECT ID FROM RUNS"):
+                # La fenetre de course : le SELECT a lu AVANT l'ecriture d'autrui.
+                return self._reelle.execute("SELECT id FROM runs WHERE id='run-1'")
+            return self._reelle.execute(sql, params)
+
+        def __getattr__(self, nom):
+            return getattr(self._reelle, nom)
+
+    monkeypatch.setattr(magasin, "_conn",
+                        lambda: ConnexionQuiRejoueLaCourse(vrai_conn()))
+
+    assert magasin.prendre_run("worker-b") is None, (
+        "sans la condition `status='queued'` dans le UPDATE, worker-b prendrait "
+        "une execution deja detenue par worker-a — l'audit tournerait deux fois")
+
+    monkeypatch.undo()
+    assert magasin.lire_run("run-1")["worker"] == "worker-a"
+
+
 def test_la_file_resiste_a_huit_ouvriers_concurrents(magasin):
     """Le sequentiel ne prouve rien ici : c'est la course qu'il faut eprouver."""
     for i in range(20):
@@ -119,10 +164,42 @@ def test_un_ouvrier_mort_ne_bloque_pas_un_audit_pour_toujours(magasin):
 
     C'est ce qui distingue une file d'une simple table.
     """
+    import time
+
     magasin.creer_run("run-1", REQUETE)
     magasin.prendre_run("worker-mort")
     assert magasin.reprendre_abandonnes(limite_s=10_000) == 0, "un vivant est laisse"
-    assert magasin.reprendre_abandonnes(limite_s=0) == 1
+
+    # LA FRONTIERE, fixee EXACTEMENT plutot que laissee au hasard de l'horloge.
+    #
+    # Une premiere version appelait `reprendre_abandonnes(limite_s=0)` : quelques
+    # microsecondes s'etant ecoulees depuis la prise, `heartbeat < seuil` etait
+    # vrai et le test passait AUSSI avec la comparaison stricte — il ne
+    # protegeait donc pas le correctif. Un test de mutation l'a montre.
+    #
+    # Ici, on pose un battement EGAL au seuil : c'est le cas que la resolution
+    # d'horloge de Windows (~15 ms) produit reellement, et le seul qui distingue
+    # `<` de `<=`.
+    fige = time.time() - 100.0
+    magasin._conn().execute("UPDATE runs SET heartbeat=? WHERE id='run-1'", (fige,))
+
+    class HorlogeFigee:
+        """Rend `time.time()` exactement egal au battement + la limite."""
+
+        @staticmethod
+        def time() -> float:
+            return fige + 100.0
+
+    vrai_time = magasin.time
+    magasin.time = HorlogeFigee                     # type: ignore[assignment]
+    try:
+        repris = magasin.reprendre_abandonnes(limite_s=100)
+    finally:
+        magasin.time = vrai_time                    # type: ignore[assignment]
+
+    assert repris == 1, (
+        "un battement EXACTEMENT au seuil est perime : avec `<` il ne l'est pas, "
+        "et le travail reste bloque pour toujours")
     assert magasin.lire_run("run-1")["status"] == "queued"
 
 
