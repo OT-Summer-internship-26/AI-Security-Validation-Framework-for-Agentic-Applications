@@ -48,3 +48,11 @@ dist/
 
 # Base de reprise LangGraph (etat local, pas un livrable)
 data/checkpoints.sqlite*
+
+# --- Artefacts d'execution et d'outillage (regenerables) -------------------
+# Ils etaient soit suivis a tort, soit deposes a la racine par un outil.
+.coverage
+runs/                    # rapports .jsonl produits par garak a chaque run
+reports/                 # sorties de bandit / radon / pip-audit
+garak.log
+-p/                      # dossier ne d'un « mkdir -p » interprete par cmd.exe
