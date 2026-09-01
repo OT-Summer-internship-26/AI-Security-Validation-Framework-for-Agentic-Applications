@@ -257,3 +257,86 @@ def test_un_role_inconnu_est_refuse_a_la_creation(magasin):
 def test_autotest_store(magasin):
     """Rejoue les 10 controles du module."""
     magasin.demo()
+
+
+# --------------------------------------------------------------------------- #
+# Fonctions que le diagnostic de couverture avait trouvees SANS aucun test.
+# --------------------------------------------------------------------------- #
+
+def test_maj_run_persiste_chaque_champ_de_suivi(magasin):
+    """`Run.__setattr__` appelle cette fonction a CHAQUE changement d'etat :
+    c'est le coeur de la persistance, et rien ne la testait.
+
+    Les listes doivent etre serialisees, sinon SQLite refuse le parametre et le
+    suivi s'arrete en silence — un audit resterait bloque a « Demarrage ».
+    """
+    magasin.creer_run("run-1", REQUETE)
+    magasin.maj_run("run-1", status="running", progress=40, stage="DeepTeam",
+                    categories=["ASI_01", "ASI_05"],
+                    result_files=["a.json", "b.json"], error=None)
+    r = magasin.lire_run("run-1")
+    assert r["status"] == "running" and r["progress"] == 40
+    assert r["categories"] == ["ASI_01", "ASI_05"], "les listes doivent revenir en LISTES"
+    assert r["result_files"] == ["a.json", "b.json"]
+
+    # Un appel sans champ ne doit pas produire de SQL invalide.
+    magasin.maj_run("run-1")
+    assert magasin.lire_run("run-1")["progress"] == 40
+
+
+def test_les_echanges_avec_la_cible_sont_persistes_et_lus_par_curseur(magasin):
+    """Le dashboard affiche les echanges EN DIRECT : ils doivent survivre au
+    processus comme le reste, et se lire de maniere incrementale."""
+    magasin.creer_run("run-1", REQUETE)
+    for i in range(4):
+        magasin.ajouter_echange("run-1", {"n": i, "prompt": f"p{i}", "response": "r"})
+    magasin.fermer()                        # « redemarrage »
+
+    r = magasin.lire_run("run-1")
+    assert r["exchange_count"] == 4
+    assert r["exchanges"][0]["prompt"] == "p0"
+    assert len(magasin.lire_run("run-1", depuis_echange=3)["exchanges"]) == 1
+
+
+def test_lister_runs_rend_les_plus_recents_sans_les_journaux(magasin):
+    """`GET /runs` sert la liste : y joindre les journaux la rendrait enorme sur
+    un audit d'une heure (des milliers de lignes par execution)."""
+    import time
+    for i in range(3):
+        magasin.creer_run(f"run-{i}", REQUETE, cree_par=f"key-{i}")
+        magasin.ajouter_log(f"run-{i}", "info", "x" * 100)
+        time.sleep(0.01)                    # horodatages distincts
+
+    runs = magasin.lister_runs()
+    assert [r["run_id"] for r in runs] == ["run-2", "run-1", "run-0"], "plus recent d'abord"
+    assert all("logs" not in r for r in runs), "la liste ne doit pas porter les journaux"
+    assert runs[0]["created_by"] == "key-2", "l'attribution reste visible dans la liste"
+    assert len(magasin.lister_runs(limite=2)) == 2
+
+
+def test_compter_actifs_voit_TOUTES_les_repliques(magasin):
+    """`/health` expose ce compteur : il doit refleter la charge REELLE du
+    service, pas seulement celle du processus qui repond."""
+    magasin.creer_run("run-1", REQUETE)     # queued
+    magasin.creer_run("run-2", REQUETE)
+    magasin.prendre_run("w1")               # -> running
+    assert magasin.compter_actifs() == 2, "queued ET running comptent comme actifs"
+
+    magasin.maj_run("run-1", status="completed")
+    magasin.maj_run("run-2", status="failed")
+    assert magasin.compter_actifs() == 0
+
+
+def test_le_chemin_de_la_base_suit_la_configuration(magasin, monkeypatch, tmp_path):
+    """En conteneur, la base doit vivre sur le VOLUME, pas sur le disque
+    ephemere. Et elle doit rester avec les resultats : une instance qui voit les
+    executions sans voir les fichiers afficherait des audits termines dont le
+    rapport est introuvable."""
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "ailleurs" / "s.sqlite"))
+    assert magasin.db_path() == (tmp_path / "ailleurs" / "s.sqlite").resolve()
+
+    monkeypatch.delenv("AUDIT_STATE_DB")
+    monkeypatch.setenv("AUDIT_DATA_DIR", str(tmp_path / "volume"))
+    from workflow.paths import results_dir
+    assert magasin.db_path().parent == results_dir().parent, (
+        "la base doit vivre avec les resultats d'audit")
