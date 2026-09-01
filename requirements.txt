@@ -12,6 +12,17 @@ langchain-community
 # Red Teaming
 deepteam
 deepeval
+
+# --- Axes comportementaux longtemps installes A LA MAIN -------------------
+# PyRIT et garak etaient absents de ce fichier : ils avaient ete installes par
+# `pip install` direct pendant le developpement. Consequence CONSTATEE en
+# lancant un audit dans l'image : « No module named 'pyrit' », la couche
+# comportementale entiere echoue et l'agent ressort `not_measured`.
+#
+# Ce sont pourtant les deux axes qui ont detecte un detournement la ou DeepTeam
+# rendait 10/10. Une image sans eux est un auditeur degrade qui ne le dit pas.
+pyrit
+garak
 # Dependance NON DECLAREE par deepeval : son code fait `import sentry_sdk` sans
 # l'inscrire dans ses metadonnees. Un environnement de developpement l'a deja
 # (une autre bibliotheque l'installe), une image construite depuis le verrou ne
