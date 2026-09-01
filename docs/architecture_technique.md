@@ -1020,24 +1020,47 @@ ne concerne qu'ASI05 et vaut 0,2 dans la pondération de cette seule catégorie.
 
 ---
 
-### 17.3 🟠 Une seule instance, sans redémarrage pendant un audit
+### 17.3 ✅ État durable et exécution hors du processus web
 
-Deux limites du même défaut : **l'état des exécutions vit en mémoire**
-(`_RUNS` dans `api/main.py`).
+**Trois défauts tenaient à la même cause : l'API EXÉCUTAIT au lieu d'orchestrer.**
+Ils sont résolus.
 
-| Conséquence | Détail |
+| Avant | Maintenant |
 |---|---|
-| Pas de mise à l'échelle horizontale | Deux répliques ne voient pas les mêmes exécutions ; `GET /runs/{id}` répond 404 une fois sur deux derrière un répartiteur |
-| Pas de redémarrage à chaud | Un déploiement ou une éviction de pod perd le suivi des audits en cours |
-| Les audits tournent dans le processus web | Un audit dure une heure dans un `threading.Thread` ; tout redémarrage le tue |
+| État dans un `dict` du processus | SQLite sur le volume partagé (`api/store.py`) |
+| Un redémarrage perdait tout le suivi | L'exécution survit à l'API, à l'ouvrier, aux deux |
+| Deux répliques ne voyaient pas les mêmes runs | Toutes lisent le même magasin |
+| Audits dans un `threading.Thread` du serveur web | Ouvrier séparé (`scripts/worker.py`) |
 
-**Les résultats déjà écrits ne sont jamais perdus** : chaque catégorie terminée
-est persistée immédiatement, et `--resume` reprend un audit interrompu. C'est le
-*suivi* qui disparaît, pas le travail.
+**L'architecture.** L'API dépose un travail dans une table et rend la main. Un
+ouvrier le prend — la prise est **atomique** (`UPDATE … WHERE status='queued'`),
+donc deux ouvriers ne peuvent pas se disputer le même audit : c'est la base qui
+l'interdit, pas une convention. L'ouvrier bat le cœur pendant l'exécution ; un
+travail sans battement depuis 15 minutes est remis en file, donc un pod évincé ne
+bloque jamais un audit.
 
-**Pour lever la contrainte** : sortir l'état vers Redis ou une base, et déplacer
-l'exécution vers une file de tâches (Celery, RQ) ou un `Job` Kubernetes. C'est un
-chantier d'industrialisation, pas un réglage.
+> **Pourquoi SQLite et pas Redis.** Redis est le choix habituel et ajoute un
+> service à déployer, superviser et sauvegarder. Or le framework monte **déjà**
+> un volume partagé pour les résultats : y poser une base ne coûte aucune
+> infrastructure nouvelle, et le mode WAL autorise plusieurs lecteurs pendant
+> qu'un écrivain travaille — exactement notre usage.
+>
+> **Plafond assumé** : SQLite sur un volume **réseau** (NFS, EFS) verrouille mal.
+> Pour quelques instances sur un volume local ou un disque bloc attaché, c'est
+> sûr et éprouvé. Au-delà, il faut PostgreSQL — et seul `api/store.py` change :
+> ni l'API ni l'ouvrier ne savent où vit la file.
+
+**Mise à l'échelle** : `docker compose up --scale worker=2`. Au-delà de deux ou
+trois ouvriers, le quota du modèle devient le goulot et rien n'est gagné.
+
+**Vérifié de bout en bout** : un travail déposé par un processus, relu par un
+deuxième après la mort du premier, exécuté par un troisième (l'ouvrier), et
+l'état final relu par un quatrième — 21 lignes de journal, fichier de résultat
+produit. Plus 8 ouvriers concurrents sur 20 travaux : aucune prise en double.
+
+`AUDIT_INLINE_WORKER=1` (défaut) fait exécuter l'API elle-même : c'est le mode
+développement, qui évite qu'une installation minimale dépose des travaux que
+personne ne prend. **Le mettre à 0 en production**, comme le fait le compose.
 
 ---
 
@@ -1061,15 +1084,47 @@ rejouer des agents dont les résultats existent déjà.
 
 ---
 
-### 17.5 🟠 Authentification insuffisante pour un usage multi-utilisateur
+### 17.5 ✅ Authentification à rôles, avec rotation et attribution
 
-`FRAMEWORK_API_KEY` est une **clé statique unique** : pas de rotation, pas de
-rôles, aucune attribution. Impossible de savoir **qui** a lancé un audit.
+Une clé statique unique n'avait ni rotation, ni rôles, ni attribution :
+impossible de savoir **qui** avait lancé un audit contre un système interne.
+Pour un outil capable d'attaquer, ce n'est pas optionnel.
 
-Pour un outil capable d'attaquer des systèmes internes, la traçabilité de
-l'appelant n'est pas optionnelle. Placer le service derrière la passerelle
-d'API de l'entreprise (OIDC, jetons par utilisateur, journal d'accès) est le
-minimum avant un usage partagé.
+**Les clés vivent dans le magasin, hachées.** La clé en clair n'est affichée
+qu'à sa création — seule son empreinte est conservée, donc une base compromise
+ne rend aucune clé utilisable.
+
+| Rôle | Peut |
+|---|---|
+| `viewer` | lire les audits et les rapports |
+| `operator` | lancer et annuler des audits |
+| `admin` | gérer les clés |
+
+Les rôles se comparent par **niveau**, jamais par égalité de nom : ajouter un
+rôle intermédiaire ne demande de modifier aucun point de contrôle.
+
+```bash
+# Créer une clé d'opérateur valable 90 jours
+curl -X POST http://api:8000/keys -H "X-API-Key: $ADMIN" \\
+     -d '{"name":"equipe secu","role":"operator","expires_in_days":90}'
+
+curl http://api:8000/keys       -H "X-API-Key: $ADMIN"   # inventaire, sans les clés
+curl -X DELETE .../keys/key-abc -H "X-API-Key: $ADMIN"   # révocation immédiate
+```
+
+**Chaque exécution enregistre l'identifiant de la clé qui l'a lancée**
+(`created_by`), visible dans `GET /runs`.
+
+`FRAMEWORK_API_KEY` reste acceptée comme **clé d'amorçage** de niveau admin : il
+faut bien une première clé pour en créer d'autres, et la retirer d'un coup
+casserait toute installation existante. Sa comparaison utilise
+`secrets.compare_digest` — une comparaison naïve fuit la longueur du préfixe
+correct par son temps d'exécution.
+
+> **Reste à faire pour un usage multi-utilisateur large** : déléguer à la
+> passerelle d'API de l'entreprise (OIDC, jetons par personne). Le mécanisme
+> actuel trace la CLÉ, pas la personne derrière — suffisant pour une équipe qui
+> se partage des clés nommées, insuffisant pour un audit de conformité nominatif.
 
 **Les endpoints de lecture restent volontairement ouverts** : une sonde de
 supervision n'a pas de clé, et protéger `/health` rendrait le service
@@ -1181,15 +1236,17 @@ cet appel lève `ValueError` **après un audit d'une heure réussi**. Le fichier
 | Image Docker + volume | Un déploiement possible | ✅ fait — **image construite et démarrée**, 1,28 Go |
 | Chemins configurables | Persistance des résultats | ✅ fait |
 | Endpoints de laboratoire fermés | Surface d'attaque réduite | ✅ fait |
+| État partagé et durable | Redémarrages et mise à l'échelle | ✅ fait — SQLite sur volume |
+| File de tâches et ouvrier séparé | Audits qui survivent aux déploiements | ✅ fait — prise atomique vérifiée |
+| Clés à rôles, rotation, attribution | Usage multi-utilisateur tracé | ✅ fait |
 | Décision sur la résidence des données | **L'autorisation d'auditer du réel** | Décision, pas code |
-| État partagé (Redis) | Redémarrages et mise à l'échelle | ~2 jours |
-| File de tâches | Audits qui survivent aux déploiements | ~3 jours |
-| Passerelle d'API (OIDC) | Usage multi-utilisateur tracé | ~2 jours |
+| Passerelle d'API (OIDC) | Traçabilité NOMINATIVE | ~2 jours |
 | Exécuteur isolé (gVisor / nœud dédié) | Couche dynamique en cluster | Décision d'infrastructure |
 
-Les quatre premières lignes suffisent à un déploiement **interne, mono-instance,
-opéré par une équipe qui connaît ces contraintes**. Les quatre suivantes sont
-nécessaires pour en faire un service que l'entreprise exploite sans son auteur.
+Il ne reste que **deux lignes**, et la première n'est pas du code : c'est
+l'autorisation d'envoyer des données réelles à un fournisseur tiers. La seconde
+ne concerne que les organisations exigeant une traçabilité NOMINATIVE — le
+mécanisme actuel trace la clé, pas la personne derrière.
 
 ---
 

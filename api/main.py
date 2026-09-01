@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import urllib.parse
 import re
 import subprocess
@@ -56,6 +57,13 @@ RESULTS_DIR = results_dir()
 from api.logging_config import configurer as _configurer_journal
 
 LOG_FORMAT = _configurer_journal()
+
+# Magasin durable : etat des executions et cles d'API, sur le volume partage.
+# Initialise a l'import : l'API et l'ouvrier partagent le meme schema, et
+# chacun peut demarrer en premier.
+from api import store
+
+store.init()
 REPLAYS_DIR = ROOT / "data" / "replays"
 RUNNER = ROOT / "scripts" / "run_agent.py"
 
@@ -136,64 +144,110 @@ class AuditRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════
 
 class Run:
-    """Une exécution d'audit : sous-processus + journal + progression."""
+    """Une exécution d'audit, ADOSSÉE AU MAGASIN DURABLE.
 
-    def __init__(self, run_id: str, req: AuditRequest) -> None:
+    POURQUOI CE N'EST PLUS UN OBJET EN MÉMOIRE
+        L'état vivait dans un dictionnaire du processus web. Un redémarrage
+        perdait le suivi de tous les audits en cours, et deux répliques ne
+        voyaient pas les mêmes exécutions — `GET /runs/{id}` répondait 404 une
+        fois sur deux derrière un répartiteur.
+
+        Chaque écriture va désormais dans `api/store.py` (SQLite sur le volume
+        partagé). L'INTERFACE ne change pas — `log`, `add_exchange`, `status`,
+        `progress` — de sorte que `_execute` n'a pas bougé d'une ligne : le
+        dupliquer aurait créé deux comportements d'audit divergents, le défaut
+        qui a déjà coûté deux runners incompatibles.
+    """
+
+    def __init__(self, run_id: str, req: AuditRequest, *, cree_par: str = "",
+                 persister: bool = True) -> None:
+        # Posé AVANT tout le reste : `__setattr__` le consulte à chaque
+        # affectation, et les lignes qui suivent en déclenchent.
+        object.__setattr__(self, "_persiste", False)
         self.id = run_id
         self.request = req
         self.status = "queued"       # queued | running | completed | failed | cancelled
         self.progress = 0
         self.stage = "En file d'attente"
-        self.logs: list[dict[str, str]] = []
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.finished_at: str | None = None
         self.result_file: str | None = None
         self.error: str | None = None
         self.proc: subprocess.Popen[str] | None = None
-        # Échanges avec la cible, captés EN DIRECT pendant l'exécution.
-        self.exchanges: list[dict[str, Any]] = []
         self.categories: list[str] | None = None
         self.result_files: list[str] | None = None
+        self.created_by = cree_par
         self._lock = threading.Lock()
+        if persister:
+            store.creer_run(run_id, req.model_dump(), cree_par)
+        object.__setattr__(self, "_persiste", True)
+
+    @classmethod
+    def depuis_magasin(cls, travail: dict[str, Any]) -> "Run":
+        """Reconstruit une exécution PRISE dans la file, sans la recréer."""
+        run = cls(travail["run_id"], AuditRequest(**travail["request"]),
+                  cree_par=travail.get("created_by", ""), persister=False)
+        object.__setattr__(run, "status", travail["status"])
+        object.__setattr__(run, "started_at", travail["started_at"])
+        return run
+
+    def __setattr__(self, nom: str, valeur: Any) -> None:
+        """Persiste les champs de suivi dès qu'ils changent.
+
+        Intercepter l'affectation plutôt que semer des appels partout : c'est ce
+        qui garantit qu'une étape ajoutée demain à `_execute` sera persistée sans
+        que personne n'y pense — le genre d'oubli qui ne se voit qu'en
+        production, quand un audit reste bloqué à « Démarrage ».
+        """
+        object.__setattr__(self, nom, valeur)
+        if nom in _CHAMPS_PERSISTES and getattr(self, "_persiste", False):
+            try:
+                store.maj_run(self.id, **{nom: valeur})
+            except Exception as exc:        # le suivi ne fait jamais échouer l'audit
+                logger.debug("suivi non persisté (%s) : %s", nom, exc)
 
     def log(self, level: str, text: str) -> None:
-        with self._lock:
-            self.logs.append({
-                "t": datetime.now(timezone.utc).isoformat(),
-                "level": level, "text": text,
-            })
-            if len(self.logs) > 2000:      # borne mémoire
-                self.logs = self.logs[-1500:]
+        try:
+            store.ajouter_log(self.id, level, text)
+        except Exception as exc:
+            logger.debug("journal non persisté : %s", exc)
 
     def add_exchange(self, entry: dict[str, Any]) -> None:
-        with self._lock:
-            self.exchanges.append(entry)
-            if len(self.exchanges) > 600:
-                self.exchanges = self.exchanges[-500:]
+        try:
+            store.ajouter_echange(self.id, entry)
+        except Exception as exc:
+            logger.debug("échange non persisté : %s", exc)
 
     def snapshot(self, since: int = 0, since_ex: int = 0) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "run_id": self.id,
-                "status": self.status,
-                "progress": self.progress,
-                "stage": self.stage,
-                "started_at": self.started_at,
-                "finished_at": self.finished_at,
-                "result_file": self.result_file,
-                "error": self.error,
-                "request": self.request.model_dump(),
-                "logs": self.logs[since:],
-                "log_count": len(self.logs),
-                "exchanges": self.exchanges[since_ex:],
-                "exchange_count": len(self.exchanges),
-                "categories": getattr(self, "categories", None),
-                "result_files": getattr(self, "result_files", None),
-            }
+        etat = store.lire_run(self.id, since, since_ex)
+        if etat is not None:
+            return etat
+        # Repli : une exécution absente du magasin (base effacée) ne doit pas
+        # faire disparaître le suivi en cours.
+        return {"run_id": self.id, "status": self.status, "progress": self.progress,
+                "stage": self.stage, "started_at": self.started_at,
+                "finished_at": self.finished_at, "result_file": self.result_file,
+                "error": self.error, "request": self.request.model_dump(),
+                "logs": [], "log_count": 0, "exchanges": [], "exchange_count": 0,
+                "categories": self.categories, "result_files": self.result_files}
 
 
-_RUNS: dict[str, Run] = {}
-_RUNS_LOCK = threading.Lock()
+# Rejeux en cours : ils durent quelques minutes et restent dans ce processus.
+# Les faire passer par la file ajouterait un second type de travail pour un
+# gain nul.
+_REJEUX: dict[str, "Run"] = {}
+
+# Sans ouvrier deploye, l'API execute elle-meme. Mettre a 0 en production, ou
+# les audits doivent survivre au redemarrage du serveur web.
+EXECUTE_EN_PROCESSUS = os.environ.get(
+    "AUDIT_INLINE_WORKER", "1").strip().lower() in ("1", "true", "yes", "on")
+
+# Champs dont toute modification doit atteindre le magasin. `_execute` les écrit
+# directement (`run.progress = 40`) sans savoir qu'ils sont persistés.
+_CHAMPS_PERSISTES = frozenset({
+    "status", "progress", "stage", "finished_at", "result_file",
+    "result_files", "categories", "error",
+})
 
 
 # Étapes reconnues dans la sortie du runner → progression affichable.
@@ -543,11 +597,57 @@ def _execute_many(run: Run, cats: list[str]) -> None:
 #  Utilitaires
 # ══════════════════════════════════════════════════════════════════════
 
+def _identifier(x_api_key: str | None, minimum: str = "operator") -> dict[str, Any]:
+    """Identifie l'appelant et vérifie son niveau. Renvoie son identité.
+
+    POURQUOI CE N'EST PLUS UNE COMPARAISON DE CHAÎNE
+        Une clé statique unique en variable d'environnement n'a ni rotation, ni
+        rôles, ni attribution : impossible de savoir QUI a lancé un audit contre
+        un système interne. Pour un outil capable d'attaquer, la traçabilité de
+        l'appelant n'est pas optionnelle.
+
+        Les clés vivent maintenant dans le magasin, HACHÉES, avec un nom, un
+        rôle et une date d'expiration. Chaque exécution enregistre l'identifiant
+        de la clé qui l'a lancée.
+
+    TROIS RÔLES, comparés par NIVEAU et non par égalité de nom :
+        viewer    lecture seule
+        operator  lance et annule des audits
+        admin     gère les clés
+
+    COMPATIBILITÉ : `FRAMEWORK_API_KEY` reste acceptée comme clé d'amorçage de
+    niveau admin. La retirer d'un coup casserait toute installation existante —
+    et il faut bien une première clé pour en créer d'autres.
+    """
+    fourni = (x_api_key or "").strip()
+
+    # 1. Clé d'amorçage. `compare_digest` : une comparaison naïve fuit la
+    #    longueur du préfixe correct par son temps d'exécution.
+    amorce = os.environ.get("FRAMEWORK_API_KEY", "").strip()
+    if amorce and fourni and secrets.compare_digest(fourni, amorce):
+        return {"id": "bootstrap", "name": "clé d'amorçage", "role": "admin"}
+
+    # 2. Clés du magasin.
+    identite = store.verifier_cle(fourni) if fourni else None
+    if identite is not None:
+        if not store.role_suffisant(identite["role"], minimum):
+            raise HTTPException(
+                status_code=403,
+                detail=f"rôle « {identite['role'] } » insuffisant (requis : {minimum})")
+        return identite
+
+    # 3. Aucune clé configurée nulle part : service ouvert, comme avant.
+    #    C'est le mode développement — et le refuser empêcherait de démarrer un
+    #    service neuf, dont le magasin est forcément vide.
+    if not amorce and not store.lister_cles():
+        return {"id": "", "name": "anonyme", "role": "admin"}
+
+    raise HTTPException(status_code=401, detail="X-API-Key invalide ou manquant")
+
+
 def _check_api_key(x_api_key: str | None) -> None:
-    """Clé exigée UNIQUEMENT si `FRAMEWORK_API_KEY` est configurée."""
-    expected = os.environ.get("FRAMEWORK_API_KEY", "").strip()
-    if expected and x_api_key != expected:
-        raise HTTPException(status_code=401, detail="X-API-Key invalide ou manquant")
+    """Compatibilité : vérifie sans exploiter l'identité renvoyée."""
+    _identifier(x_api_key)
 
 
 def _read_results() -> list[dict[str, Any]]:
@@ -586,9 +686,55 @@ def health() -> dict[str, Any]:
     services["gemini_key"] = bool(os.environ.get("GEMINI_API_KEY", "").strip())
     services["results_dir"] = RESULTS_DIR.exists()
     services["runner"] = RUNNER.exists()
-    with _RUNS_LOCK:
-        services["active_runs"] = sum(1 for r in _RUNS.values() if r.status == "running")
+    # Compte les executions de TOUTES les repliques, pas seulement celles de
+    # ce processus : c'est la charge reelle du service.
+    services["active_runs"] = store.compter_actifs()
     return {"status": "ok", "version": app.version, "services": services}
+
+
+class NewKeyRequest(BaseModel):
+    """Creation d'une cle d'API."""
+
+    name: str = Field(description="A qui ou a quoi cette cle est destinee")
+    role: str = Field(default="operator", description="viewer | operator | admin")
+    expires_in_days: int | None = Field(
+        default=None, description="Expiration. Sans elle, la cle vaut pour toujours.")
+
+
+@app.post("/keys")
+def create_key(req: NewKeyRequest,
+               x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Cree une cle d'API. Reserve aux administrateurs.
+
+    La cle en clair n'est renvoyee QU'ICI : seule son empreinte est conservee.
+    La perdre oblige a en creer une autre — c'est le prix de ne pas stocker un
+    secret rejouable.
+    """
+    _identifier(x_api_key, minimum="admin")
+    try:
+        ident, cle = store.creer_cle(req.name, req.role, req.expires_in_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"id": ident, "key": cle, "role": req.role,
+            "avertissement": "Cette cle ne sera plus jamais affichee."}
+
+
+@app.get("/keys")
+def list_keys(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Inventaire des cles, SANS leur empreinte : un inventaire ne divulgue rien."""
+    _identifier(x_api_key, minimum="admin")
+    return {"keys": store.lister_cles()}
+
+
+@app.delete("/keys/{key_id}")
+def revoke_key(key_id: str,
+               x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Revoque une cle. C'est ce qui rend la rotation possible : sans revocation,
+    une cle distribuee une fois vaut pour toujours."""
+    _identifier(x_api_key, minimum="admin")
+    if not store.revoquer_cle(key_id):
+        raise HTTPException(status_code=404, detail="Cle inconnue ou deja revoquee")
+    return {"id": key_id, "revoked": True}
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
@@ -682,7 +828,7 @@ def get_audit_report(audit_id: str) -> Any:
 @app.post("/audits")
 def create_audit(req: AuditRequest, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """LANCE un audit réel en tâche de fond et retourne son `run_id`."""
-    _check_api_key(x_api_key)
+    identite = _identifier(x_api_key, minimum="operator")
     if not RUNNER.exists():
         raise HTTPException(status_code=500, detail="scripts/run_agent.py introuvable")
 
@@ -701,10 +847,23 @@ def create_audit(req: AuditRequest, x_api_key: str | None = Header(default=None)
         )
 
     run_id = f"run-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
-    run = Run(run_id, req)
-    with _RUNS_LOCK:
-        _RUNS[run_id] = run
-    threading.Thread(target=_execute, args=(run,), daemon=True).start()
+    Run(run_id, req, cree_par=identite.get("id", ""))
+
+    # L'API DEPOSE, elle n'execute plus. Un ouvrier separe prendra le travail.
+    #
+    # POURQUOI CE CHANGEMENT
+    #     L'audit vivait dans un `threading.Thread` du serveur web : un audit
+    #     d'une heure mourait au moindre redeploiement. Desormais l'API rend la
+    #     main immediatement et l'execution survit a son redemarrage.
+    #
+    # REPLI MONO-PROCESSUS : sans ouvrier deploye, l'API execute elle-meme —
+    # c'est le mode developpement, et il evite qu'une installation minimale
+    # depose des travaux que personne ne prend jamais.
+    if EXECUTE_EN_PROCESSUS:
+        travail = store.prendre_run("api-inline")
+        if travail is not None:
+            threading.Thread(target=_execute, args=(Run.depuis_magasin(travail),),
+                             daemon=True).start()
     return {"run_id": run_id, "status": "queued"}
 
 
@@ -760,8 +919,9 @@ def create_replay(req: ReplayRequest, x_api_key: str | None = Header(default=Non
     ))
     run.kind = "replay"                       # type: ignore[attr-defined]
     run.source_audit = source.get("_file")    # type: ignore[attr-defined]
-    with _RUNS_LOCK:
-        _RUNS[run_id] = run
+    # Le rejeu dure quelques minutes, pas une heure : il reste en processus.
+    # Le sortir n'apporterait rien et ajouterait un type de travail a la file.
+    _REJEUX[run_id] = run
 
     threading.Thread(
         target=_execute_replay,
@@ -1095,14 +1255,13 @@ def dvap_launch(req: LaunchLabRequest,
 @app.get("/runs")
 def list_runs() -> dict[str, Any]:
     """Toutes les exécutions, en cours ou terminées (sans les journaux)."""
-    with _RUNS_LOCK:
-        runs = list(_RUNS.values())
-    return {
-        "runs": [
-            {k: v for k, v in r.snapshot().items() if k != "logs"}
-            for r in sorted(runs, key=lambda r: r.started_at, reverse=True)
-        ]
-    }
+    # Lues dans le MAGASIN : elles survivent au redemarrage, et toutes les
+    # repliques voient les memes. Les rejeux, eux, vivent en processus.
+    runs = store.lister_runs()
+    rejeux = [{k: v for k, v in r.snapshot().items() if k != "logs"}
+              for r in _REJEUX.values()]
+    return {"runs": sorted(runs + rejeux,
+                           key=lambda r: r.get("started_at") or "", reverse=True)}
 
 
 @app.get("/runs/{run_id}")
@@ -1113,14 +1272,16 @@ def get_run(run_id: str, since: int = 0, since_ex: int = 0) -> dict[str, Any]:
     depuis le dernier appel — le dashboard interroge toutes les 1,5 s sans
     retransférer l'historique complet à chaque fois.
     """
-    run = _RUNS.get(run_id)
-    if run is None:
+    run = _REJEUX.get(run_id)
+    snap = run.snapshot(since=since, since_ex=since_ex) if run is not None \
+        else store.lire_run(run_id, since, since_ex)
+    if snap is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
-    snap = run.snapshot(since=since, since_ex=since_ex)
-    if getattr(run, "replay_result", None) is not None:
+    if run is not None and getattr(run, "replay_result", None) is not None:
         snap["replay"] = run.replay_result           # type: ignore[attr-defined]
-    if run.status == "completed" and run.result_file:
-        path = (REPLAYS_DIR if getattr(run, "kind", "") == "replay" else RESULTS_DIR) / run.result_file
+    if snap["status"] == "completed" and snap.get("result_file"):
+        est_rejeu = run is not None and getattr(run, "kind", "") == "replay"
+        path = (REPLAYS_DIR if est_rejeu else RESULTS_DIR) / snap["result_file"]
         if path.exists():
             try:
                 snap["result"] = json.loads(path.read_text(encoding="utf-8"))
@@ -1133,11 +1294,18 @@ def get_run(run_id: str, since: int = 0, since_ex: int = 0) -> dict[str, Any]:
 def cancel_run(run_id: str, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Annule une exécution en cours."""
     _check_api_key(x_api_key)
-    run = _RUNS.get(run_id)
-    if run is None:
+    run = _REJEUX.get(run_id)
+    etat = run.snapshot() if run is not None else store.lire_run(run_id)
+    if etat is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
-    if run.status != "running":
-        return {"run_id": run_id, "status": run.status, "detail": "déjà terminée"}
+    if etat["status"] != "running":
+        return {"run_id": run_id, "status": etat["status"], "detail": "déjà terminée"}
+    if run is None:
+        # L'execution tourne peut-etre dans un AUTRE processus : on marque
+        # l'intention dans le magasin, l'ouvrier la verra a son prochain
+        # battement. Tuer un sous-processus qu'on ne detient pas est impossible.
+        store.maj_run(run_id, status="cancelled", stage="Annulation demandée")
+        return {"run_id": run_id, "status": "cancelled"}
     run.status = "cancelled"
     if run.proc and run.proc.poll() is None:
         run.proc.terminate()

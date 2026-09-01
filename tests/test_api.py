@@ -280,3 +280,113 @@ def test_autotest_journal_structure():
         demo()
     finally:
         configurer(force_json=False)
+
+
+# --------------------------------------------------------------------------- #
+# Authentification a roles : rotation, niveaux, attribution.
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture()
+def client_admin(monkeypatch, tmp_path):
+    """Application avec un magasin neuf et une cle d'amorcage admin."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "auth.sqlite"))
+    monkeypatch.setenv("FRAMEWORK_API_KEY", "amorce-admin")
+    import api.main as main
+    from api import store
+
+    store.fermer()
+    store.init()
+    monkeypatch.setattr(main, "_execute", lambda run: None)
+    yield TestClient(main.app)
+    store.fermer()
+
+
+def test_une_cle_creee_permet_de_lancer_un_audit(client_admin):
+    """Le cycle complet : un admin cree une cle d'operateur, qui lance un audit."""
+    r = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                          json={"name": "equipe secu", "role": "operator"})
+    assert r.status_code == 200
+    cle = r.json()["key"]
+    assert cle.startswith("aisec_")
+
+    lance = client_admin.post("/audits", headers={"X-API-Key": cle},
+                              json={"mode": "targeted", "category": "ASI_01",
+                                    "target_url": "http://cible/chat"})
+    assert lance.status_code == 200 and lance.json().get("run_id")
+
+
+def test_un_viewer_ne_peut_pas_lancer_d_audit(client_admin):
+    """Les roles se comparent par NIVEAU : lire n'autorise pas a attaquer."""
+    cle = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                            json={"name": "lecteur", "role": "viewer"}).json()["key"]
+    r = client_admin.post("/audits", headers={"X-API-Key": cle},
+                          json={"mode": "targeted", "category": "ASI_01",
+                                "target_url": "http://cible/chat"})
+    assert r.status_code == 403, "un viewer doit etre refuse, pas accepte"
+
+
+def test_un_operateur_ne_peut_pas_gerer_les_cles(client_admin):
+    """Lancer des audits n'autorise pas a s'octroyer des droits."""
+    cle = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                            json={"name": "op", "role": "operator"}).json()["key"]
+    assert client_admin.get("/keys", headers={"X-API-Key": cle}).status_code == 403
+    assert client_admin.post("/keys", headers={"X-API-Key": cle},
+                             json={"name": "x", "role": "admin"}).status_code == 403
+
+
+def test_une_cle_revoquee_ne_lance_plus_rien(client_admin):
+    """LA rotation. Sans revocation, une cle distribuee une fois vaut pour
+    toujours — et rien ne signale qu'elle circule encore."""
+    cree = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                             json={"name": "temporaire"}).json()
+    corps = {"mode": "targeted", "category": "ASI_01", "target_url": "http://c/chat"}
+    assert client_admin.post("/audits", headers={"X-API-Key": cree["key"]},
+                             json=corps).status_code == 200
+
+    assert client_admin.delete(f"/keys/{cree['id']}",
+                               headers={"X-API-Key": "amorce-admin"}).status_code == 200
+    assert client_admin.post("/audits", headers={"X-API-Key": cree["key"]},
+                             json=corps).status_code == 401
+
+
+def test_l_inventaire_des_cles_ne_divulgue_aucune_cle(client_admin):
+    """Seule l'empreinte est conservee : un inventaire ne doit rien rendre."""
+    cle = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                            json={"name": "secrete"}).json()["key"]
+    inventaire = client_admin.get("/keys", headers={"X-API-Key": "amorce-admin"})
+    assert inventaire.status_code == 200
+    assert cle not in inventaire.text
+
+
+def test_un_audit_enregistre_QUI_l_a_lance(client_admin):
+    """Pour un outil capable d'attaquer des systemes internes, la tracabilite de
+    l'appelant n'est pas optionnelle."""
+    from api import store
+
+    cree = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                             json={"name": "equipe A"}).json()
+    run_id = client_admin.post("/audits", headers={"X-API-Key": cree["key"]},
+                               json={"mode": "targeted", "category": "ASI_01",
+                                     "target_url": "http://c/chat"}).json()["run_id"]
+    assert store.lire_run(run_id)["created_by"] == cree["id"]
+
+
+def test_un_role_inconnu_est_refuse_avec_400(client_admin):
+    r = client_admin.post("/keys", headers={"X-API-Key": "amorce-admin"},
+                          json={"name": "x", "role": "superadmin"})
+    assert r.status_code == 400
+
+
+def test_le_suivi_d_execution_survit_a_un_nouvel_objet_api(client_admin):
+    """La preuve de la persistance vue de l'API : l'execution se relit dans le
+    magasin, sans qu'aucun objet Python ne la detienne."""
+    from api import store
+
+    run_id = client_admin.post("/audits", headers={"X-API-Key": "amorce-admin"},
+                               json={"mode": "targeted", "category": "ASI_01",
+                                     "target_url": "http://c/chat"}).json()["run_id"]
+    store.fermer()                          # « redemarrage » : plus rien en memoire
+    r = client_admin.get(f"/runs/{run_id}")
+    assert r.status_code == 200 and r.json()["run_id"] == run_id

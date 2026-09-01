@@ -42,13 +42,16 @@ services:
       # La gestion des laboratoires d'entraînement démarre des conteneurs sur
       # l'hôte : elle reste FERMÉE hors poste de développement jetable.
       ENABLE_LAB_MANAGEMENT: "0"
+      # L'API DEPOSE, l'ouvrier EXECUTE. A 1, l'API executerait elle-meme et un
+      # redeploiement tuerait les audits en cours — c'est le mode developpement.
+      AUDIT_INLINE_WORKER: "0"
     volumes:
       - audit_data:/var/lib/ai-security
 
-    # ⚠️ UNE SEULE INSTANCE. L'état des exécutions vit en mémoire du processus
-    #    (`_RUNS` dans api/main.py) : deux répliques ne verraient pas les mêmes
-    #    exécutions et `GET /runs/{id}` répondrait 404 une fois sur deux.
-    #    Passer à l'échelle exige d'abord un état partagé — chantier identifié.
+    # L'état vit désormais dans SQLite sur le volume partagé (`api/store.py`) :
+    # plusieurs répliques voient les mêmes exécutions, et un redémarrage ne perd
+    # plus rien. Le plafond restant est celui de SQLite sur volume RÉSEAU, qui
+    # verrouille mal — voir « Contraintes de déploiement » dans la doc technique.
     deploy:
       replicas: 1
 
@@ -62,6 +65,38 @@ services:
 
     restart: unless-stopped
     networks: [ai_security]
+
+  # L'OUVRIER — c'est lui qui execute les audits, pas l'API.
+  #
+  # POURQUOI UN SERVICE SEPARE
+  #     Un audit dure une heure. Tant qu'il vivait dans un fil du serveur web,
+  #     le moindre redeploiement le tuait. Ici, redemarrer l'API n'interrompt
+  #     rien, et redemarrer l'ouvrier remet son travail en file — il est repris.
+  #
+  # MISE A L'ECHELLE : `--scale worker=2` suffit, la prise de travail est
+  #     atomique. Au-dela de deux ou trois, le quota du modele devient le goulot
+  #     et rien n'est gagne.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-security-framework:latest
+    command: ["python", "scripts/worker.py"]
+    env_file:
+      - .env
+    environment:
+      AUDIT_DATA_DIR: /var/lib/ai-security
+      ENABLE_LAB_MANAGEMENT: "0"
+    volumes:
+      # MEME volume que l'API : c'est par lui que passent la file, l'etat des
+      # executions et les fichiers de resultat. Les separer ferait voir a l'API
+      # des audits termines dont le rapport serait introuvable.
+      - audit_data:/var/lib/ai-security
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [ai_security]
+    restart: unless-stopped
 
   dashboard:
     build:
