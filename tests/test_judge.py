@@ -376,27 +376,42 @@ def test_autotest_remediation_plan():
     demo()
 
 
-def test_un_constat_bloquant_oublie_invalide_tout_le_plan():
-    """LE cas le plus grave : un plan incomplet a l'air complet.
+def test_aucun_constat_bloquant_ne_peut_disparaitre_du_plan():
+    """LA garantie : un plan incomplet aurait l'air complet.
 
     Si un constat critique n'apparait dans aucun groupe, personne ne le corrige —
     et rien dans le rapport ne le signale. C'est un faux sentiment de couverture,
     la meme famille de defaut que le faux score rassurant.
+
+    Elle est tenue par le CODE, pas demandee au modele : affecter 33 constats a
+    des groupes disjoints ET exhaustifs est une contrainte combinatoire, mesuree
+    hors de portee d'un petit modele (4 tentatives, 4 echecs sur l'audit reel).
     """
-    from judge.remediation_plan import Groupe, _verifier, collecter_constats
+    from judge.remediation_plan import _normaliser, collecter_constats
     c = collecter_constats(_audit_deux_causes())
-    partiel = [Groupe(cause="x", constats=[0], action="a", effort="rapide")]
-    assert "absent" in (_verifier(partiel, c) or "")
+    partiel = [{"cause": "x", "constats": [0], "action": "a", "effort": "rapide"}]
+    norm = _normaliser(partiel, c)
+    assert sorted(i for g in norm for i in g["constats"]) == [0, 1, 2]
+    assert all(g.get("isole") for g in norm[1:]), "les ajouts du code sont marques"
 
 
-def test_un_constat_invente_ou_compte_deux_fois_est_rejete():
+def test_un_constat_compte_deux_fois_est_resolu_pas_rejete():
+    """Le double-compte fausserait le classement — un groupe paraitrait fermer
+    plus de constats qu'il n'en ferme. Il reste dans son PREMIER groupe."""
+    from judge.remediation_plan import _normaliser, collecter_constats
+    c = collecter_constats(_audit_deux_causes())
+    norm = _normaliser([
+        {"cause": "x", "constats": [0, 1], "action": "a", "effort": "rapide"},
+        {"cause": "y", "constats": [1, 2], "action": "b", "effort": "rapide"}], c)
+    assert [g["constats"] for g in norm] == [[0, 1], [2]]
+
+
+def test_un_constat_invente_est_rejete():
+    """La seule erreur IRRECUPERABLE : un indice qui ne correspond a rien."""
     from judge.remediation_plan import Groupe, _verifier, collecter_constats
     c = collecter_constats(_audit_deux_causes())
     assert "n'existe pas" in (_verifier(
         [Groupe(cause="x", constats=[0, 1, 2, 42], action="a", effort="rapide")], c) or "")
-    assert "deux groupes" in (_verifier([
-        Groupe(cause="x", constats=[0, 1], action="a", effort="rapide"),
-        Groupe(cause="y", constats=[1, 2], action="b", effort="rapide")], c) or "")
 
 
 def test_la_priorite_est_calculee_et_non_choisie_par_le_modele():

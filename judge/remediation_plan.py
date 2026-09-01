@@ -212,7 +212,8 @@ def _verifier(groupes: list[Groupe], constats: list[dict[str, Any]]) -> str | No
     if not groupes:
         return "aucun groupe produit"
     if len(groupes) > MAX_GROUPES:
-        return f"{len(groupes)} groupes : ce n'est plus un plan mais une seconde liste"
+        return (f"{len(groupes)} groupes proposés : au-delà de {MAX_GROUPES}, le "
+                "modèle n'a pas regroupé, il a recopié la liste")
 
     valides = set(range(len(constats)))
     vus: set[int] = set()
@@ -224,21 +225,64 @@ def _verifier(groupes: list[Groupe], constats: list[dict[str, Any]]) -> str | No
         for i in g.constats:
             if i not in valides:
                 return f"cite le constat {i}, qui n'existe pas"
-            if i in vus:
-                return f"le constat {i} apparaît dans deux groupes"
             vus.add(i)
 
-    # AUCUN constat bloquant ne doit rester hors du plan.
-    manquants = valides - vus
-    if manquants:
-        titres = ", ".join(constats[i]["titre"][:40] for i in sorted(manquants)[:3])
-        return f"{len(manquants)} constat(s) bloquant(s) absent(s) du plan : {titres}"
+    # Un constat NON RATTACHÉ n'est pas une erreur du modèle : c'est le code qui
+    # le complète (voir `_completer`). Exiger une couverture exhaustive en un
+    # seul appel s'est révélé hors de portée — sur 33 constats réels, deux
+    # tentatives ont échoué, l'une en doublant un constat, l'autre en en
+    # oubliant deux. Le repli déterministe rendait alors 19 actions au lieu de 5,
+    # c'est-à-dire perdait tout le bénéfice du regroupement pour une étourderie.
+    #
+    # RÉPARTITION DES RÔLES : le modèle fait ce qu'il sait faire — reconnaître
+    # des causes communes — et le code garantit ce qu'il sait garantir : que rien
+    # ne se perde.
     return None
 
 
 # --------------------------------------------------------------------------- #
 # Le prompt.
 # --------------------------------------------------------------------------- #
+
+def _normaliser(groupes: list[dict[str, Any]],
+                constats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rend exploitable un regroupement approximatif : dédoublonne, puis complète.
+
+    POURQUOI LE CODE FAIT CE TRAVAIL, ET NON LE MODÈLE
+        Affecter 33 constats à des groupes disjoints ET exhaustifs est une
+        contrainte combinatoire, pas une tâche sémantique. Mesuré sur l'audit
+        réel : quatre tentatives de `gpt-4o-mini`, quatre échecs — un constat
+        doublé, deux oubliés, encore un doublé. Le repli déterministe rendait
+        alors 19 actions au lieu de 5 : tout le bénéfice du regroupement perdu
+        pour une étourderie de comptage.
+
+        D'où la répartition finale des rôles :
+          · le MODÈLE reconnaît les causes communes — ce qu'il sait faire ;
+          · le CODE garantit l'exactitude — ce qui ne se demande pas, se construit.
+
+        Un constat cité deux fois est laissé dans son PREMIER groupe : les deux
+        rattachements venant du modèle, aucun n'est plus légitime, et le premier
+        est celui qu'il a jugé prioritaire. Le double-compte, lui, fausserait le
+        classement (un groupe paraîtrait fermer plus de constats qu'il n'en ferme).
+    """
+    vus: set[int] = set()
+    propres: list[dict[str, Any]] = []
+    for g in groupes:
+        gardes = [i for i in g["constats"] if i not in vus]
+        vus.update(gardes)
+        if gardes:                       # un groupe entièrement redondant disparaît
+            propres.append({**g, "constats": gardes})
+
+    # Tout constat non rattaché devient sa propre action : rien ne se perd.
+    for c in constats:
+        if c["index"] not in vus:
+            propres.append({
+                "cause": c["garde_fou"] or c["titre"],
+                "action": c["remediation"] or "Aucune remédiation établie.",
+                "constats": [c["index"]], "effort": "modere", "isole": True,
+            })
+    return propres
+
 
 def _prompt(constats: list[dict[str, Any]]) -> str:
     """Demande de regroupement.
@@ -297,21 +341,42 @@ def build(audit: dict[str, Any], model: Any = None) -> dict[str, Any]:
 
     from judge.severity_judge import structured
 
-    rendu = structured(model, _prompt(constats), PlanBrut)
-    if rendu is None:
-        logger.info("plan de remédiation : modèle indisponible, repli déterministe")
-        return repli
+    # UNE SEULE NOUVELLE TENTATIVE, avec le motif du refus en retour.
+    #
+    # POURQUOI RÉESSAYER PLUTÔT QUE SE REPLIER TOUT DE SUITE
+    #     Les rejets observés sont des fautes de FORME — un constat rangé dans
+    #     deux groupes, un oublié — pas des désaccords de fond. Or le repli
+    #     déterministe est nettement plus faible : sur l'audit de référence, 19
+    #     actions au lieu de 5. Abandonner sur une faute d'étourderie sacrifie
+    #     tout le bénéfice du regroupement.
+    #
+    #     La tentative est UNIQUE : au-delà, un modèle qui échoue deux fois sur
+    #     une consigne aussi mécanique ne comprendra pas à la troisième, et
+    #     chaque essai coûte un appel.
+    motif = None
+    for essai in (1, 2):
+        prompt = _prompt(constats)
+        if motif:
+            prompt += (f"\nYour previous attempt was REJECTED: {motif}.\n"
+                       "Fix exactly that, and check once more that every "
+                       "finding number appears in exactly one group.\n")
+        rendu = structured(model, prompt, PlanBrut)
+        if rendu is None:
+            logger.info("plan de remédiation : modèle indisponible, repli déterministe")
+            return repli
 
-    motif = _verifier(rendu.groupes, constats)
-    if motif:
-        # On DIT pourquoi : un repli muet ferait croire qu'aucun modèle n'était
-        # configuré, alors que son regroupement a été jugé faux.
-        logger.warning("plan de remédiation rejeté (%s) — repli déterministe", motif)
-        return {**repli, "rejet": motif}
+        motif = _verifier(rendu.groupes, constats)
+        if motif is None:
+            groupes = [{"cause": _clean(g.cause), "action": _clean(g.action),
+                        "constats": list(g.constats), "effort": g.effort}
+                       for g in rendu.groupes]
+            return _finaliser(_normaliser(groupes, constats), constats, "llm")
+        logger.info("plan de remédiation, tentative %d rejetée (%s)", essai, motif)
 
-    groupes = [{"cause": _clean(g.cause), "action": _clean(g.action),
-                "constats": list(g.constats), "effort": g.effort} for g in rendu.groupes]
-    return _finaliser(groupes, constats, "llm")
+    # On DIT pourquoi : un repli muet ferait croire qu'aucun modèle n'était
+    # configuré, alors que son regroupement a été jugé faux — deux fois.
+    logger.warning("plan de remédiation rejeté 2 fois (%s) — repli déterministe", motif)
+    return {**repli, "rejet": motif}
 
 
 def build_for_profile(audit: dict[str, Any], profile: str) -> dict[str, Any]:
@@ -383,31 +448,61 @@ def demo() -> None:
            Groupe(cause="d", constats=[2], action="b", effort="modere")]
     assert _verifier(bon, c) is None
 
-    # 6. …un constat OUBLIÉ est rejeté. C'est le cas le plus grave : le plan
-    #    aurait l'air complet et personne ne corrigerait ce constat.
-    oubli = [Groupe(cause="c", constats=[0, 1], action="a", effort="rapide")]
-    assert "absent" in (_verifier(oubli, c) or "")
+    # 6. Un constat NON RATTACHE n'est plus un rejet : le CODE le complete, ce
+    #    qui garantit qu'aucun constat ne se perd sans exiger du modele une
+    #    couverture exacte de 33 elements — hors de sa portee, mesure.
+    partiel = [{"cause": "c", "action": "a", "constats": [0], "effort": "rapide"}]
+    complete = _normaliser(partiel, c)
+    assert len(complete) == 3, "les 2 constats restants doivent devenir des groupes"
+    assert sorted(i for g in complete for i in g["constats"]) == [0, 1, 2]
+    assert all(g.get("isole") for g in complete[1:]), "les ajouts sont marques"
+    # …et la garantie tient : AUCUN constat ne disparait.
+    assert _verifier([Groupe(cause="c", constats=[0], action="a", effort="rapide")],
+                     c) is None
 
     # 7. …un constat INVENTÉ est rejeté.
     invente = [Groupe(cause="c", constats=[0, 1, 2, 99], action="a", effort="rapide")]
     assert "n'existe pas" in (_verifier(invente, c) or "")
 
-    # 8. …et un constat compté DEUX FOIS aussi (sinon l'effort est surestimé).
-    double = [Groupe(cause="c", constats=[0, 1], action="a", effort="rapide"),
-              Groupe(cause="d", constats=[1, 2], action="b", effort="modere")]
-    assert "deux groupes" in (_verifier(double, c) or "")
+    # 8. Un constat compté DEUX FOIS est resolu par le code, pas rejete : il
+    #    reste dans son PREMIER groupe. Le double-compte fausserait le classement.
+    double = [{"cause": "c", "constats": [0, 1], "action": "a", "effort": "rapide"},
+              {"cause": "d", "constats": [1, 2], "action": "b", "effort": "modere"}]
+    norm = _normaliser(double, c)
+    assert [g["constats"] for g in norm] == [[0, 1], [2]]
+    assert sum(len(g["constats"]) for g in norm) == 3, "rien ne se perd"
 
     # 9. Sans modèle : un plan existe quand même.
     assert build(audit)["source"] == "deterministe"
 
-    # 10. Un modèle qui oublie un constat ne passe pas, et le motif est DIT.
-    class Oublieux:
+    # 10. Un modèle qui ne regroupe qu'une partie passe, et le code complète :
+    #     le plan couvre les 3 constats, dont 2 en groupes isolés.
+    class Partiel:
         def generate(self, prompt, schema=None):
             return schema(groupes=[Groupe(cause="c", constats=[0],
                                           action="a", effort="rapide")]), 0.0
 
-    out = build(audit, Oublieux())
-    assert out["source"] == "deterministe" and "absent" in out["rejet"]
+    out = build(audit, Partiel())
+    assert out["source"] == "llm" and out["n_actions"] == 3
+    assert sum(len(g["constats"]) for g in out["groupes"]) == 3, "rien ne se perd"
+
+    # 10b. Un modele qui SE CORRIGE au second essai doit passer : les rejets
+    #      observes sont des fautes de forme, pas des desaccords de fond.
+    class SeCorrige:
+        def __init__(self):
+            self.n = 0
+
+        def generate(self, prompt, schema=None):
+            self.n += 1
+            if self.n == 1:                      # cite un constat inexistant
+                return schema(groupes=[Groupe(cause="c", constats=[0, 99],
+                                              action="a", effort="rapide")]), 0.0
+            assert "REJECTED" in prompt, "le motif du refus doit etre renvoye au modele"
+            return schema(groupes=[Groupe(cause="c", constats=[0, 1, 2],
+                                          action="a", effort="rapide")]), 0.0
+
+    m = SeCorrige()
+    assert build(audit, m)["source"] == "llm"
 
     # 11. Un modèle correct passe, et son regroupement est celui publié.
     class Correct:
@@ -443,7 +538,7 @@ def demo() -> None:
                    "'effort': exactly one of 'rapide', 'modere', 'consequent'"):
         assert phrase in p, f"prompt cassé par un reformatage : {phrase!r}"
 
-    print("judge.remediation_plan : 14/14 controles OK")
+    print("judge.remediation_plan : 15/15 controles OK")
 
 
 if __name__ == "__main__":

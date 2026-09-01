@@ -133,11 +133,22 @@ def consolidate(scores: dict[str, float],
     score = calculate_global_score(scores)
     out: dict[str, Any] = {"global_score": score, "risk_level": get_risk_level(score)}
     if agents:
+        from judge.summary import build_judge_summary
         from workflow.confidence import intervalle_global
 
         iv = intervalle_global({"global_score": score, "agents": agents})
         if iv:
             out["confidence"] = iv
+
+        # Fiabilite de la chaine de jugement. Elle vivait dans le SEUL chemin
+        # sous-processus : le chemin LangGraph — le mode PAR DEFAUT — ne la
+        # calculait jamais, donc le rapport et le dashboard n'avaient aucun
+        # compteur de repli sur un audit lance normalement. Rien ne le signalait :
+        # les blocs disparaissaient simplement de l'affichage.
+        # La calculer ICI, avec le score, la rend impossible a oublier.
+        js = build_judge_summary(agents)
+        if js:
+            out["judge_summary"] = js
     return out
 
 
