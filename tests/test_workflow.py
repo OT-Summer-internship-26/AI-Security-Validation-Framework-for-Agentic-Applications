@@ -309,3 +309,32 @@ def test_la_verite_terrain_est_complete_et_justifiee():
         for cat in d["primaire"] + (d.get("secondaire") or []):
             assert cat in d["justification"], f"{lab}/{cat} sans justification"
             assert len(d["justification"][cat]) > 40, f"{lab}/{cat} justification vide"
+
+
+def test_autotest_paths():
+    """Rejoue les 6 controles de la resolution des chemins de stockage.
+
+    Le repertoire des resultats etait ecrit en dur dans HUIT fichiers sous
+    QUATRE noms differents. En conteneur, ce chemin doit pointer vers un volume
+    persistant : le rendre configurable dans huit fichiers aurait garanti qu'un
+    neuvieme appelant l'oublie.
+    """
+    from workflow.paths import demo
+    demo()
+
+
+def test_les_huit_appelants_partagent_le_meme_point_de_resolution():
+    """Aucun fichier ne doit reconstruire le chemin a la main.
+
+    Une copie oubliee ecrirait ses resultats ailleurs, et le dashboard n'en
+    trouverait qu'une partie — sans que rien ne le signale.
+    """
+    import re
+    from pathlib import Path
+    racine = Path(__file__).resolve().parent.parent
+    fautifs = []
+    for f in list((racine / "scripts").glob("*.py")) + [racine / "api" / "main.py"]:
+        texte = f.read_text(encoding="utf-8")
+        if re.search(r'/\s*"data"\s*/\s*"audit_results"', texte):
+            fautifs.append(f.name)
+    assert not fautifs, f"chemin reconstruit a la main dans : {fautifs}"

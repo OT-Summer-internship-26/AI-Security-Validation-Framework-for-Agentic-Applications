@@ -30,7 +30,11 @@ try:
 except Exception:
     pass
 
-OUT_DIR = ROOT / "data" / "audit_results"
+# Point de resolution UNIQUE du repertoire de resultats : en production
+# il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.paths import results_dir
+
+OUT_DIR = results_dir()
 G, R, Y, B, D, X = "\033[92m", "\033[91m", "\033[93m", "\033[1m", "\033[90m", "\033[0m"
 
 

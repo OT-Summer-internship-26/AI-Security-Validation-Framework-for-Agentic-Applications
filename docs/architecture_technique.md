@@ -34,8 +34,9 @@ Deux autres documents le complètent :
 14. [Observabilité](#14-observabilité)
 15. [Configuration](#15-configuration)
 16. [Limites de ce que le framework mesure](#16-limites-de-ce-que-le-framework-mesure)
-17. [Étendre le framework](#17-étendre-le-framework)
-18. [Exploitation courante](#18-exploitation-courante)
+17. [**Contraintes de déploiement**](#17-contraintes-de-déploiement)
+18. [Étendre le framework](#18-étendre-le-framework)
+19. [Exploitation courante](#19-exploitation-courante)
 
 ---
 
@@ -962,7 +963,211 @@ Linux, WSL ou un conteneur.
 
 ---
 
-## 17. Étendre le framework
+## 17. Contraintes de déploiement
+
+**À lire avant de planifier une mise en production, pas après.**
+
+Cette section liste ce qui bloque ou complique une intégration en entreprise.
+Chaque point est vérifié dans le code, pas supposé. Les contraintes marquées
+🔴 exigent une décision qui dépasse l'équipe technique.
+
+---
+
+### 17.1 🔴 Les données auditées sortent vers un fournisseur tiers
+
+**C'est la contrainte la plus lourde, et elle n'est pas technique.**
+
+Le framework transmet au modèle évaluateur les **réponses complètes de la cible
+auditée**. Si la cible est un agent qui manipule des données d'abonnés, ces
+données partent chez OpenAI ou Google.
+
+| Ce qui sort | Vers qui | Quand |
+|---|---|---|
+| Réponses brutes de la cible | Fournisseur du profil actif | À chaque jugement de gravité |
+| Prompts d'attaque générés | Idem | À chaque test comportemental |
+| Titres et preuves des constats | Idem | Synthèse et plan de remédiation |
+
+Pour un opérateur télécom soumis à une autorité de protection des données, cela
+se tranche **avant la première exécution**. Trois voies :
+
+| Option | Effet | Réserve |
+|---|---|---|
+| **Modèle auto-hébergé** (profil `ollama`) | Rien ne sort | Simulateur trop faible pour un verdict — un laboratoire vulnérable obtenait 9,4/10 |
+| **Azure OpenAI en région dédiée** | Sortie contractualisée, non-rétention | Demande un abonnement et une revue |
+| **Auditer uniquement des environnements sans donnée réelle** | Rien de sensible ne circule | Restreint le périmètre auditable |
+
+Aucune de ces voies n'exige de modifier le code : le profil se choisit par
+configuration.
+
+---
+
+### 17.2 🔴 La couche dynamique exige l'accès au démon Docker
+
+`sandbox/docker_provider.py` invoque `docker run`. Dans un cluster, cela suppose
+de monter `/var/run/docker.sock` dans le conteneur — ce qui revient à **donner
+la racine de l'hôte** au service. Une équipe sécurité le refusera, et elle aura
+raison.
+
+**Comportement sans accès Docker** : le fournisseur bascule sur un repli en
+sous-processus. L'isolation se réduit alors au processus, au délai et aux
+ressources — **ni réseau coupé, ni système de fichiers en lecture seule**. Le
+fournisseur réellement utilisé est écrit dans `raw["sandbox_provider"]` de
+chaque résultat, donc un lecteur voit toujours ce qui a servi.
+
+**Voies acceptables en cluster** : un exécuteur isolé (gVisor, Kata Containers),
+un nœud dédié sans charge partagée, ou l'abandon de la couche dynamique — elle
+ne concerne qu'ASI05 et vaut 0,2 dans la pondération de cette seule catégorie.
+
+---
+
+### 17.3 🟠 Une seule instance, sans redémarrage pendant un audit
+
+Deux limites du même défaut : **l'état des exécutions vit en mémoire**
+(`_RUNS` dans `api/main.py`).
+
+| Conséquence | Détail |
+|---|---|
+| Pas de mise à l'échelle horizontale | Deux répliques ne voient pas les mêmes exécutions ; `GET /runs/{id}` répond 404 une fois sur deux derrière un répartiteur |
+| Pas de redémarrage à chaud | Un déploiement ou une éviction de pod perd le suivi des audits en cours |
+| Les audits tournent dans le processus web | Un audit dure une heure dans un `threading.Thread` ; tout redémarrage le tue |
+
+**Les résultats déjà écrits ne sont jamais perdus** : chaque catégorie terminée
+est persistée immédiatement, et `--resume` reprend un audit interrompu. C'est le
+*suivi* qui disparaît, pas le travail.
+
+**Pour lever la contrainte** : sortir l'état vers Redis ou une base, et déplacer
+l'exécution vers une file de tâches (Celery, RQ) ou un `Job` Kubernetes. C'est un
+chantier d'industrialisation, pas un réglage.
+
+---
+
+### 17.4 🟠 Le stockage doit être persistant et partagé
+
+Les résultats, rapports et points de reprise sont des **fichiers**. Dans un
+conteneur, le disque est éphémère.
+
+```
+AUDIT_DATA_DIR=/var/lib/ai-security     # racine ; monter un volume ICI
+AUDIT_RESULTS_DIR=…                      # prime sur la précédente
+AUDIT_REPORTS_DIR=…
+AUDIT_CHECKPOINTS=…                      # doit rester avec les résultats
+```
+
+Tous ces chemins sont résolus dans `workflow/paths.py`, à un seul endroit. Le
+`Dockerfile` place déjà la racine hors de `/app` et déclare le volume.
+
+⚠️ **Le point de reprise doit vivre avec les résultats.** Les séparer ferait
+rejouer des agents dont les résultats existent déjà.
+
+---
+
+### 17.5 🟠 Authentification insuffisante pour un usage multi-utilisateur
+
+`FRAMEWORK_API_KEY` est une **clé statique unique** : pas de rotation, pas de
+rôles, aucune attribution. Impossible de savoir **qui** a lancé un audit.
+
+Pour un outil capable d'attaquer des systèmes internes, la traçabilité de
+l'appelant n'est pas optionnelle. Placer le service derrière la passerelle
+d'API de l'entreprise (OIDC, jetons par utilisateur, journal d'accès) est le
+minimum avant un usage partagé.
+
+**Les endpoints de lecture restent volontairement ouverts** : une sonde de
+supervision n'a pas de clé, et protéger `/health` rendrait le service
+indistinguable d'un service mort.
+
+---
+
+### 17.6 🟡 Sorties réseau à autoriser explicitement
+
+| Destination | Usage | Sans elle |
+|---|---|---|
+| `api.openai.com` / `generativelanguage.googleapis.com` | Simulateur et juge | Aucun verdict possible |
+| L'URL de la cible auditée | Couche comportementale | Rien n'est mesuré |
+| PyPI (construction de l'image uniquement) | Dépendances | Construction impossible |
+
+Chez un opérateur, les sorties sont fermées par défaut : prévoir une règle de
+pare-feu et, le cas échéant, un proxy (`HTTPS_PROXY`).
+
+---
+
+### 17.7 🟡 Coût et durée
+
+| Contrainte | Valeur mesurée | Conséquence |
+|---|---|---|
+| Durée d'un audit complet | ~1 h (dépend surtout de la latence de la cible) | **Impossible en porte de *pull request* synchrone** — usage nocturne |
+| Appels de modèle par audit | 100 à 200 | Vérifier le quota AVANT de lancer |
+| Plafond de dépense | **Aucun** | `AUDIT_GEMINI_RPM` borne le *débit*, pas le *coût* |
+
+⚠️ **Les quotas des offres gratuites ne correspondent pas toujours à la
+documentation du fournisseur.** Un modèle mesuré à 20 requêtes par **jour** rend
+un audit complet impossible, alors qu'un autre modèle de la même famille passe
+sans erreur. Lancer une catégorie seule (`run_agent.py ASI_01`) avant tout audit
+officiel.
+
+---
+
+### 17.8 🟡 Endpoints de laboratoire — fermés par défaut
+
+`/dvap/labs` et `/dvap/launch` démarrent des conteneurs sur l'hôte. Ils servent
+à l'atelier d'entraînement DVAP et sont **désactivés par défaut**
+(`ENABLE_LAB_MANAGEMENT=0`), car une API capable de lancer des conteneurs
+arbitraires est une escalade de privilèges déguisée.
+
+Ne les activer que sur un poste jetable. Désactivés, ils répondent 404 — pas
+403 : une fonctionnalité fermée ne signale pas son existence.
+
+---
+
+### 17.9 🟡 Deux pièges vérifiés à la construction
+
+**L'image ne se construisait pas.** `requirements.txt` n'épinglait presque rien :
+le résolveur choisissait un exportateur OpenTelemetry ancien, dont la dépendance
+exacte `opentelemetry-proto==1.33.1` n'était plus résolvable, et
+`docker build` échouait. Invisible tant qu'on installe dans un environnement déjà
+peuplé — visible au premier build propre. Les trois paquets sont désormais
+épinglés à la combinaison vérifiée.
+
+> **Prochaine étape recommandée** : un fichier de verrouillage
+> (`pip-compile`, `uv lock`). Sans lui, une image construite dans six mois tire
+> des versions différentes de celles qui ont été testées.
+
+**Git Bash déforme les chemins absolus.** Sous Windows, MSYS convertit
+`-e AUDIT_DATA_DIR=/var/lib/ai-security` en
+`C:/Program Files/Git/var/lib/…` avant de le transmettre à Docker. Le conteneur
+écrit alors dans un chemin absurde, sans erreur. Utiliser PowerShell, ou
+préfixer d'une barre oblique supplémentaire (`//var/lib/…`). L'image porte déjà
+la variable : il n'y a normalement pas à la passer.
+
+### 17.10 🟡 Portabilité
+
+| Point | État |
+|---|---|
+| Semgrep | Ne s'installe pas sous Windows. Sans effet dans l'image Linux. |
+| `run-api.bat` et consorts | Lanceurs **Windows uniquement**, sans usage en production |
+| Chemins | Tous résolus via `pathlib`, aucun séparateur en dur |
+
+---
+
+### 17.11 Récapitulatif — la trajectoire d'industrialisation
+
+| Étape | Ce qu'elle débloque | Effort |
+|---|---|---|
+| Image Docker + volume | Un déploiement possible | ✅ fait — **image construite et démarrée**, 1,28 Go |
+| Chemins configurables | Persistance des résultats | ✅ fait |
+| Endpoints de laboratoire fermés | Surface d'attaque réduite | ✅ fait |
+| Décision sur la résidence des données | **L'autorisation d'auditer du réel** | Décision, pas code |
+| État partagé (Redis) | Redémarrages et mise à l'échelle | ~2 jours |
+| File de tâches | Audits qui survivent aux déploiements | ~3 jours |
+| Passerelle d'API (OIDC) | Usage multi-utilisateur tracé | ~2 jours |
+| Exécuteur isolé (gVisor / nœud dédié) | Couche dynamique en cluster | Décision d'infrastructure |
+
+Les quatre premières lignes suffisent à un déploiement **interne, mono-instance,
+opéré par une équipe qui connaît ces contraintes**. Les quatre suivantes sont
+nécessaires pour en faire un service que l'entreprise exploite sans son auteur.
+
+---
+
+## 18. Étendre le framework
 
 ### Ajouter une catégorie ou un agent
 
@@ -1005,7 +1210,7 @@ Aucune modification de code. Configuration seule :
 
 ---
 
-## 18. Exploitation courante
+## 19. Exploitation courante
 
 ### Vérifier l'installation
 

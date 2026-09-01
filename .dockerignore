@@ -1,0 +1,49 @@
+# Ce qui ne doit JAMAIS entrer dans l'image.
+#
+# Deux raisons distinctes, qu'il vaut mieux ne pas confondre :
+#   · SÉCURITÉ  — les secrets restent dehors. Une clé copiée dans une couche
+#                 d'image y demeure même si une couche ultérieure l'efface :
+#                 `docker history` la ressort.
+#   · POIDS     — 230 Mo de node_modules et 45 Mo d'historique git n'ont aucune
+#                 raison d'être expédiés au démon de construction.
+
+# --- Secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+dashboard/.env.local
+**/*.pem
+**/*.key
+
+# --- Historique et outillage de développement ------------------------------
+.git
+.github
+.gitignore
+.outils
+.deepeval
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov/
+
+# --- Dépendances et artefacts de construction reconstruits dans l'image -----
+**/node_modules
+**/dist
+**/build
+**/__pycache__
+**/*.pyc
+venv/
+.venv/
+
+# --- Sorties d'exécution : l'image n'embarque pas les résultats d'hier ------
+# Elles vivent sur le volume monté en /var/lib/ai-security.
+data/audit_results/
+data/replays/
+data/reports/
+runs/
+reports/
+*.log
+
+# --- Matériel hors produit -------------------------------------------------
+presentation/
+presentation.jsx

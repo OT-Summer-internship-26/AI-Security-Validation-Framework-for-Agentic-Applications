@@ -189,3 +189,54 @@ def test_la_lecture_reste_ouverte_meme_avec_une_cle(client_protege):
     mort pour tout systeme de monitoring.
     """
     assert client_protege.get("/health").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Gestion des laboratoires : desactivee par defaut.
+# --------------------------------------------------------------------------- #
+
+def test_les_endpoints_de_laboratoire_sont_fermes_par_defaut(client):
+    """`/dvap/launch` demarre un CONTENEUR sur l'hote.
+
+    Une API d'entreprise capable de lancer des conteneurs arbitraires est une
+    escalade de privileges deguisee — et ce serait un defaut de securite dans un
+    OUTIL DE SECURITE. Ces endpoints existent pour l'atelier d'entrainement ; ils
+    doivent rester fermes tant que personne ne les a explicitement ouverts.
+
+    404 et non 403 : une fonctionnalite desactivee ne signale pas son existence.
+    """
+    assert client.get("/dvap/labs").status_code == 404
+    assert client.post("/dvap/launch", json={"slug": "prompt-injection"}).status_code == 404
+
+
+def test_l_activation_explicite_rouvre_les_endpoints(monkeypatch):
+    """L'autre sens : une garde qui refuse TOUT est aussi cassee qu'une absente."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("ENABLE_LAB_MANAGEMENT", "1")
+    monkeypatch.delenv("FRAMEWORK_API_KEY", raising=False)
+    import importlib
+
+    import api.main as main
+    importlib.reload(main)
+    try:
+        monkeypatch.setattr(main, "_execute", lambda run: None)
+        # L'endpoint repond (le contenu depend de la presence de DVAP, pas nous).
+        assert TestClient(main.app).get("/dvap/labs").status_code != 404
+    finally:
+        monkeypatch.delenv("ENABLE_LAB_MANAGEMENT", raising=False)
+        importlib.reload(main)
+
+
+# --------------------------------------------------------------------------- #
+# Emplacement des resultats : configurable pour la production.
+# --------------------------------------------------------------------------- #
+
+def test_le_repertoire_de_resultats_suit_la_configuration(monkeypatch, tmp_path):
+    """Dans un conteneur, le disque du depot est EPHEMERE : un audit d'une heure
+    disparaitrait au redemarrage du pod. Le chemin doit pouvoir pointer vers un
+    volume persistant, et ce depuis UN seul point de resolution."""
+    monkeypatch.setenv("AUDIT_RESULTS_DIR", str(tmp_path / "volume"))
+    from workflow.paths import results_dir
+    assert results_dir() == (tmp_path / "volume").resolve()
+    assert results_dir().is_absolute()

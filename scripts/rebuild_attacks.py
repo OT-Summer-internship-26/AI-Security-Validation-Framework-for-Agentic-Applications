@@ -25,7 +25,14 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "data" / "audit_results"
+# Ce script n'importait rien du projet : la racine doit etre ajoutee
+# explicitement pour atteindre `workflow.paths`.
+sys.path.insert(0, str(ROOT))
+# Point de resolution UNIQUE du repertoire de resultats : en production
+# il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.paths import results_dir
+
+RESULTS = results_dir()
 
 
 def axis_of(title: str) -> str | None:

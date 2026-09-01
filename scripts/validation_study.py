@@ -58,7 +58,11 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
-RESULTATS = RACINE / "data" / "audit_results"
+# Point de resolution UNIQUE du repertoire de resultats : en production
+# il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.paths import results_dir
+
+RESULTATS = results_dir()
 VERITE = RACINE / "config" / "dvap_ground_truth.json"
 DVAP_API = "http://localhost:8080/api/v1"
 

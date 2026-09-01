@@ -1,36 +1,64 @@
 # ==============================================================================
 #  Services du framework — API d'audit
 #
-#  ⚠️ CE FICHIER NE CONTIENT PLUS LANGFUSE
+#  ⚠️ CE FICHIER NE CONTIENT PAS LANGFUSE
 #      Il en déclarait un service, mais celui-ci ne pouvait PAS démarrer : il
 #      pointait une base `db` jamais définie, et l'image `langfuse:latest` est une
 #      v3 qui exige ClickHouse, Redis et MinIO. Laisser ce service ici donnait un
 #      `docker compose up` qui échoue — pire qu'une absence, parce que le lecteur
 #      croit la brique disponible.
 #
-#      L'observabilité vit désormais dans **docker-compose.langfuse.yml**, une
-#      pile complète et vérifiée (traces réellement reçues, cf. documentation technique) :
+#      L'observabilité vit dans **docker-compose.langfuse.yml**, une pile
+#      complète et vérifiée (traces réellement reçues) :
 #          docker compose -f docker-compose.langfuse.yml up -d
 #
-#  ⚠️ LE SERVICE `api` EXIGE UN Dockerfile QUI N'EXISTE PAS ENCORE
-#      Il est laissé ici parce qu'il décrit l'intention, mais `docker compose up`
-#      échouera au build tant que le Dockerfile n'est pas écrit. En attendant,
-#      l'API se lance directement :
-#          uvicorn api.main:app --reload        (ou run-api.bat)
+#  DÉMARRAGE
+#      docker compose up -d --build
+#      curl http://localhost:8000/health
+#
+#  Les contraintes d'exploitation (résidence des données, instance unique,
+#  sandbox) sont documentées dans docs/architecture_technique.md, section
+#  « Contraintes de déploiement ». Les lire AVANT de planifier une mise en
+#  production, pas après.
 # ==============================================================================
 
 services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile   # ⚠️ à écrire — voir l'avertissement ci-dessus
+      dockerfile: Dockerfile
+    image: ai-security-framework:latest
     container_name: ai_security_api
     ports:
       - "8000:8000"
     env_file:
       - .env
-    # Le module sandbox (ASI05) exécute du code dans des conteneurs Docker
-    # éphémères : monter le socket Docker sera nécessaire pour la couche dynamique.
+    environment:
+      # Les résultats vivent sur le volume, PAS dans le conteneur : son disque
+      # est éphémère et un audit d'une heure disparaîtrait au redémarrage.
+      AUDIT_DATA_DIR: /var/lib/ai-security
+      # La gestion des laboratoires d'entraînement démarre des conteneurs sur
+      # l'hôte : elle reste FERMÉE hors poste de développement jetable.
+      ENABLE_LAB_MANAGEMENT: "0"
+    volumes:
+      - audit_data:/var/lib/ai-security
+
+    # ⚠️ UNE SEULE INSTANCE. L'état des exécutions vit en mémoire du processus
+    #    (`_RUNS` dans api/main.py) : deux répliques ne verraient pas les mêmes
+    #    exécutions et `GET /runs/{id}` répondrait 404 une fois sur deux.
+    #    Passer à l'échelle exige d'abord un état partagé — chantier identifié.
+    deploy:
+      replicas: 1
+
+    # La couche dynamique (sandbox ASI05) exige `docker run`, donc le socket du
+    # démon. Le monter donne au conteneur la RACINE DE L'HÔTE : à n'activer que
+    # sur un poste jetable, jamais sur une machine partagée. Sans lui le
+    # framework dégrade proprement — la couche se déclare non applicable, elle
+    # n'est ni notée 0 ni comptée comme réussie.
     # volumes:
     #   - /var/run/docker.sock:/var/run/docker.sock
+
     restart: unless-stopped
+
+volumes:
+  audit_data:

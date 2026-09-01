@@ -41,7 +41,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
-RESULTS_DIR = ROOT / "data" / "audit_results"
+# Point de resolution UNIQUE du repertoire de resultats : en production
+# il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.paths import results_dir
+
+RESULTS_DIR = results_dir()
 REPLAYS_DIR = ROOT / "data" / "replays"
 RUNNER = ROOT / "scripts" / "run_agent.py"
 
@@ -949,6 +953,36 @@ def _discover_endpoint(port: int) -> dict[str, Any]:
             "extra_payload": {k: f"audit-{k}" for k in extra} if extra else None}
 
 
+# --------------------------------------------------------------------------- #
+# Gestion des laboratoires d'entraînement — DÉSACTIVÉE PAR DÉFAUT.
+# --------------------------------------------------------------------------- #
+
+LAB_MANAGEMENT = os.environ.get("ENABLE_LAB_MANAGEMENT", "0").strip().lower() in (
+    "1", "true", "yes", "on")
+
+
+def _exiger_lab_management() -> None:
+    """Refuse les endpoints de laboratoire hors environnement de développement.
+
+    POURQUOI CES ENDPOINTS NE PEUVENT PAS ÊTRE ACTIFS PAR DÉFAUT
+        `/dvap/launch` démarre un conteneur sur l'hôte. Une API d'entreprise
+        capable de lancer des conteneurs arbitraires est une escalade de
+        privilèges déguisée — et ce serait un défaut de sécurité dans un OUTIL
+        DE SÉCURITÉ, ce qui n'est pas défendable.
+
+        Ces endpoints existent pour l'atelier d'entraînement DVAP, où le poste
+        est jetable. Ils s'activent explicitement par `ENABLE_LAB_MANAGEMENT=1`,
+        et jamais sur un environnement partagé.
+
+    Renvoie 404 plutôt que 403 : une fonctionnalité désactivée ne doit pas
+    signaler son existence à qui la sonde.
+    """
+    if not LAB_MANAGEMENT:
+        raise HTTPException(
+            status_code=404,
+            detail="Gestion des laboratoires désactivée (ENABLE_LAB_MANAGEMENT=0)")
+
+
 @app.get("/dvap/labs")
 def dvap_labs() -> dict[str, Any]:
     """Catalogue des labs DVAP + instances déjà lancées.
@@ -956,6 +990,7 @@ def dvap_labs() -> dict[str, Any]:
     Chaque lab en cours d'exécution porte son `target_url` prêt à l'emploi ;
     les autres doivent être lancés (POST /dvap/launch).
     """
+    _exiger_lab_management()
     labs: list[dict[str, Any]] = []
     try:
         import urllib.request
@@ -996,6 +1031,7 @@ def dvap_launch(req: LaunchLabRequest,
     correctement — on ne se fie donc pas à son code retour, on cherche le
     conteneur et son port.
     """
+    _exiger_lab_management()
     _check_api_key(x_api_key)
     import urllib.error
     import urllib.request

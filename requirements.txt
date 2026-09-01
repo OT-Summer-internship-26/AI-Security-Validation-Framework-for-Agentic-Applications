@@ -20,8 +20,14 @@ deepeval
 
 # Observability
 langfuse
-opentelemetry-api
-opentelemetry-sdk
+# Epingles a la combinaison VERIFIEE en local. Sans cela, le resolveur choisit
+# un exportateur ancien dont la dependance `opentelemetry-proto` exacte n'est
+# plus resolvable, et la construction de l'image ECHOUE — panne constatee au
+# premier `docker build`, invisible tant qu'on installe dans un environnement
+# deja peuple.
+opentelemetry-api==1.37.0
+opentelemetry-sdk==1.37.0
+opentelemetry-exporter-otlp-proto-http==1.37.0
 
 # Security Analysis
 # semgrep : sur Windows, installer via `pip install --only-binary=:all: semgrep`

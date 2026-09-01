@@ -18,7 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-RESULTS = ROOT / "data" / "audit_results"
+# Point de resolution UNIQUE du repertoire de resultats : en production
+# il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.paths import results_dir
+
+RESULTS = results_dir()
 REPORTS = ROOT / "data" / "reports"
 
 
