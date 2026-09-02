@@ -61,9 +61,32 @@ jobs:
         env:
           PYTHONUTF8: "1"
         run: |
-          pip install pytest pydantic fastapi httpx
+          # Les dependances des tests, pas celles du framework : la suite est
+          # hors-ligne par conception. `-r requirements.txt` prendrait 15 min
+          # pour rien, et ferait dependre les tests du reseau.
+          pip install pytest pytest-cov pydantic fastapi httpx jinja2 pyyaml
           python -m pytest tests/ -q
 
+
+      - name: "Auto-controles des modules d'infrastructure"
+        # Ces scripts ne vivent pas dans `tests/` : sans cette etape, une
+        # regression du script de preparation Docker ou de celui de sauvegarde
+        # n'apparaitrait qu'au moment de s'en servir — c'est-a-dire trop tard.
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python scripts/setup_docker.py --self-test
+          python scripts/backup_volume.py --self-test
+          python -m judge.metrics
+          python -m api.store
+          python -m workflow.paths
+
+      - name: "Les tests protegent-ils VRAIMENT les correctifs ?"
+        # Un test qui passe ne prouve rien tant qu'on ne l'a pas vu echouer.
+        # Ce controle casse chaque correctif et exige que son test rougisse.
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/mutation_check.py
       - name: Analyse statique — Semgrep
         id: semgrep
         continue-on-error: true

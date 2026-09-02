@@ -17,6 +17,65 @@ si le résultat n'est pas acceptable.
 Agent IA (URL) ──▶ 10 agents de sécurité ──▶ score /100 ──▶ rapport HTML ──▶ gate CI/CD
 ```
 
+## Démarrage
+
+### Avec Docker — la façon recommandée
+
+```bash
+# 1. Préparer Docker (une fois par machine). Crée le réseau IPv6 et le
+#    constructeur buildx, puis VÉRIFIE qu'une construction joint bien PyPI.
+python scripts/setup_docker.py
+
+# 2. Configurer
+cp .env.example .env          # y mettre au moins une clé de modèle
+
+# 3. Lancer
+docker compose up -d --build
+
+# 4. Vérifier
+curl http://localhost:8000/health
+open http://localhost:8080                # tableau de bord
+```
+
+Trois services démarrent : l'**API** qui orchestre, un **ouvrier** qui exécute
+les audits hors du processus web, et le **tableau de bord**.
+
+### Lancer un audit
+
+```bash
+# Créer une clé d'opérateur (l'admin utilise FRAMEWORK_API_KEY)
+curl -X POST http://localhost:8000/keys -H "X-API-Key: $ADMIN"      -H "Content-Type: application/json"      -d '{"name":"equipe secu","role":"operator","expires_in_days":90}'
+
+# Déposer un audit — l'API rend la main tout de suite, l'ouvrier exécute
+curl -X POST http://localhost:8000/audits -H "X-API-Key: $CLE"      -H "Content-Type: application/json"      -d '{"mode":"targeted","category":"ASI_01","target_url":"http://cible/chat",
+          "prompt_field":"message","response_field":"response","profile":"openai"}'
+
+# Suivre
+curl http://localhost:8000/runs/$RUN_ID
+```
+
+### Sans Docker — pour développer
+
+```bash
+pip install -r requirements.txt
+pytest tests/ -q                                   # 208 tests, sans réseau ni LLM
+python scripts/run_agent.py ASI_01 --profile dry_run   # doit rendre 5.57
+```
+
+### Exploitation
+
+```bash
+python scripts/backup_volume.py --sauvegarder   # AVANT toute operation
+python scripts/mutation_check.py                # les tests protegent-ils vraiment ?
+curl http://localhost:8000/metrics              # compteurs Prometheus
+```
+
+> **Avant une mise en production**, lire la section « Contraintes de
+> déploiement » de [docs/architecture_technique.md](docs/architecture_technique.md).
+> Elle dit ce qui bloque, ce qui est une décision, et ce qui est déjà résolu —
+> à commencer par le fait que **les données auditées sortent vers un fournisseur
+> tiers**.
+
 ## Comment ça marche
 
 ### Trois couches de test
