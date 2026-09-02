@@ -97,6 +97,17 @@ def main() -> int:
     cats = ([c.strip() for c in args.categories.split(",")] if args.categories
             else list(AGENT_REGISTRY))
 
+    # Une categorie inconnue est refusee AVANT de lancer quoi que ce soit.
+    #
+    # Sans ce controle, une faute de frappe (« ASI_1 » au lieu de « ASI_01 »)
+    # passait silencieusement : l'audit demarrait, tournait, et rendait un score
+    # calcule sur MOINS de categories que demande — sans que rien ne le signale.
+    # L'API validait deja ; la ligne de commande, non.
+    inconnues = [c for c in cats if c not in AGENT_REGISTRY]
+    if inconnues:
+        ap.error(f"categorie(s) inconnue(s) : {', '.join(inconnues)}. "
+                 f"Connues : {', '.join(sorted(AGENT_REGISTRY))}")
+
     stamp = datetime.now()
     out = OUT_DIR / f"{stamp:%Y%m%d_%H%M%S}_GLOBAL_{args.profile}.json"
     OUT_DIR.mkdir(parents=True, exist_ok=True)
