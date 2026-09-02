@@ -81,6 +81,7 @@ FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569
 # rapports). Sans elles, l'import réussit et la génération de PDF échoue au
 # premier appel — une panne qui n'apparaîtrait qu'en production.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        tini \
         libcairo2 \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
@@ -152,5 +153,16 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # exécutions, et `GET /runs/{id}` répondrait 404 une fois sur deux.
 # Passer à plusieurs instances exige d'abord un état partagé — c'est un chantier
 # d'industrialisation identifié, pas un réglage.
+# PID 1 = tini, pas Python.
+#
+# POURQUOI
+#     1. Un processus Python en PID 1 ne recolte pas les ORPHELINS. Or garak,
+#        semgrep, PyRIT et le sandbox tournent en SOUS-PROCESSUS : sur un
+#        ouvrier de longue duree, la table des processus se remplit de zombies.
+#     2. La propagation des signaux devient fiable : SIGTERM atteint vraiment
+#        l'application, qui s'arrete proprement au lieu d'etre tuee.
+#     Vaut aussi pour l'ouvrier, qui remplace ce CMD par le sien.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
 CMD ["python", "-m", "uvicorn", "api.main:app", \
      "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

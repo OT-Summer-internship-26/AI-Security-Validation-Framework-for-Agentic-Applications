@@ -1,130 +1,270 @@
 # ==============================================================================
-#  Services du framework — API d'audit
-#
-#  ⚠️ CE FICHIER NE CONTIENT PAS LANGFUSE
-#      Il en déclarait un service, mais celui-ci ne pouvait PAS démarrer : il
-#      pointait une base `db` jamais définie, et l'image `langfuse:latest` est une
-#      v3 qui exige ClickHouse, Redis et MinIO. Laisser ce service ici donnait un
-#      `docker compose up` qui échoue — pire qu'une absence, parce que le lecteur
-#      croit la brique disponible.
-#
-#      L'observabilité vit dans **docker-compose.langfuse.yml**, une pile
-#      complète et vérifiée (traces réellement reçues) :
-#          docker compose -f docker-compose.langfuse.yml up -d
+#  Pile applicative — API d'audit, ouvrier, tableau de bord
 #
 #  DÉMARRAGE
 #      docker compose up -d --build
 #      curl http://localhost:8000/health
 #
-#  Les contraintes d'exploitation (résidence des données, instance unique,
-#  sandbox) sont documentées dans docs/architecture_technique.md, section
-#  « Contraintes de déploiement ». Les lire AVANT de planifier une mise en
-#  production, pas après.
+#  Les contraintes d'exploitation (résidence des données, sandbox, plafonds)
+#  sont dans docs/architecture_technique.md, section « Contraintes de
+#  déploiement ». Les lire AVANT de planifier une mise en production.
+#
+#  ⚠️ CE FICHIER NE CONTIENT PAS LANGFUSE
+#      L'observabilité vit dans docker-compose.langfuse.yml, une pile complète
+#      et vérifiée :  docker compose -f docker-compose.langfuse.yml up -d
+#      Le framework compte de toute façon ses propres métriques (`/metrics`) :
+#      LangFuse enrichit, il n'est jamais nécessaire.
 # ==============================================================================
 
+# ------------------------------------------------------------------------------
+#  Réglages communs — factorisés pour qu'un durcissement s'applique PARTOUT.
+#
+#  Les recopier service par service garantissait qu'un service futur en oublie
+#  un. C'est ce qui était arrivé : aucun des trois n'avait de limite de
+#  ressources ni de rotation de journaux.
+# ------------------------------------------------------------------------------
+x-journal: &journal
+  # Sans limite, `json-file` garde TOUT : quelques semaines d'ouvrier suffisent
+  # à saturer /var/lib/docker. C'est la panne la plus banale et la plus évitable.
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-redemarrage: &redemarrage
+  # `on-failure` avec un plafond, et NON `unless-stopped` : un service qui
+  # plante en boucle doit finir par s'arrêter, pour que la supervision le voie.
+  # Un redémarrage infini masque la panne au lieu de l'exposer.
+  restart: on-failure:5
+
 services:
+
+  # ---------------------------------------------------------------------------
+  #  API — elle ORCHESTRE : dépose les travaux, sert l'état. Elle n'exécute plus.
+  # ---------------------------------------------------------------------------
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-security-framework:latest
+    # Étiquette VERSIONNÉE et non `latest` : `latest` d'hier n'existe plus, donc
+    # aucun retour arrière possible. `AUDIT_VERSION` vient de .env ou de la CI.
+    image: ai-security-framework:${AUDIT_VERSION:-dev}
     container_name: ai_security_api
+    <<: [*journal, *redemarrage]
+
     ports:
-      # Port publié configurable : un port en dur finit toujours par entrer en
-      # collision avec un service déjà installé sur la machine hôte.
       - "${API_PORT:-8000}:8000"
+
+    # Identité explicite ICI aussi. Le Dockerfile la pose déjà, mais un compose
+    # qui la surchargerait par mégarde passerait inaperçu — et le service
+    # tournerait en root sans que rien ne le signale.
+    user: "10001:10001"
+
+    environment:
+      AUDIT_DATA_DIR: /var/lib/ai-security
+      ENABLE_LAB_MANAGEMENT: "0"
+      # L'API DÉPOSE, l'ouvrier EXÉCUTE. À 1, un redéploiement tuerait les
+      # audits en cours — c'est le mode développement.
+      AUDIT_INLINE_WORKER: "0"
+      LOG_FORMAT: json
     env_file:
       - .env
-    environment:
-      # Les résultats vivent sur le volume, PAS dans le conteneur : son disque
-      # est éphémère et un audit d'une heure disparaîtrait au redémarrage.
-      AUDIT_DATA_DIR: /var/lib/ai-security
-      # La gestion des laboratoires d'entraînement démarre des conteneurs sur
-      # l'hôte : elle reste FERMÉE hors poste de développement jetable.
-      ENABLE_LAB_MANAGEMENT: "0"
-      # L'API DEPOSE, l'ouvrier EXECUTE. A 1, l'API executerait elle-meme et un
-      # redeploiement tuerait les audits en cours — c'est le mode developpement.
-      AUDIT_INLINE_WORKER: "0"
+
     volumes:
       - audit_data:/var/lib/ai-security
+    # Système de fichiers en LECTURE SEULE, sauf /tmp. Après une exécution de
+    # code, un attaquant ne peut ni déposer d'outil ni modifier l'application.
+    #
+    # Forme COURTE et non `type: tmpfs` : seule celle-ci applique `mode`. En
+    # syntaxe longue le montage arrive en root, et un service non privilégié
+    # échoue sur « permission denied » — constaté.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
 
-    # L'état vit désormais dans SQLite sur le volume partagé (`api/store.py`) :
-    # plusieurs répliques voient les mêmes exécutions, et un redémarrage ne perd
-    # plus rien. Le plafond restant est celui de SQLite sur volume RÉSEAU, qui
-    # verrouille mal — voir « Contraintes de déploiement » dans la doc technique.
+    # Sans limite, un audit qui charge des modèles peut consommer toute la RAM
+    # et faire tuer ses voisins par l'OOM killer — l'API comprise.
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2.0
+    pids_limit: 512
+
+    # Déclaré ici en plus du Dockerfile : un orchestrateur autre que compose ne
+    # lit pas le HEALTHCHECK de l'image, et `depends_on: service_healthy`
+    # s'appuie dessus.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+    networks: [ai_security]
+
+    # L'état vit dans SQLite sur le volume partagé (`api/store.py`) : plusieurs
+    # répliques voient les mêmes exécutions. Le plafond restant est celui de
+    # SQLite sur volume RÉSEAU, qui verrouille mal.
     deploy:
       replicas: 1
 
-    # La couche dynamique (sandbox ASI05) exige `docker run`, donc le socket du
-    # démon. Le monter donne au conteneur la RACINE DE L'HÔTE : à n'activer que
-    # sur un poste jetable, jamais sur une machine partagée. Sans lui le
-    # framework dégrade proprement — la couche se déclare non applicable, elle
-    # n'est ni notée 0 ni comptée comme réussie.
-    # volumes:
-    #   - /var/run/docker.sock:/var/run/docker.sock
-
-    restart: unless-stopped
-    networks: [ai_security]
-
-  # L'OUVRIER — c'est lui qui execute les audits, pas l'API.
-  #
-  # POURQUOI UN SERVICE SEPARE
-  #     Un audit dure une heure. Tant qu'il vivait dans un fil du serveur web,
-  #     le moindre redeploiement le tuait. Ici, redemarrer l'API n'interrompt
-  #     rien, et redemarrer l'ouvrier remet son travail en file — il est repris.
-  #
-  # MISE A L'ECHELLE : `--scale worker=2` suffit, la prise de travail est
-  #     atomique. Au-dela de deux ou trois, le quota du modele devient le goulot
-  #     et rien n'est gagne.
+  # ---------------------------------------------------------------------------
+  #  OUVRIER — c'est lui qui exécute les audits.
+  # ---------------------------------------------------------------------------
   worker:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-security-framework:latest
+    image: ai-security-framework:${AUDIT_VERSION:-dev}
     command: ["python", "scripts/worker.py"]
-    env_file:
-      - .env
+    <<: [*journal, *redemarrage]
+
+    user: "10001:10001"
+
+    # ⚠️ LE RÉGLAGE QUI COÛTE LE PLUS CHER S'IL EST OUBLIÉ.
+    #
+    # Docker envoie SIGTERM puis TUE au bout de 10 s par défaut. L'ouvrier gère
+    # SIGTERM correctement — il cesse de prendre du travail — mais l'audit EN
+    # COURS dure une heure. Avec 10 s, chaque déploiement détruisait une heure
+    # de calcul et de jetons déjà payés.
+    #
+    # Le travail serait repris grâce au battement de cœur, mais repris veut dire
+    # RECOMMENCÉ. Ici, l'ouvrier a le temps de finir.
+    stop_grace_period: 2h
+
     environment:
       AUDIT_DATA_DIR: /var/lib/ai-security
       ENABLE_LAB_MANAGEMENT: "0"
+      LOG_FORMAT: json
+    env_file:
+      - .env
+
     volumes:
-      # MEME volume que l'API : c'est par lui que passent la file, l'etat des
-      # executions et les fichiers de resultat. Les separer ferait voir a l'API
-      # des audits termines dont le rapport serait introuvable.
+      # MÊME volume que l'API : file, état et fichiers de résultat y transitent.
       - audit_data:/var/lib/ai-security
+    read_only: true
+    # Forme COURTE : seule elle applique `mode`. garak et le sandbox y ecrivent
+    # leurs fichiers de travail, d'ou la taille plus large.
+    tmpfs:
+      - /tmp:mode=1777,size=256m
+
+    # Plus généreux que l'API : c'est lui qui charge les modèles et lance les
+    # sous-processus d'audit.
+    mem_limit: 6g
+    memswap_limit: 6g
+    cpus: 4.0
+    pids_limit: 2048
+
+    healthcheck:
+      # L'ouvrier n'expose aucun port : on vérifie qu'il sait encore lire sa file.
+      # Un ouvrier vivant mais coupé du magasin ne prendrait plus rien, en
+      # silence — exactement la panne qu'un `restart` ne corrige pas.
+      test: ["CMD", "python", "-c",
+             "import sys; sys.path.insert(0,'/app'); from api import store; store.init(); store.compter_actifs()"]
+      interval: 60s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+
     depends_on:
       api:
         condition: service_healthy
     networks: [ai_security]
-    restart: unless-stopped
 
+    # Mise à l'échelle : `--scale worker=2`. La prise de travail est atomique.
+    # Au-delà de deux ou trois, le quota du modèle devient le goulot.
+    deploy:
+      replicas: 1
+
+  # ---------------------------------------------------------------------------
+  #  TABLEAU DE BORD — fichiers statiques + relais vers l'API.
+  # ---------------------------------------------------------------------------
   dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    image: ai-security-dashboard:latest
+    image: ai-security-dashboard:${AUDIT_VERSION:-dev}
     container_name: ai_security_dashboard
+    <<: [*journal, *redemarrage]
+
     ports:
       # 8080 est l'un des ports les plus disputés d'une machine de
-      # développement — sur celle-ci, le nginx des laboratoires DVAP le tenait
-      # déjà et `compose up` échouait. D'où la variable.
+      # développement — le nginx des laboratoires DVAP le tenait déjà.
       - "${DASHBOARD_PORT:-8080}:8080"
-    # `depends_on` seul ne garantit que l'ORDRE de démarrage, pas la
-    # disponibilité. Attendre la sonde de l'API évite que le dashboard serve une
-    # page dont chaque appel échoue pendant les vingt premières secondes.
+
+    user: "101:101"
+    read_only: true
+    # nginx ecrit ses fichiers temporaires et son PID. `mode=1777` est
+    # indispensable : un tmpfs est monte en ROOT, et nginx tourne en uid 101.
+    tmpfs:
+      - /var/cache/nginx:mode=1777
+      - /var/run:mode=1777
+      - /tmp:mode=1777
+
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
     depends_on:
       api:
         condition: service_healthy
     networks: [ai_security]
-    restart: unless-stopped
 
-# Réseau explicite : nginx joint l'API par son NOM DE SERVICE
-# (`ai_security_api:8000`, voir dashboard/nginx.conf). Sur le réseau par défaut
-# la résolution fonctionne aussi, mais la nommer rend la dépendance visible —
-# et c'est elle qu'il faudra changer si l'API part sur une autre machine.
+# ------------------------------------------------------------------------------
+#  Réseau — IPv6 ACTIVÉ.
+#
+#  Sur une connexion IPv6 seule, un réseau sans IPv6 rend les conteneurs
+#  incapables de joindre PyPI ou les fournisseurs de modèles : `pip` et les
+#  appels LLM échouent en « name resolution ». Constaté, et coûteux à
+#  diagnostiquer parce que l'hôte, lui, fonctionne.
+#
+#  Exige `{"ipv6": true, "ip6tables": true, "experimental": true}` dans le
+#  daemon.json de Docker.
+# ------------------------------------------------------------------------------
 networks:
   ai_security:
     driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00:a15e:c000::/64
+
+# ------------------------------------------------------------------------------
+#  Secrets — POURQUOI `env_file` NE SUFFIT PAS EN PRODUCTION
+#
+#  Une clé passée par l'environnement est visible dans `docker inspect`, dans
+#  /proc/1/environ, et dans tout vidage de crash. Pour une clé qui FACTURE, ce
+#  n'est pas acceptable au-delà d'un poste de développement.
+#
+#  Docker lit ici un fichier et l'expose dans /run/secrets/, en lecture seule et
+#  hors de l'environnement. Le code accepte les deux formes : `OPENAI_API_KEY`
+#  OU `OPENAI_API_KEY_FILE` pointant vers le secret.
+#
+#  POUR ACTIVER (production) :
+#    1. printf '%s' 'sk-...' > secrets/openai_api_key      # hors du depot
+#    2. decommenter le bloc `secrets:` ci-dessous ET dans les services api/worker
+#    3. remplacer OPENAI_API_KEY par OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
+#
+#  Sur Swarm ou Kubernetes, ces secrets viennent du coffre de l'orchestrateur —
+#  ce bloc n'est alors qu'une repli local.
+# ------------------------------------------------------------------------------
+# secrets:
+#   openai_api_key:
+#     file: ./secrets/openai_api_key
+#   gemini_api_key:
+#     file: ./secrets/gemini_api_key
+#   framework_api_key:
+#     file: ./secrets/framework_api_key
 
 volumes:
+  # ⚠️ CE VOLUME PORTE LA BASE D'ÉTAT, LES CLÉS D'API ET TOUS LES RÉSULTATS.
+  #    `docker compose down -v` le DÉTRUIT. Sauvegarder avant toute opération :
+  #        python scripts/backup_volume.py --sauvegarder
   audit_data:

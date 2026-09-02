@@ -58,7 +58,7 @@ RUN apk upgrade --no-cache
 
 # Configuration du site. La configuration par défaut est retirée : la laisser
 # ferait servir la page d'accueil nginx sur le port 80 à côté du dashboard.
-RUN rm -f /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache tini && rm -f /etc/nginx/conf.d/default.conf
 COPY nginx.conf security-headers.conf /etc/nginx/conf.d/
 COPY --from=build /build/dist /usr/share/nginx/html
 
@@ -78,5 +78,9 @@ USER nginx
 # deux ferait redémarrer le dashboard à cause d'une panne d'API.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q --spider http://127.0.0.1:8080/healthz || exit 1
+
+# Meme raison que pour l'API : PID 1 doit recolter les orphelins et
+# propager les signaux. nginx en engendre a chaque rechargement.
+ENTRYPOINT ["/sbin/tini", "--"]
 
 CMD ["nginx", "-g", "daemon off;"]
