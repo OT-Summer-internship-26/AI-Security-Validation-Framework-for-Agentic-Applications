@@ -366,3 +366,31 @@ def test_les_huit_appelants_partagent_le_meme_point_de_resolution():
         if re.search(r'/\s*"data"\s*/\s*"audit_results"', texte):
             fautifs.append(f.name)
     assert not fautifs, f"chemin reconstruit a la main dans : {fautifs}"
+
+
+def test_autotest_setup_docker():
+    """Rejoue les controles du script de preparation Docker.
+
+    Trois pieges d'infrastructure ont coute une demi-journee : le reseau
+    `bridge` prexistant sans IPv6, BuildKit qui ignore `network:`, et la
+    syntaxe longue `type: tmpfs` qui n'applique pas `mode`. Les documenter
+    n'aurait pas suffi — une note de bas de page ne se relit pas sous pression.
+    """
+    import importlib.util
+    from pathlib import Path
+    chemin = Path(__file__).resolve().parent.parent / "scripts" / "setup_docker.py"
+    spec = importlib.util.spec_from_file_location("setup_docker", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.demo()
+
+
+def test_autotest_backup_volume():
+    """Rejoue les controles du script de sauvegarde du volume."""
+    import importlib.util
+    from pathlib import Path
+    chemin = Path(__file__).resolve().parent.parent / "scripts" / "backup_volume.py"
+    spec = importlib.util.spec_from_file_location("backup_volume", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.demo()
