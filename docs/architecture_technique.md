@@ -800,7 +800,9 @@ Markdown est produit pour la *pull request*.
 - run: pytest tests/ -q                       # invariants du framework
 - run: semgrep --config p/security-audit      # analyse statique du dépôt
 - run: python scripts/run_audit_global.py --target $URL --profile final
-- run: python scripts/ci_gate.py --audit $AUDIT_JSON --policy .ci-policy.json
+- run: python scripts/ci_gate.py $AUDIT_JSON --summary gate_summary.md
+  # `--audit` et `--policy` n'ont jamais existé : l'audit est un argument
+  # POSITIONNEL, et la politique se lit dans `config/gate_policy.json`.
 ```
 
 > **Recommandation d'exploitation.** Un audit complet en profil `final` prend de

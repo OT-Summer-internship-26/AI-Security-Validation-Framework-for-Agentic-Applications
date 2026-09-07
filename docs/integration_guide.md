@@ -161,9 +161,15 @@ Le workflow est dans [`.github/workflows/security_audit.yml`](../.github/workflo
 
 ### Ce qui tourne en CI, et pourquoi seulement ça
 
-Uniquement les axes **déterministes** : Semgrep, pip-audit, Garak, sandbox. Ils ne
-consomment aucun appel LLM (donc aucun plafond de débit) et donnent le même résultat
-à chaque exécution. Bloquer un développeur sur un score stochastique serait
+Uniquement du **déterministe** : Semgrep, pip-audit, la suite hors-ligne, les
+auto-contrôles d'infrastructure et le test de mutation. Aucun appel LLM (donc aucun
+plafond de débit) et le même résultat à chaque exécution.
+
+> **Garak ne tourne pas dans la porte**, contrairement à ce que ce paragraphe a
+> longtemps affirmé. Non pas qu'il soit ininstallable — l'image l'embarque en
+> 91 Mo — mais parce que cette porte **n'audite aucune cible** : garak attaque une
+> URL, il n'a rien à dire sur une pull request. Il s'exécute là où il y a une
+> cible : audit manuel, ou `workflow_dispatch` avec `target_url`. Bloquer un développeur sur un score stochastique serait
 indéfendable — voir le piège 2 ci-dessus.
 
 L'audit comportemental complet tourne séparément et alimente la baseline ; il ne bloque pas.
@@ -182,8 +188,19 @@ donc relue en revue de code. C'est le seul endroit où la tolérance se décide.
 | `derogations` | exceptions datées ; **une dérogation expirée redevient bloquante** |
 
 ```bash
-python scripts/ci_gate.py --summary gate_summary.md   # exit 1 => la PR est bloquée
+# Le gate rend un verdict SUR UN AUDIT PRÉCIS — il faut le lui désigner.
+python scripts/ci_gate.py data/audit_results/<audit>.json --summary gate_summary.md
+
+# Ou, après un audit qu'on vient de lancer, le plus récent — explicitement :
+python scripts/ci_gate.py --dernier --summary gate_summary.md
 ```
+
+> **Pourquoi ce n'est plus implicite.** Sans argument, le script prenait le
+> fichier le plus récent trouvé dans `data/audit_results/`. Or ce dossier contient
+> des résultats versionnés (ils alimentent la démo du dashboard) : sur une pull
+> request sans cible auditée, le gate jugeait un audit vieux de plusieurs semaines
+> et annonçait « PASS — déploiement autorisé ». Il **refuse** désormais (code 2)
+> plutôt que de choisir lui-même son sujet.
 
 Le résultat est posté en commentaire unique sur la pull request (mis à jour, pas empilé)
 et les artefacts sont conservés 30 jours.
@@ -191,12 +208,204 @@ et les artefacts sont conservés 30 jours.
 ### Brancher une autre chaîne (GitLab CI, Jenkins…)
 
 Le contrat est simple : lancer l'audit, puis `scripts/ci_gate.py`. Son **code de
-sortie** est la décision (0 = passe, 1 = bloque), `--summary` produit le Markdown à
-publier. Aucune dépendance à GitHub au-delà du commentaire de PR.
+sortie** est la décision (**0** = passe, **1** = bloque, **2** = aucun audit
+désigné, donc aucun verdict), `--summary` produit le Markdown à publier. Aucune
+dépendance à GitHub au-delà du commentaire de PR.
 
 ---
 
-## 6. Limites assumées
+## 6. Déployer : on exécute l'image qui a été TESTÉE
+
+### Le problème que ça règle
+Le compose exigeait `ai-security-framework:${AUDIT_VERSION:-dev}` — une étiquette
+que **rien ne produisait**. `AUDIT_VERSION` n'existait ni dans `.env.example` ni en
+CI, donc le défaut `dev` s'appliquait, et comme aucune image ne portait ce nom,
+`docker compose up` **reconstruisait sur la machine cible**. L'artefact exécuté
+n'était jamais celui que la CI avait éprouvé : on testait une chose, on en lançait
+une autre.
+
+### Ce que la CI publie maintenant
+À chaque `push` sur `main`, après **toutes** les vérifications (audit réel dans le
+conteneur, chemin LangGraph, imports, garak, suite hors-ligne, durcissements,
+scan Trivy), le job **réétiquette et pousse l'objet exact qui vient d'être testé** —
+pas une reconstruction, même depuis le cache. Le condensé publié est celui qui a
+passé les contrôles.
+
+| Étiquette | Quand | Pourquoi |
+|---|---|---|
+| `sha-<7>` | chaque `push` sur `main`, dès que l'image est éprouvée | **immuable** — traçabilité et retour arrière |
+| `<version>` | tag git `v1.2.3`, **après validation de la pile complète** | c'est le nom par lequel on déploie |
+| ~~`latest`~~ | **jamais** | celui d'hier n'existe plus : aucun retour arrière |
+
+### Pourquoi la version est *promue* et non poussée
+
+Les deux étiquettes ne portent pas la même promesse, et elles ne sont donc pas
+créées au même moment.
+
+`sha-<7>` sort du job qui a construit et testé l'image. Il est immuable et
+traçable ; le publier tôt ne coûte rien, **personne ne déploie un SHA par
+accident**.
+
+`<version>` est le nom par lequel on déploie. Il ne doit exister que si **tout**
+a validé — y compris le job `pile`, qui lève l'API, l'ouvrier et le dashboard
+ensemble et fait passer un audit par la file. Or ce job s'exécute *après* ceux qui
+construisent les images. Un job `promouvoir` (`needs: [api, dashboard, pile]`)
+copie donc `sha-<7>` vers `<version>` avec `docker buildx imagetools create` :
+copie de manifeste côté registre, **même condensé**, aucun téléchargement, aucune
+reconstruction.
+
+> Conséquence assumée : un `sha-<7>` peut exister sans que la pile ait validé.
+> C'est voulu — il sert au diagnostic et au retour arrière. Aucune étiquette
+> *déployable* n'est jamais créée sans validation complète.
+
+### Le job `pile` teste l'image PUBLIÉE, pas une reconstruction
+
+Il faisait `docker compose up --build` : il ne testait donc ni l'image éprouvée
+par le job `api`, ni celle qui allait être publiée — une quatrième construction.
+Sur un `push`, il tire maintenant `sha-<7>` et lance `up --no-build`, c'est-à-dire
+**exactement la procédure de déploiement ci-dessous**. Le test de pile est donc
+aussi le test de la procédure : si le compose de production ne sait pas tirer ses
+images, on l'apprend ici et pas le jour de la mise en service.
+
+Registre : `ghcr.io/<votre-org>/ai-security-framework` et
+`…/ai-security-dashboard`. Publié avec le `GITHUB_TOKEN` intégré — **aucun
+identifiant à fournir**. Une pull request ne publie rien.
+
+### Déployer
+
+```bash
+# .env de la machine cible
+AUDIT_IMAGE_API=ghcr.io/<votre-org>/ai-security-framework
+AUDIT_IMAGE_DASHBOARD=ghcr.io/<votre-org>/ai-security-dashboard
+AUDIT_VERSION=sha-a1b2c3d        # affiché en fin de job de publication
+```
+
+```bash
+docker compose pull
+docker compose up -d --no-build   # --no-build : on TIRE, on ne reconstruit pas
+```
+
+#### Mieux : épingler par CONDENSÉ
+
+Une étiquette reste **techniquement** repoussable ; un condensé désigne des
+octets. Le job de publication affiche les deux, et les inscrit dans le résumé de
+l'exécution :
+
+```
+Étiquette      : ghcr.io/<org>/ai-security-framework:sha-a1b2c3d
+Condensé       : ghcr.io/<org>/ai-security-framework@sha256:9f86d0…
+```
+
+Pour épingler, utilisez `AUDIT_REF_*` — qui porte une référence **complète** et
+prime sur le couple image/version :
+
+```bash
+AUDIT_REF_API=ghcr.io/<org>/ai-security-framework@sha256:9f86d0…
+AUDIT_REF_DASHBOARD=ghcr.io/<org>/ai-security-dashboard@sha256:5e884a…
+docker compose pull && docker compose up -d --no-build
+```
+
+> L'ouvrier lit la **même** variable que l'API : il ne peut pas dériver.
+
+#### Inventaire des composants (SBOM)
+
+Chaque exécution produit un SBOM CycloneDX de l'image **testée**, conservé 90
+jours dans les artefacts du job (`sbom-api`, `sbom-dashboard`). Quand une CVE
+tombe, la question « est-ce qu'on l'embarque, et dans quelle version ? » se
+répond en lisant ce fichier — sans redéployer ni fouiller l'image.
+
+#### Vérifier la signature
+
+Les images sont signées **par clé**, pas en mode « keyless » : le mode par défaut
+de cosign inscrirait le nom et le condensé de chaque build dans Rekor, le journal
+de transparence **public** de Sigstore. Ici la signature est poussée à côté de
+l'image dans votre propre registre, et rien ne sort.
+
+```bash
+cosign verify --key cosign.pub \
+  --insecure-ignore-tlog=true \
+  ghcr.io/<org>/ai-security-framework@sha256:9f86d0…
+```
+
+`--insecure-ignore-tlog=true` est requis **parce que** la signature n'a
+volontairement pas été publiée dans le journal de transparence. Le nom du drapeau
+est alarmant ; ce qu'il décrit, ici, est un choix de confidentialité.
+
+> **Utilisez cosign v2.4.x.** La chaîne l'épingle à `v2.4.1`, et ce n'est pas du
+> zèle : le cosign courant **rejette** `--tlog-upload=false` (« not supported with
+> --signing-config »). Éprouvé sur un registre local avant la première exécution —
+> sans ce pin, l'étape de signature aurait échoué au premier `push`, le jour où
+> cosign a publié ce changement et non le jour où la ligne a été écrite.
+
+Toute la mécanique a été validée hors ligne, sur un registre jetable : image
+poussée, signée par condensé, puis vérifiée — *« The signatures were verified
+against the specified public key »*. Ce qui reste inconnu jusqu'au premier `push`
+est uniquement le collage correct des deux secrets.
+
+**Mise en place** (une seule fois) :
+
+```bash
+docker run --rm -e COSIGN_PASSWORD=<votre-phrase> -v "${PWD}:/w" -w /w \
+  gcr.io/projectsigstore/cosign generate-key-pair
+```
+
+Puis, dans *Settings → Secrets and variables → Actions* : `COSIGN_KEY` (tout le
+contenu de `cosign.key`) et `COSIGN_PASSWORD`. `cosign.pub` se versionne — c'est
+elle qui sert à vérifier. `cosign.key` est dans `.gitignore` et ne doit jamais
+être commitée.
+
+> Tant que `COSIGN_KEY` n'existe pas, l'étape de signature **sort en succès avec
+> un avis** : la chaîne ne casse pas, les images sont simplement non signées.
+
+`--no-build` n'est pas cosmétique : sans lui, compose reconstruirait si l'image
+manque, et on retomberait dans le défaut d'origine sans s'en apercevoir.
+
+### Revenir en arrière
+Remettre l'ancien `AUDIT_VERSION`, rejouer les deux mêmes lignes. C'est tout —
+et c'est **possible uniquement parce que les étiquettes sont immuables**.
+
+```bash
+AUDIT_VERSION=sha-9f8e7d6   # la version précédente
+docker compose pull && docker compose up -d --no-build
+```
+
+#### La seule limite, et elle est explicite : le schéma de la base
+
+Le schéma SQLite est versionné (`PRAGMA user_version`). Si la version qu'on
+redéploie est **antérieure à une montée de schéma**, `init()` **refuse de
+démarrer** — le conteneur s'arrête avec un message qui donne la marche à suivre :
+
+```
+Base de données en version de schéma 2, code en version 1 : cette image est
+PLUS ANCIENNE que la base. Démarrer quand même corromprait les données ou
+échouerait en pleine exécution, pas au démarrage.
+→ redéployer une image au moins aussi récente, OU restaurer la sauvegarde
+  d'avant la montée de version :
+     python scripts/backup_volume.py --lister
+     python scripts/backup_volume.py --restaurer <archive>
+```
+
+C'est **voulu** : sans ce refus, le retour arrière « réussissait » puis
+échouait à la première requête touchant une colonne absente — des heures plus
+tard, jamais au healthcheck. Un conteneur qui ne démarre pas se voit.
+
+**Conséquence pratique** : un retour arrière qui traverse un changement de
+schéma exige la sauvegarde d'avant. C'est la raison pour laquelle
+`sauvegarde-planifiee.bat` existe, et pourquoi `--verifier` doit être branché
+sur la supervision. Il n'y a **pas** de migration descendante — voir §F1 de
+`docs/ci_limites_connues.md`.
+
+> **L'ouvrier porte forcément la même étiquette que l'API.** Il partage son
+> état SQLite : un ouvrier d'une autre version lirait un schéma qu'il ne
+> comprend pas. Le compose l'impose — les deux services lisent `AUDIT_IMAGE_API`.
+
+### En développement, rien ne change
+Sans ces variables, compose résout `ai-security-framework:dev` et construit
+localement, exactement comme avant. Vérifié par `docker compose config`.
+
+---
+
+## 7. Limites assumées
 
 À lire avant de présenter un résultat comme une garantie.
 

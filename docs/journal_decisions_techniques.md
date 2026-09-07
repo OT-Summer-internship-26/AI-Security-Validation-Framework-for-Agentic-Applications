@@ -2548,3 +2548,551 @@ a son test de non-regression : ils ne peuvent pas revenir en silence.
    prefixe et bascule tout seul.
 2. Etude de validation DVAP : precision / rappel sur les 15 labs (§26 #4).
 
+
+---
+
+## 40. LA CHAINE DE VERIFICATION NE VERIFIAIT PAS L'IMAGE (2026-09-02)
+
+Point de depart : la CI venait de gagner les tests de mutation et les auto-controles
+d'infrastructure. Le filet paraissait complet. **Il ne l'etait pas, et c'est en
+RECONSTRUISANT l'environnement de la CI qu'on le voit — pas en relisant le YAML.**
+
+### 40.1 La suite hors-ligne ne pouvait pas passer sur un runner
+Un venv neuf avec exactement les paquets que la CI installe (`pytest pytest-cov
+pydantic fastapi httpx jinja2 pyyaml`) : **22 tests sur 242 echouent**. `langgraph`,
+`deepeval` et `deepteam` n'y sont pas. La porte etait rouge sur du vide — ou, pire,
+personne ne lisait le rouge.
+
+Les cinq paquets ajoutes coutent **1 min 40** (cache pip compris). PyRIT reste dehors
+de la porte pour son cout seul (**4 min 44** mesurees) — pas pour une incompatibilite :
+le verrou le resout avec `click==8.1.8`, et l'image l'embarque. Son unique test se met
+en `importorskip` tout seul.
+
+### 40.2 `--no-deps` : ce qui n'est pas dans le verrou n'existe pas dans l'image
+L'image installe `pip install --no-deps -r requirements.lock`. Consequence brutale et
+silencieuse : une dependance declaree mais non epinglee **disparait**, et la
+construction n'en dit rien. Deux paquets y avaient echappe :
+
+* **`langgraph-checkpoint-sqlite`** — jamais declare nulle part, alors que
+  `workflow/audit_graph.py` l'importe sans garde. Or LangGraph est le chemin **PAR
+  DEFAUT** de `run_audit_global.py`. L'audit complet des dix agents plantait donc dans
+  l'image au premier appel : `ModuleNotFoundError`. Le poste de developpement l'avait,
+  installe a la main — exactement le piege deja documente pour `sentry-sdk`.
+* **`pyrit`** — declare dans `requirements.txt`, absent du verrou. L'incident que le
+  commentaire du fichier decrit (« une image sans eux est un auditeur degrade qui ne le
+  dit pas ») n'avait donc **jamais ete corrige** en pratique.
+
+Et `requirements.txt` se contredisait : `garak` etait declare ACTIF ligne 31, puis
+re-declare « volontairement commente » dix lignes plus bas. La premiere ligne gagnait —
+`pip install -r` tentait bien le build Rust que le bloc du dessous dit d'eviter.
+
+### 40.3 Le controle qui aurait du l'attraper etait decoratif, trois fois
+`images.yml` regenerait le verrou et le comparait. Il ne servait a rien :
+1. il emettait `::warning::` — **un avertissement ne fait pas echouer un job** ;
+2. il comparait une resolution NEUVE (versions du jour) au verrou INCREMENTAL du
+   depot : la difference etait garantie, l'alarme permanente, donc plus lue ;
+3. cette resolution complete prend **une trentaine de minutes** (mesuree).
+
+Remplace par `scripts/check_lock.py` : la seule question qui casse l'image — *tout ce
+qui est declare est-il epingle ?* — en une seconde, sans reseau, bloquante. Le negatif
+a ete verifie : verrou ampute de `pyrit` → sortie 1. Rafraichir l'arbre transitif reste
+une operation manuelle, documentee dans le Dockerfile.
+
+Le verrou a ete regenere **incrementalement** (seede par lui-meme) : 167 → 214 paquets,
+delta **purement additif**, aucune version existante deplacee — les epinglages verifies
+(`click==8.1.8` et sa CVE assumee, OpenTelemetry 1.37.0) sont intacts.
+
+### 40.4 Le point de reprise ne survivait pas au redemarrage
+`workflow/paths.py` definit `checkpoints_path()`, dont la docstring exige que le
+checkpoint vive AVEC les resultats — « les separer ferait rejouer des agents dont les
+resultats existent deja ». **Personne ne l'appelait.** `audit_graph.py` codait son
+propre chemin sous une variable differente : `AUDIT_CHECKPOINT_DB`, alors que la
+variable DOCUMENTEE est `AUDIT_CHECKPOINTS`. Celle du document n'avait donc aucun effet.
+
+Dans l'image, `AUDIT_DATA_DIR` designe le volume : les resultats y allaient, le
+checkpoint restait dans `/app/data` — **disque ephemere**. Au redemarrage du conteneur,
+`--resume` ne retrouvait rien et rejouait les dix agents, sans erreur ni message.
+
+Aucun test ne pouvait le voir : la fixture posait elle-meme le chemin, *et* surchargeait
+la constante du module — deux ceintures, donc aucune ne prouvait rien. Elle ne pose plus
+que la variable documentee. La constante de surcharge a ete supprimee : un point
+d'entree de moins, et celui qui reste est celui que la documentation promet.
+
+Le correctif est adosse a un test qui regarde OU le fichier tombe, et ce test est entre
+au controle de mutation : **12/12** desormais.
+
+### 40.5 Deux justifications devenues fausses
+* Le Dockerfile justifiait `--workers 1` par un etat en memoire (`_RUNS`). C'etait vrai ;
+  `api/store.py` tient desormais l'etat en SQLite/WAL avec prise atomique et reprise par
+  battement. Laisser ecrit « chantier d'industrialisation » aurait fait renoncer a monter
+  en charge pour un obstacle disparu. Le reglage ne change pas (non mesure sous charge) ;
+  la raison, si. Ce qui contraint vraiment aujourd'hui : WAL exige un systeme de fichiers
+  local, donc plusieurs NŒUDS restent hors de portee sans vrai serveur de base.
+* La CI d'image n'exercait qu'un agent en sequentiel (`run_agent.py`). Le chemin par
+  defaut — LangGraph et sa base de reprise — n'etait couvert nulle part. C'est pour ca
+  que l'absence de `langgraph-checkpoint-sqlite` n'a jamais ete vue : l'image se
+  construisait, demarrait, repondait `/health`, et le seul chemin qui compte plantait.
+  Ajoute : deux categories en `dry_run` (deterministe, ~3 s, score de reference 55.7/100)
+  **et** la verification que le point de reprise atterrit sur le volume.
+
+### 40.6 Verifie DANS l'image, pas seulement en local
+L'image a ete reconstruite avec le verrou regenere, puis eprouvee :
+
+| Controle | Image d'AVANT | Image d'APRES |
+|---|---|---|
+| `import pyrit`, `sentry_sdk`, `langgraph.checkpoint.sqlite` | absent | **OK** (pyrit 1.0.1) |
+| `run_audit_global` (chemin PAR DEFAUT, 2 categories) | `ModuleNotFoundError` a `audit_graph.py:358` | **55.7/100**, 1 s |
+| `checkpoints.sqlite` sur le volume | non | **oui**, a cote des resultats |
+| Taille | 1,14 Go | **2,13 Go** |
+
+**LE PRIX EST REEL ET IL EST ASSUME : +990 Mo**, soit l'arbre de PyRIT (transformers,
+scipy, pandas, pyarrow, datasets, av, azure-*). C'est le cout de la phrase deja ecrite
+dans `requirements.txt` — « une image sans eux est un auditeur degrade qui ne le dit
+pas ». Si l'on veut revenir en arriere, la decision se prend en commentant `pyrit` dans
+`requirements.txt` et en regenerant : le controle `check_lock.py` restera vert, parce
+qu'une ligne commentee n'est pas une dependance. Ce qu'il ne faut plus, c'est le cas
+d'avant : declare d'un cote, absent de l'autre, et personne pour le voir.
+
+`pyodbc` et `av` ont ete verifies avant construction : roues manylinux disponibles,
+donc aucune dependance de compilation a ajouter a l'etage de build.
+
+### Etat de la verification
+**244 tests** (0 reseau, 0 LLM) + auto-controles des modules + **12/12** au controle de
+mutation. Suite rejouee dans un venv reconstituant EXACTEMENT la CI : **243 passes,
+1 skip** (PyRIT, absent de la porte par arbitrage de duree). Et les quatre controles
+ci-dessus passes dans l'image reelle.
+
+### 40.7 Mon propre garde-fou avait le meme angle mort
+`check_lock.py`, tel qu'ecrit d'abord, comparait *declare* et *epingle*. **Il
+n'aurait PAS attrape la panne pour laquelle il a ete ecrit.** Verifie, pas suppose :
+en retirant `langgraph-checkpoint-sqlite` des DEUX fichiers — l'etat exact d'avant —
+il repond « OK, code 0 ». Un paquet que personne n'a declare lui est invisible, et
+c'est precisement comme ca que la panne est nee.
+
+Ajout du mode `--imports` : il lit les `import` du code par AST, **y compris ceux
+places dans des fonctions** — les deux pannes etaient exactement de cette forme — et
+exige que chacun se resolve. Il ne tourne QUE la ou l'environnement est cense etre
+complet : dans l'image. Dans la porte de qualite CI, volontairement partielle, une
+absence serait normale et ne dirait rien.
+
+**Preuve** : lance sur l'image telle qu'elle etait livree, il sort en 1 et nomme les
+six modules absents — `langgraph.checkpoint.sqlite` et les cinq `pyrit.*`. Les deux
+pannes de production, trouvees d'un coup, avant qu'on les subisse.
+
+Ajout aussi : la suite hors-ligne tourne DANS l'image (239 passes, 5 skips — les
+tests de bac a sable exigent un socket Docker). C'est le **seul endroit ou le test
+PyRIT s'execute vraiment**, puisque la porte de qualite ne l'installe pas. `pytest`
+n'a rien coute : il arrive avec deepeval, donc il est deja dans le verrou.
+
+### 40.8 Garak : honnete, mais TOUJOURS PAS dans l'image
+Question posee : « le verrou de pyrit et garak est-il termine ? » Pour PyRIT, oui —
+epingle, present, et son test passe dans l'image. **Pour garak, non**, et il faut le
+dire clairement.
+
+Ce qui a ete corrige :
+* Le defaut de `GARAK_VENV_PYTHON` etait `C:\Users\asser\garak-venv\Scripts\python.exe`,
+  **le chemin personnel de l'auteur, en dur**. Sur toute autre machine — et dans
+  l'image, qui est Linux — `garak_available()` rendait False pour toujours : l'axe
+  garak, le SEUL axe independant du LLM, disparaissait de tous les audits en silence.
+  Meme classe de panne que PyRIT absent du verrou. Le defaut se deduit desormais du
+  dossier personnel : meme fichier chez l'auteur, chemin atteignable ailleurs. Dans
+  l'image il vaut `/home/audit/garak-venv/bin/python`, et le statut rendu le NOMME.
+* La documentation portait le meme chemin personnel (5 occurrences).
+* **L'en-tete de la porte de qualite annoncait « Garak » parmi les axes qui y
+  tournent. C'etait faux, et depuis toujours** : zero occurrence de garak dans ce
+  workflow. Un en-tete qui promet une couverture inexistante dispense de verifier.
+
+Ce qui RESTE OUVERT, et qui est une decision, pas un oubli : l'image ne contient
+aucun garak. L'installer dans un venv isole a ete tente sous Linux
+(`--only-binary=:all: garak==0.9.0.11`) : **plus de 45 minutes de backtracking pip
+sans aboutir, experience interrompue**. Ce n'est donc pas un ajout de deux lignes au
+Dockerfile. Tant que ce n'est pas fait, l'axe garak est indisponible en production —
+mais il le DIT maintenant, avec le chemin exact qu'il cherche.
+
+### 40.9 En cherchant « ce qui reste faible », trois controles de plus ne servaient a rien
+Le travail precedent a ete relu avec une seule question : **ou est-ce que ca ne
+marche toujours pas ?** Trois reponses, toutes verifiables.
+
+**a) Mon garde-fou ne se serait pas declenche sur la PR qui cree la panne.**
+`check_lock.py --imports` vit dans le job `images.yml`. Or ce job avait un filtre
+`paths` limite au Dockerfile, aux requirements et au docker-compose. La panne
+`langgraph.checkpoint.sqlite` est nee d'un changement de CODE — une ligne
+`from ... import ...` ajoutee dans `workflow/audit_graph.py`, sans toucher a un
+seul de ces fichiers. **Le job ne se serait pas declenche, et le controle aurait
+manque la panne une seconde fois.** Le filtre couvre desormais les huit dossiers
+livres, exactement `DOSSIERS_LIVRES`.
+
+**b) Cinq tests de securite ne tournaient NULLE PART.**
+`DockerSandboxProvider.is_available()` exige que l'image soit DEJA presente
+(`docker image inspect`). Sur un runner neuf elle ne l'est pas : les cinq tests
+d'isolation reelle — reseau bloque, systeme de fichiers en lecture seule,
+execution non-root, boucle infinie tuee — se mettaient en skip. Et ils sautent
+aussi DANS l'image, faute de socket Docker. Ils ne s'executaient donc a aucun
+endroit, alors que c'est la raison d'etre du bac a sable (« l'exfiltration doit
+etre impossible »). Un `docker pull -q python:3.11-slim` avant la suite suffit :
+verifie en local, image presente → **14 passes, 0 skip**.
+
+**c) Le scan de CVE ne portait pas sur ce qui est livre.**
+`pip-audit -r requirements.txt` auditait 25 noms SANS VERSION : pip-audit
+resolvait lui-meme, et jugeait les versions du JOUR — pas les 214 paquets
+epingles que l'image embarque. Desormais `-r requirements.lock --no-deps
+--disable-pip` : aucune resolution, aucune compilation (l'ancienne forme echouait
+sous Windows sur `uvloop`), et le verdict porte sur l'artefact reel. Resultat
+mesure : **1 CVE, `click 8.1.8` (PYSEC-2026-2132)** — exactement le compromis
+delibere que `requirements.txt` documente. Le scan confirme la decision au lieu
+de parler d'autre chose.
+
+**d) L'ancien nom de variable se tait moins.**
+`AUDIT_CHECKPOINT_DB` n'est plus lu. Il n'a jamais ete documente, mais quelqu'un
+a pu le poser en suivant le code : `checkpoints_path()` emet maintenant un
+`RuntimeWarning` s'il est pose SANS `AUDIT_CHECKPOINTS`, et se tait des que la
+variable actuelle existe. Adosse a l'auto-controle du module : **8/8**.
+
+### 40.10 « Le dernier ecart CI vs production » n'en etait pas le dernier
+Deux ecarts subsistaient apres 40.9, tous deux trouves en cherchant explicitement
+« ou la CI teste-t-elle autre chose que ce qui tourne en production ? ».
+
+**a) La porte installait les versions du JOUR, pas celles de l'image.**
+La ligne `pip install pytest … deepteam deepeval langgraph …` etait SANS versions.
+Mesure : la CI installait **deepeval 4.2.1** quand l'image embarque **4.2.0**. La
+porte validait donc un assemblage qui n'existe nulle part en production, et une
+publication amont pouvait la casser un matin sans qu'une ligne du depot ait bouge.
+Corrige par `-c requirements.lock` : le verrou sert de fichier de CONTRAINTES, il
+n'installe rien de plus, il impose les versions exactes. Verifie apres coup :
+deepteam, deepeval, langgraph, pytest et fastapi alignes, suite toujours a
+**245 passes, 1 skip**.
+
+**b) Le chemin d'execution de PRODUCTION n'etait eprouve nulle part.**
+`AUDIT_INLINE_WORKER` vaut `1` par defaut (l'API execute elle-meme, mode
+developpement) et `0` dans docker-compose (l'API MET EN FILE, un ouvrier separe
+execute). Les tests unitaires couvrent le premier ; le job `pile` levait bien la
+pile complete — donc le second — **mais ne verifiait que le relais du dashboard.
+Aucun audit n'etait jamais soumis.** La topologie de production demarrait sans que
+personne ne prouve qu'elle fonctionne.
+
+Reproduit a la main avant d'ecrire l'etape (API en `AUDIT_INLINE_WORKER=0` +
+ouvrier separe, volume partage) : `queued` → pris par `worker-9744bf2eafed` →
+`running` → `completed`. Le chemin marche ; il n'etait simplement pas garde.
+
+L'etape ajoutee exige DEUX choses, et la seconde compte autant que la premiere :
+1. l'audit atteint `completed` ;
+2. le suivi **NOMME un ouvrier** — sans cette assertion, un retour au mode « l'API
+   execute elle-meme » passerait inapercu : le test serait vert alors que la
+   topologie de production aurait disparu.
+
+**Ecarts residuels, assumes et nommes** : la version corrective de Python (CI :
+dernier 3.11 ; image : 3.11.16) et le systeme de base (ubuntu vs debian-slim).
+Tous deux couverts indirectement depuis que la suite hors-ligne tourne AUSSI dans
+l'image (40.7).
+
+### 40.11 Le gate ne choisit plus son sujet, et le dashboard ne ment plus sur ses donnees
+
+**a) `ci_gate.py` prenait « le plus recent sur disque » PAR DEFAUT.**
+`data/audit_results/` contient 38 resultats VERSIONNES — ils alimentent la demo du
+dashboard, c'est leur role. Sans argument, le gate jugeait donc le plus recent
+d'entre eux : un audit du 1er septembre contre une cible bidon `http://c/chat`, et
+annoncait « PASS — deploiement autorise ». Sur une pull request, ou aucune cible
+n'est auditee, ce verdict vert tombait a chaque fois, et etait POSTE EN COMMENTAIRE.
+
+La CI avait ete protegee par une condition de workflow. Ca ne suffisait pas :
+lance a la main, l'outil faisait toujours la meme chose, en silence. Il refuse
+desormais (sortie 2) et explique ; `--dernier` reste disponible, mais il faut
+l'ecrire. Un verdict de securite doit dire SUR QUOI il porte — s'il choisit
+lui-meme son sujet, il finit par repondre a une autre question que celle posee.
+Adosse a un test et au controle de mutation : **14/14**.
+
+**b) Le dashboard affichait des donnees de demonstration comme un historique reel.**
+Signale par l'utilisateur : « la section historique ne contient que 4 audits, tres
+anciens ». L'API en renvoie 38. Les quatre sont le jeu de demo, date de juillet 2026.
+
+Le mecanisme : le store retombe sur `DEMO_AUDITS` quand l'API est injoignable —
+comportement voulu. Mais `DataGate` n'affichait son ecran « API injoignable » que si
+`audits.length === 0`, condition que ce repli rend **impossible** puisqu'il remplit
+la liste. L'ecran d'erreur etait donc INATTEIGNABLE PAR CONSTRUCTION, et aucun
+composant ne lisait `source === 'demo'` — alors que la docstring du store affirmait
+que « la barre superieure l'affiche explicitement ». Elle mentait.
+
+Meme maladie que tout le reste de ce chantier : un mode degrade qui ne s'annonce
+pas. Corrige par un bandeau persistant en tete de page, avec la commande pour tout
+demarrer. `run-dashboard.bat` — qui ne lance QUE le dashboard — le dit aussi dans
+son en-tete : c'est lui qu'on double-clique, `start-dashboard.bat` etant le vrai
+point d'entree (API + dashboard + navigateur).
+
+Verifie : `tsc --noEmit` propre, `npm run build` reussi, la chaine du bandeau est
+presente dans le bundle produit.
+
+## 41. IL N'Y AVAIT PAS DE CD — L'ARTEFACT TESTE N'ETAIT PAS L'ARTEFACT LIVRE (2026-09-03)
+
+Question posee : « la partie CI est reglee, comment est la partie CD ? ». Reponse
+apres inspection : **il n'y en avait pas**. Les deux workflows font de
+l'integration ; rien n'etait livre.
+
+### 41.1 Le constat
+* Les deux images etaient construites avec `load: true`, etiquetees `:ci`, testees
+  — puis **jetees avec le runner**. Aucun registre, aucun `push`.
+* `docker-compose.yml` exigeait `ai-security-framework:${AUDIT_VERSION:-dev}`, une
+  etiquette que **rien ne produisait** : `AUDIT_VERSION` n'existait ni dans
+  `.env.example` ni en CI. Le defaut `dev` s'appliquait donc toujours, et comme
+  aucune image ne portait ce nom, `compose up` RECONSTRUISAIT sur la machine cible.
+  **On testait une chose, on en executait une autre** — la maladie de tout ce
+  chantier, remontee au niveau de la livraison.
+* Le commentaire du compose — « etiquette VERSIONNEE et non `latest` : `latest`
+  d'hier n'existe plus, donc aucun retour arriere possible » — decrivait une
+  INTENTION juste, que rien n'implementait.
+* Aucune tracabilite : un conteneur en marche ne se rattachait a aucun commit.
+
+### 41.2 Ce qui a ete fait
+Publication sur GHCR, **par reetiquetage de l'objet deja teste** et non par
+reconstruction : le condense publie est exactement celui qui a passe l'audit reel
+dans le conteneur, le chemin LangGraph, les imports, garak, la suite hors-ligne,
+les durcissements et le scan. Reconstruire ici, meme depuis le cache, aurait rompu
+la garantie — on aurait livre un artefact que rien n'a verifie.
+
+| Etiquette | Quand | Pourquoi |
+|---|---|---|
+| `sha-<7>` | chaque push sur `main` | immuable : tracabilite ET retour arriere |
+| `<version>` | tag git `v*` | se communique |
+| `latest` | **jamais** | celui d'hier n'existe plus |
+
+Jeton integre (`GITHUB_TOKEN` + `packages: write`) : aucun identifiant externe.
+Une pull request ne publie rien.
+
+Le compose accepte un prefixe de registre (`AUDIT_IMAGE_API`,
+`AUDIT_IMAGE_DASHBOARD`). **Sans ces variables, il resout exactement comme avant**
+(`ai-security-framework:dev`, construction locale) — verifie par
+`docker compose config`. Avec elles, il tire l'image publiee. L'ouvrier partage
+l'etiquette de l'API par construction : il lit le meme etat SQLite, une version
+differente lirait un schema qu'elle ne comprend pas.
+
+### 41.3 Verifie avant d'exister
+Le script de publication a ete EXTRAIT du workflow, ses expressions GitHub
+substituees, et execute en simulation avec `docker` neutralise :
+* `push` sur main -> `sha-abcdef1` seul ;
+* tag `v2.1.0` -> `sha-abcdef1` **et** `2.1.0` ;
+* mise en minuscules du proprietaire (GHCR l'exige) : `MonOrg` -> `monorg`.
+`bash -n` propre. Aucune de ces erreurs n'aurait ete visible avant un vrai push.
+
+### 41.4 Ce qui reste ouvert, et c'est ecrit
+Section D de `docs/ci_limites_connues.md` : Trivy ne bloque pas la publication
+(le rendre bloquant arreterait la chaine sur la CVE `click` deja acceptee — il
+faut un `.trivyignore` date), publier n'est pas deployer (le deploiement reste
+manuel, la cible etant une decision d'organisation), et `/health` ne dit pas quel
+build tourne (l'etiquette du conteneur repond, elle).
+
+### 41.5 Le CD livre en 41.2 n'etait pas correct — trois defauts, tous de moi
+Releve apres coup, en relisant ce que je venais d'ecrire.
+
+**a) Je publiais AVANT d'avoir tout verifie.** Les jobs `api` et `dashboard`
+poussaient dans leur propre job. Or `pile` — le test de la pile complete, avec
+l'ouvrier et la file — tourne APRES (`needs: [api, dashboard]`). Une image dont la
+pile echoue etait deja sur GHCR.
+
+**b) J'avais rendu FAUSSE ma propre justification.** Deux etapes plus tot j'avais
+ecrit : « `cancel-in-progress` est sur ici : aucun de ces jobs ne publie ni ne
+deploie ». Puis je les ai fait publier. Annuler en plein `docker push` laisse un
+jeu d'etiquettes incomplet — le SHA pousse et la promotion non, ou l'API publiee
+sans le dashboard. Passe a `cancel-in-progress: false` sur ce workflow ; la porte
+de qualite, qui ne publie rien, garde `true`.
+
+**c) `pile` ne testait AUCUNE des images en jeu.** Il faisait
+`docker compose up --build` : ni l'image eprouvee par `api`, ni celle qui allait
+etre publiee — une quatrieme construction. La chaine verifiait donc trois objets
+differents et en livrait un autre.
+
+### 41.6 L'architecture retenue
+Les deux etiquettes ne portent pas la meme promesse, donc elles ne naissent pas au
+meme moment :
+
+* `sha-<7>` sort du job qui a construit et eprouve l'image. Immuable et tracable ;
+  le publier tot ne coute rien — personne ne deploie un SHA par accident.
+* `<version>` est le nom par lequel on DEPLOIE. Un job `promouvoir`
+  (`needs: [api, dashboard, pile]`, sur tag git) copie `sha-<7>` vers `<version>`
+  avec `docker buildx imagetools create` : copie de manifeste cote registre, MEME
+  CONDENSE, aucun telechargement, aucune reconstruction.
+
+Et `pile` tire desormais les images publiees puis lance `up --no-build` :
+**exactement la procedure de deploiement documentee**. Le test de pile est donc
+aussi le test de la procedure — si le compose de production ne sait pas tirer ses
+images, on l'apprend la, et pas le jour de la mise en service.
+
+Verifie par simulation avant toute existence reelle : `bash -n` propre sur les
+deux nouveaux scripts ; chemin `push` -> login, `pull`, `up --no-build`, `.env`
+recevant le registre en minuscules et `sha-abcdef1` ; chemin `pull_request` ->
+avertissement et `up --build` (rien n'est publie sur une PR) ; promotion sur tag
+`v2.1.0` -> manifeste copie vers `:2.1.0` pour les deux images.
+
+## 42. LE CYCLE DE VIE DE LA DONNEE — TROIS DEFAUTS DE PRODUCTION (2026-09-06)
+
+Audit demande avec les yeux d'un ingenieur production. Les trous n'etaient pas
+dans le conteneur — durcissement, limites de ressources, rotation des journaux et
+politique de redemarrage sont au-dessus de la moyenne. Ils etaient dans ce qui
+ARRIVE AUX DONNEES.
+
+### 42.1 P1 — aucune migration de schema, et ca rendait le retour arriere faux
+`api/store.py` ne faisait que `CREATE TABLE IF NOT EXISTS`. Le jour ou une colonne
+s'ajoute, le `IF NOT EXISTS` PASSE SON CHEMIN sur un volume existant : l'ancienne
+table survit, et ca casse a la PREMIERE REQUETE qui l'utilise — pas au demarrage,
+donc pas au healthcheck.
+
+Et le symetrique etait pire : la chaine publie des images etiquetees par SHA
+precisement pour permettre le retour arriere (§41). Revenir a une image ANCIENNE
+devant une base RECENTE echouait de la meme facon silencieuse. **Le rollback
+livre en §41 n'etait sur que tant que le schema ne bougeait pas, et rien ne le
+disait.**
+
+Corrige : `PRAGMA user_version`, migrations ordonnees et transactionnelles, et
+surtout un REFUS DE DEMARRER si la base est plus recente que le code, avec le
+message qui donne les deux commandes de restauration. Un conteneur qui ne demarre
+pas se voit ; une requete qui echoue a 3 h du matin, non.
+
+La migration 1 est en `IF NOT EXISTS` a dessein : les volumes anterieurs portent
+deja les tables avec `user_version = 0`. L'appliquer ne fait rien, la base est
+simplement estampillee. Verifie : volume pre-existant adopte, ligne d'avant
+conservee, aucune reprise manuelle.
+
+### 42.2 P2 — SSRF authentifie, et un `NameError` sur le chemin chaud
+`target_url` partait DIRECTEMENT du corps de la requete a la ligne de commande du
+runner, sans meme le controle de schema qui protege les appels DVAP. Un operateur
+authentifie pouvait viser 169.254.169.254, localhost, toute adresse interne. Comme
+les reponses sont enregistrees dans `run_exchanges` puis relisibles par
+`/runs/{id}` et le dashboard : **une cle operateur fuitee = SSRF avec exfiltration
+par le transcript d'audit.**
+
+Corrige par un point UNIQUE de validation (`valider_cible`), branche sur les DEUX
+portes — `/audits` et `/replay`, ce dernier acceptant une cible differente de
+celle de l'audit source. Un test lit l'AST des deux gestionnaires et exige qu'ils
+l'appellent : sans lui, une troisieme porte ajoutee demain rouvrirait le trou.
+
+On ne bloque pas les adresses privees — auditer un service interne qu'on POSSEDE
+est le metier de l'outil. On BORNE : `AUDIT_TARGET_ALLOWLIST`. Vide, tout passe
+(developpement), mais l'API le DIT une fois par processus.
+
+**Trouve en chemin, sans rapport avec P2 mais grave** : `logger` etait utilise
+dans trois `except` de `api/main.py` sans avoir jamais ete defini. Ces blocs
+levaient donc un `NameError` au lieu d'ecrire une ligne — et `Run.__setattr__` est
+sur le chemin chaud, chaque mise a jour de statut y passe. Le commentaire disait
+« le suivi ne fait jamais echouer l'audit » ; c'etait l'inverse. Le seul cas ou ce
+filet servait — `store.maj_run` en echec, exactement le scenario P1 — etait celui
+ou il cassait.
+
+### 42.3 P3 — une sauvegarde qui existait sans jamais avoir tourne
+`backup_volume.py` etait ecrit, teste, documente « AVANT toute operation » — et
+planifie NULLE PART. Deux ajouts :
+
+* `--verifier` : code de sortie non nul si la derniere sauvegarde a plus de 26 h
+  (26 et non 24, sinon un travail quotidien clignote un jour sur deux, et une
+  alerte qui clignote finit ignoree). **Lance pour la premiere fois, il a repondu
+  « AUCUNE sauvegarde ».** Le script existait ; rien n'en avait jamais ete pris.
+* purge des archives au-dela des 14 plus recentes, APRES une sauvegarde reussie
+  et jugee plausible seulement — purger avant effacerait la derniere copie valide
+  au moment ou elle est la seule qui reste.
+
+`sauvegarde-planifiee.bat` porte la commande `schtasks` a enregistrer une fois, et
+l'equivalent cron. Il propage le code de sortie : le Planificateur affiche
+« Dernier resultat », et le perdre ferait passer un echec pour un succes dans la
+seule interface que l'operateur regarde.
+
+### Etat de la verification
+**251 tests** (0 reseau, 0 LLM) + **16/16** au controle de mutation — trois
+nouvelles entrees : le refus de demarrer sur base plus recente, le refus d'une
+cible hors liste, et le detecteur garak indisponible. Auto-controles :
+`backup_volume` passe de 4/4 a **8/8** (purge et fraicheur).
+
+RESTE A FAIRE : la verification DANS l'image (Docker Desktop arrete au moment de
+l'ecriture). Les cinq tests de bac a sable sautent pour la meme raison.
+
+## 42. L'OUTIL QUI PROUVE LES AUTRES S'EST PROUVE FAUX (2026-09-06)
+
+Audit demande apres les correctifs P1/P2/P3. Quatre defauts dans mon propre
+travail, puis un cinquieme — dans le controle de mutation lui-meme — qui est le
+plus instructif des cinq.
+
+### 42.1 Quatre defauts dans les correctifs precedents
+
+**a) Course de migration.** `docker compose` lance l'API et l'ouvrier EN MEME
+TEMPS ; les deux appellent `store.init()`. La premiere version lisait
+`user_version` AVANT la transaction : les deux processus lisaient donc « 0 » et
+appliquaient la meme migration. Invisible aujourd'hui (migration 1 en
+`IF NOT EXISTS`), mais MESURE avec une migration non idempotente — celle que sera
+chacune des suivantes : 6 demarrages simultanes -> `duplicate column name`.
+Corrige par `BEGIN IMMEDIATE` + relecture de la version SOUS le verrou.
+`executescript` a du etre abandonne : il emet un COMMIT avant de demarrer, ce qui
+aurait mis fin a la transaction qui protege justement la migration. Decoupage par
+`sqlite3.complete_statement`, qui connait les litteraux.
+
+**b) `TARGET_ALLOWLIST` lue A L'IMPORT.** Exactement le piege deja corrige DEUX
+FOIS dans ce depot (`AUDIT_TARGET_CONCURRENCY` dans base_agent, puis le chemin de
+checkpoint dans audit_graph) — reproduit par moi trois heures plus tard. Lue a
+l'appel desormais ; et les tests posent la VRAIE variable au lieu de surcharger un
+attribut de module, donc ils eprouvent ce qu'un operateur configure.
+
+**c) `sauvegardes/` n'etait pas dans `.gitignore`.** Les archives contiennent la
+base d'etat COMPLETE : empreintes des cles d'API, file, et tous les resultats avec
+les reponses des cibles. Un `git add -A` distrait les publiait.
+
+**d) La procedure de retour arriere ne mentionnait pas sa propre limite.** Depuis
+le schema versionne, revenir a une image anterieure a une montee de schema fait
+REFUSER le demarrage. C'est voulu — mais je l'avais ecrite avant, et l'ecart etait
+de moi.
+
+### 42.2 Le cinquieme : `mutation_check.py` a menti sur lui-meme
+
+Constate en reprenant la validation : deux tests echouaient, et le controle
+annoncait « 16/16 ». En regardant le fichier, `api/main.py` contenait `if False:`
+au lieu de `if not autorise:` — **le garde-fou SSRF etait DESACTIVE dans l'arbre de
+travail**, laisse la par une execution interrompue qui n'avait pas restaure.
+
+Le script l'avait vu. Il rangeait l'ancre absente sous « ? »... **et l'excluait du
+DENOMINATEUR**, puis sortait en 0. Un ratio complet sur un perimetre retreci :
+« 16/16 » au lieu de « un correctif de securite n'est plus eprouve du tout ».
+C'est precisement la maladie que ce script est cense debusquer chez les autres —
+un controle vert qui ne verifie plus rien.
+
+Corrige : une ancre absente est un ECHEC, elle COMPTE dans le total, elle
+distingue « mutation non restauree » (le correctif est desactive, voici la ligne a
+remettre) de « le correctif a change de forme ». Reproduit apres correctif :
+`15/17`, sortie 1, avec le fichier et la ligne exacte.
+
+Et le calcul fautif a ete isole dans `synthese()`, avec un auto-controle
+(`--self-test`, branche en CI) dont le cas 3 est exactement celui qui a coute :
+une ancre absente ne doit PAS retrecir le denominateur.
+
+### 42.3 Le test de course etait probabiliste
+En rejouant le controle : « 17/17, 16/17, 17/17 ». La mutation
+`BEGIN IMMEDIATE` -> `BEGIN DEFERRED` n'etait attrapee qu'environ six fois sur
+sept — six fils peuvent se serialiser par chance. Un filet qui n'attrape que
+parfois est un filet decoratif avec de la chance.
+
+Corrige : cinq tours sur cinq bases neuves, avec une barriere de depart pour que
+les six fils partent au meme instant. Verifie : cinq executions consecutives du
+controle de mutation, 17/17 a chaque fois.
+
+## 43. LE CD COMPLETE : INVENTAIRE, CONDENSE, SIGNATURE, RETENTION (2026-09-06)
+
+**SBOM** — CycloneDX de l'image DEJA TESTEE, artefact du job (90 j). Les
+attestations `buildx` ont ete ecartees : elles imposent `build --push`, donc une
+RECONSTRUCTION, ce qui romprait la garantie centrale de cette chaine — on publie
+l'objet eprouve, pas un jumeau. Trivy lit l'image telle quelle.
+
+**Condense** — publie a cote de l'etiquette et inscrit dans le resume du job. Le
+compose accepte desormais `AUDIT_REF_API` / `AUDIT_REF_DASHBOARD`, une reference
+COMPLETE : c'est la seule forme reellement immuable, une etiquette restant
+techniquement repoussable. Verifie : sans ces variables, `docker compose config`
+resout exactement comme avant (`ai-security-framework:dev`, construction locale).
+
+**Signature** — par CLE, pas en mode « keyless ». Le defaut de cosign inscrirait
+le nom et le condense de chaque build dans Rekor, journal de transparence PUBLIC.
+Pour un outil interne, c'est une divulgation non demandee. `--key` +
+`--tlog-upload=false` : la signature vit a cote de l'image dans le GHCR du projet.
+Signee PAR CONDENSE, jamais par etiquette — signer `:sha-abc` reviendrait a signer
+« ce que cette etiquette designera ». L'etape sort en succes avec un avis tant que
+`COSIGN_KEY` est absent : la chaine ne casse pas avant que la cle existe.
+
+**Retention** — workflow planifie separe (y ajouter un `schedule` a `images.yml`
+aurait relance toute la construction chaque semaine). Garde 30 versions et
+PROTEGE les etiquettes de version par `ignore-versions` : `1.2.3` est le nom par
+lequel on revient en arriere, le supprimer supprimerait le retour arriere.
+
+**Verifie** : les 30 scripts shell des workflows passent `bash -n` ; les trois
+YAML se chargent ; le compose resout dans les deux sens (local et condense).
+`cosign.key` est dans `.gitignore` — une cle privee chiffree reste une cle privee.
