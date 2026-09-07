@@ -390,3 +390,143 @@ def test_le_suivi_d_execution_survit_a_un_nouvel_objet_api(client_admin):
     store.fermer()                          # « redemarrage » : plus rien en memoire
     r = client_admin.get(f"/runs/{run_id}")
     assert r.status_code == 200 and r.json()["run_id"] == run_id
+
+
+# --------------------------------------------------------------------------- #
+# La cible d'un audit : cet outil ATTAQUE ce qu'on lui designe.
+# --------------------------------------------------------------------------- #
+
+def test_un_schema_non_http_est_refuse():
+    """`file://` ou `gopher://` ferait lire un fichier local au runner."""
+    from fastapi import HTTPException
+
+    from api import main
+
+    with pytest.raises(HTTPException) as e:
+        main.valider_cible("file:///etc/passwd")
+    assert e.value.status_code == 400
+
+
+def test_sans_liste_toute_cible_passe_MAIS_l_outil_le_dit(monkeypatch, caplog):
+    """Le defaut reste permissif — c'est le mode developpement — mais pas muet.
+
+    Une installation de production laissee ouverte par ignorance est le scenario
+    a eviter : sans avertissement, personne ne decouvre l'etat avant l'incident.
+    """
+    import logging
+
+    from api import main
+
+    monkeypatch.delenv("AUDIT_TARGET_ALLOWLIST", raising=False)
+    monkeypatch.setattr(main, "_ALERTE_CIBLE_LIBRE_EMISE", False)
+    with caplog.at_level(logging.WARNING, logger="api.main"):
+        assert main.valider_cible("http://169.254.169.254/latest")
+    assert "AUDIT_TARGET_ALLOWLIST" in caplog.text, (
+        "un mode permissif qui ne s'annonce pas se decouvre le jour de l'incident")
+
+
+def test_une_cible_hors_liste_est_refusee(monkeypatch):
+    """LE cas qui compte : cle operateur fuitee -> SSRF vers les metadonnees.
+
+    ON POSE LA VRAIE VARIABLE, PAS UN ATTRIBUT DE MODULE.
+        La premiere version surchargeait `main.TARGET_ALLOWLIST` — elle aurait
+        donc passe meme si le code avait lu l'environnement A L'IMPORT, cas ou
+        un operateur qui configure la variable n'obtient RIEN. C'est le piege
+        deja corrige deux fois dans ce depot. En posant `AUDIT_TARGET_ALLOWLIST`,
+        ce test eprouve ce qu'un operateur configure reellement.
+
+    Les reponses de la cible sont enregistrees dans `run_exchanges` puis
+    relisibles par `/runs/{id}` : sans bornage, l'outil devient un SSRF
+    authentifie AVEC exfiltration par le transcript d'audit.
+    """
+    from fastapi import HTTPException
+
+    from api import main
+
+    monkeypatch.setenv("AUDIT_TARGET_ALLOWLIST", "localhost")
+    with pytest.raises(HTTPException) as e:
+        main.valider_cible("http://169.254.169.254/latest/meta-data/")
+    assert e.value.status_code == 403
+    assert "169.254.169.254" in e.value.detail, "le refus doit NOMMER la cible refusee"
+
+
+def test_le_motif_a_point_couvre_le_sous_domaine_mais_PAS_le_domaine_nu(monkeypatch):
+    """`.interne.exemple.com` n'autorise pas `interne.exemple.com`.
+
+    Le domaine nu peut appartenir a un tiers, ou etre servi par un frontal
+    different de celui qu'on a voulu autoriser. Elargir « pour faire simple »
+    serait exactement la permissivite qu'on essaie de retirer.
+    """
+    from fastapi import HTTPException
+
+    from api import main
+
+    monkeypatch.setenv("AUDIT_TARGET_ALLOWLIST", ".interne.exemple.com")
+    assert main.valider_cible("http://api.interne.exemple.com/chat")
+    with pytest.raises(HTTPException):
+        main.valider_cible("http://interne.exemple.com/chat")
+
+
+def test_les_DEUX_portes_qui_acceptent_une_cible_la_valident():
+    """`/audits` ET `/replay` doivent passer par le point unique de validation.
+
+    Le rejeu accepte une cible DIFFERENTE de celle de l'audit source : l'oublier
+    aurait laisse une seconde porte sur le meme risque. Ce test lit l'AST plutot
+    que de monter un audit source complet — il repond a la seule question qui
+    compte : ces deux fonctions appellent-elles `valider_cible` ?
+    """
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent / "api" / "main.py").read_text(
+        encoding="utf-8")
+    arbre = ast.parse(source)
+
+    for nom_fonction in ("create_audit", "create_replay"):
+        fonction = next(
+            (n for n in ast.walk(arbre)
+             if isinstance(n, ast.FunctionDef) and n.name == nom_fonction), None)
+        assert fonction is not None, f"{nom_fonction} introuvable"
+        appels = {n.func.id for n in ast.walk(fonction)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        assert "valider_cible" in appels, (
+            f"{nom_fonction}() accepte une cible SANS la valider — seconde porte")
+
+
+def test_un_echec_de_persistance_ne_TUE_pas_l_audit(monkeypatch, tmp_path):
+    """Le gestionnaire cense absorber l'echec levait un NameError.
+
+    LE BUG QU'IL ATTRAPE
+        `Run.__setattr__`, `log` et `add_exchange` appelaient `logger.debug(...)`
+        dans leur `except` — mais `logger` n'etait defini NULLE PART dans le
+        module. Ces blocs levaient donc un `NameError` au lieu d'ecrire une
+        ligne. Or `__setattr__` est sur le CHEMIN CHAUD : chaque mise a jour de
+        statut y passe. Des que `store.maj_run` echouait — base verrouillee,
+        disque plein, schema en desaccord — le filet cense rattraper tuait
+        l'audit. Le seul cas ou il servait etait celui ou il cassait.
+    """
+    import uuid
+
+    from api import main, store
+
+    # Base isolee : ce test ne doit RIEN ecrire dans celle du projet.
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "panne.sqlite"))
+    store.fermer()
+    store.init()
+    run = main.Run(f"run-essai-{uuid.uuid4().hex[:8]}",
+                   main.AuditRequest(profile="dry_run"))
+
+    def store_en_panne(*a, **k):
+        raise RuntimeError("base indisponible")
+
+    # La panne est injectee APRES la construction : on eprouve les trois
+    # gestionnaires d'erreur, pas la creation de l'execution.
+    monkeypatch.setattr(main.store, "maj_run", store_en_panne)
+    monkeypatch.setattr(main.store, "ajouter_log", store_en_panne)
+    monkeypatch.setattr(main.store, "ajouter_echange", store_en_panne)
+    object.__setattr__(run, "_persiste", True)
+
+    run.status = "running"          # passe par __setattr__ -> maj_run en panne
+    run.log("INFO", "coucou")
+    run.add_exchange({"a": 1})
+    assert run.status == "running", "l'objet en memoire doit rester coherent"

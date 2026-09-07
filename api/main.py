@@ -24,6 +24,7 @@ AUTHENTIFICATION
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import urllib.parse
@@ -57,6 +58,18 @@ RESULTS_DIR = results_dir()
 from api.logging_config import configurer as _configurer_journal
 
 LOG_FORMAT = _configurer_journal()
+
+# `logger` ÉTAIT UTILISÉ SANS JAMAIS AVOIR ÉTÉ DÉFINI.
+#     Trois `except` l'appelaient (`Run.__setattr__`, `log`, `add_exchange`) pour
+#     absorber un échec de persistance. Sans liaison, ces blocs levaient un
+#     `NameError` AU LIEU d'écrire une ligne de journal — et `__setattr__` est
+#     sur le chemin chaud : chaque mise à jour de statut y passe.
+#
+#     Le commentaire disait « le suivi ne fait jamais échouer l'audit ». C'était
+#     l'inverse : dès que `store.maj_run` échouait — base verrouillée, disque
+#     plein, schéma en désaccord — le gestionnaire censé le rattraper tuait
+#     l'audit. Le seul cas où il servait était justement celui où il cassait.
+logger = logging.getLogger(__name__)
 
 # Magasin durable : etat des executions et cles d'API, sur le volume partage.
 # Initialise a l'import : l'API et l'ouvrier partagent le meme schema, et
@@ -366,6 +379,95 @@ def _drain(run: Run, stream: Any) -> None:
     if dropped:
         run.log("debug", f"{dropped} ligne(s) de progression filtrées (spinner)")
     stream.close()
+
+
+def cibles_autorisees() -> tuple[str, ...]:
+    """Hôtes autorisés, LUS À L'APPEL. Vide = aucune restriction.
+
+    Ex. : AUDIT_TARGET_ALLOWLIST=localhost,127.0.0.1,.interne.exemple.com
+
+    POURQUOI PAS UNE CONSTANTE DE MODULE
+        La première version lisait l'environnement À L'IMPORT. C'est exactement
+        le piège déjà corrigé deux fois ici — `AUDIT_TARGET_CONCURRENCY` figé à
+        l'import dans `base_agent`, puis le chemin de checkpoint dans
+        `audit_graph`. Une variable posée après le chargement du module (test,
+        ouvrier, conteneur reconfiguré) était silencieusement ignorée.
+
+        Effet secondaire qui compte : les tests posent désormais la VRAIE variable
+        au lieu de surcharger un attribut de module. Ils éprouvent donc ce qu'un
+        opérateur configure, pas un raccourci interne.
+    """
+    brut = os.environ.get("AUDIT_TARGET_ALLOWLIST", "")
+    return tuple(h.strip().lower() for h in brut.split(",") if h.strip())
+
+_ALERTE_CIBLE_LIBRE_EMISE = False
+
+
+def valider_cible(url: str) -> str:
+    """POINT UNIQUE de validation d'une cible d'audit. Rend l'URL, ou lève 400/403.
+
+    POURQUOI CE GARDE-FOU EXISTE
+        `target_url` partait DIRECTEMENT du corps de la requête à la ligne de
+        commande du runner, sans la moindre vérification — pas même le contrôle
+        de schéma qui protège déjà les appels au catalogue DVAP (`_open_http`).
+        Un opérateur authentifié pouvait viser `169.254.169.254` (métadonnées
+        cloud), `localhost`, n'importe quelle adresse interne. Et comme les
+        réponses de la cible sont enregistrées dans `run_exchanges` puis
+        relisibles par `/runs/{id}` et le dashboard, **une clé opérateur fuitée
+        devenait un SSRF authentifié avec exfiltration par le transcript**.
+
+    CE QU'ON N'INTERDIT PAS, ET POURQUOI
+        Les adresses privées restent atteignables : auditer un service interne
+        qu'on POSSÈDE est exactement le métier de cet outil, et la cible par
+        défaut est `http://localhost:8090`. Interdire casserait l'usage légitime.
+        On BORNE : une installation déclare ce qu'elle a le droit d'attaquer.
+
+    LE DÉFAUT EST PERMISSIF, MAIS IL NE SE TAIT PAS
+        Sans `AUDIT_TARGET_ALLOWLIST`, toute cible est acceptée — mode
+        développement. Un avertissement est émis UNE FOIS, pour qu'une mise en
+        production ne reste pas ouverte par simple ignorance. Une fois par
+        processus et non par audit : une alerte répétée à chaque appel finit
+        par être filtrée, donc par ne plus rien signaler.
+    """
+    global _ALERTE_CIBLE_LIBRE_EMISE
+
+    decoupe = urllib.parse.urlparse(url)
+    hote = (decoupe.hostname or "").lower()
+
+    if decoupe.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"schéma de cible non autorisé : "
+                   f"{decoupe.scheme or '(aucun)'} — attendu http ou https")
+    if not hote:
+        raise HTTPException(status_code=400, detail=f"cible sans hôte : {url[:80]}")
+
+    liste = cibles_autorisees()
+    if not liste:
+        if not _ALERTE_CIBLE_LIBRE_EMISE:
+            _ALERTE_CIBLE_LIBRE_EMISE = True
+            logger.warning(
+                "AUDIT_TARGET_ALLOWLIST n'est pas définie : TOUTE cible est "
+                "acceptée (mode développement). En production, déclarez les hôtes "
+                "autorisés — sinon une clé opérateur permet d'atteindre n'importe "
+                "quelle adresse interne, et les réponses sont conservées dans le "
+                "journal d'échanges.")
+        return url
+
+    # Un motif couvre l'hôte exact ; commençant par un point, il couvre aussi
+    # les sous-domaines (`.interne.exemple.com`) mais JAMAIS le domaine nu —
+    # `.exemple.com` n'autorise pas `exemple.com`, qui peut appartenir à un tiers.
+    autorise = any(
+        hote == motif or (motif.startswith(".") and hote.endswith(motif))
+        for motif in liste
+    )
+    if not autorise:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"cible « {hote} » hors de la liste autorisée "
+                    f"({', '.join(liste)}). "
+                    "Ajustez AUDIT_TARGET_ALLOWLIST si cette cible vous appartient."))
+    return url
 
 
 def _build_cmd(req: AuditRequest, category: str) -> list[str]:
@@ -689,7 +791,19 @@ def health() -> dict[str, Any]:
     # Compte les executions de TOUTES les repliques, pas seulement celles de
     # ce processus : c'est la charge reelle du service.
     services["active_runs"] = store.compter_actifs()
-    return {"status": "ok", "version": app.version, "services": services}
+    # `build` RÉPOND À LA PREMIÈRE QUESTION D'UN INCIDENT : quelle version tourne ?
+    #     `version` reste la version PRODUIT (1.0.0), codée en dur et rarement
+    #     touchée ; elle ne dit pas quel commit a été livré. `build` porte le SHA
+    #     injecté à la construction de l'image. Sans lui, il fallait un accès
+    #     Docker à l'hôte pour lire l'étiquette du conteneur.
+    #     « inconnu » = image construite à la main, hors chaîne — et c'est une
+    #     information en soi.
+    return {
+        "status": "ok",
+        "version": app.version,
+        "build": os.environ.get("AUDIT_BUILD", "inconnu"),
+        "services": services,
+    }
 
 
 class NewKeyRequest(BaseModel):
@@ -829,6 +943,8 @@ def get_audit_report(audit_id: str) -> Any:
 def create_audit(req: AuditRequest, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """LANCE un audit réel en tâche de fond et retourne son `run_id`."""
     identite = _identifier(x_api_key, minimum="operator")
+    # Avant tout le reste : cet outil ATTAQUE ce qu'on lui désigne.
+    valider_cible(req.target_url)
     if not RUNNER.exists():
         raise HTTPException(status_code=500, detail="scripts/run_agent.py introuvable")
 
@@ -906,6 +1022,10 @@ def create_replay(req: ReplayRequest, x_api_key: str | None = Header(default=Non
     target = req.target_url or source.get("target_url")
     if not target:
         raise HTTPException(status_code=400, detail="Aucune cible : précisez target_url")
+    # Même garde-fou que `/audits` : un rejeu attaque aussi, et il accepte une
+    # cible DIFFÉRENTE de celle de l'audit source. L'oublier ici aurait laissé
+    # une seconde porte sur le même risque.
+    valider_cible(target)
 
     attacks = [
         a for ag in (source.get("agents") or {}).values()
