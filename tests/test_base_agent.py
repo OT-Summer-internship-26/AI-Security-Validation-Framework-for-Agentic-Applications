@@ -344,3 +344,126 @@ def test_plafond_lu_apres_import_et_reconfigurable(monkeypatch):
     ba.set_target_concurrency(0)
     assert ba.target_concurrency() == 1
     ba.set_target_concurrency(3)
+
+
+def test_une_reponse_DEMESUREE_est_exclue_et_ne_remplit_pas_la_memoire(monkeypatch):
+    """`httpx.request()` bufferise TOUT : la cible dictait la memoire du processus.
+
+    MESURE AVANT CORRECTIF
+        80 Mo de reponse -> 250 Mo de pic cote Python (decodage puis parsing
+        JSON amplifient d'un facteur trois). Extrapole, 2 Go depassent le
+        `mem_limit: 6g` de l'ouvrier : OOM en plein audit. Et chaque reponse part
+        aussi dans `run_exchanges` et le fichier d'audit.
+
+        C'est un outil de RED TEAM : la cible est hostile par hypothese, et la
+        premiere chose qu'un systeme attaque peut faire, c'est repondre trop.
+
+    EXCLU, PAS TRONQUE. Juger une reponse coupee au milieu reviendrait a noter
+    une cible sur une preuve amputee. Le marqueur `[HTTP_ERROR]` la sort du
+    calcul — le comportement deja retenu pour les pannes reseau.
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from agents.base_agent import build_http_callback, is_http_error
+
+    class Bavarde(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            corps = b'{"response": "' + b"A" * 200_000 + b'"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            self.wfile.write(corps)
+
+        def log_message(self, *a):
+            pass
+
+    serveur = HTTPServer(("127.0.0.1", 0), Bavarde)
+    threading.Thread(target=serveur.serve_forever, daemon=True).start()
+    port = serveur.server_address[1]
+    try:
+        monkeypatch.setenv("AUDIT_MAX_RESPONSE_BYTES", "50000")
+        cb = build_http_callback(f"http://127.0.0.1:{port}/chat",
+                                 prompt_field="p", response_field="response", timeout=20)
+        reponse = cb("test")
+        assert is_http_error(reponse), (
+            "une reponse au-dela du plafond doit EXCLURE le test, pas etre jugee")
+        assert "AUDIT_MAX_RESPONSE_BYTES" in str(reponse), (
+            "le message doit nommer le reglage, sinon on cherche la panne ailleurs")
+
+        # Et sous le plafond, rien ne change.
+        monkeypatch.setenv("AUDIT_MAX_RESPONSE_BYTES", "1000000")
+        cb2 = build_http_callback(f"http://127.0.0.1:{port}/chat",
+                                  prompt_field="p", response_field="response", timeout=20)
+        normale = cb2("test")
+        assert not is_http_error(normale) and len(str(normale)) == 200_000
+    finally:
+        serveur.shutdown()
+
+
+def test_une_cible_qui_compresse_ou_qui_echoue_ne_casse_pas_le_callback():
+    """Contrat fail-safe : jamais d'exception hors du callback, et jamais un
+    test valide exclu du score par un detail de transport.
+
+    DEUX REGRESSIONS INTRODUITES PAR LA LECTURE EN FLUX (borne de taille) :
+
+      · `raise_for_status()` sur un flux NON LU : `exc.response.text` levait
+        `ResponseNotRead` DANS le gestionnaire d'erreur, donc l'exception
+        sortait du callback au lieu de rendre la chaine [HTTP_ERROR]. Un audit
+        contre une cible qui rend 500 s'arretait net.
+
+      · reconstruire une `httpx.Response` avec des octets DEJA decompresses et
+        les en-tetes d'origine : httpx gunzipait une seconde fois
+        (`DecodingError`). Toute cible derriere un nginx qui compresse voyait
+        TOUS ses tests exclus du score — un audit vert qui n'a rien teste.
+        C'est le cas le PLUS courant en production, et le plus silencieux.
+    """
+    import gzip
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from agents.base_agent import build_http_callback, is_http_error
+
+    class Cible(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/boom":
+                corps, statut, entetes = b'{"detail": "cible en panne"}', 500, {}
+            else:
+                corps = gzip.compress(b'{"response": "salut compresse"}')
+                statut, entetes = 200, {"Content-Encoding": "gzip"}
+            self.send_response(statut)
+            self.send_header("Content-Type", "application/json")
+            for k, v in entetes.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            self.wfile.write(corps)
+
+        def log_message(self, *a):
+            pass
+
+    serveur = HTTPServer(("127.0.0.1", 0), Cible)
+    threading.Thread(target=serveur.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{serveur.server_address[1]}"
+    try:
+        gzippee = build_http_callback(f"{base}/chat", prompt_field="p",
+                                      response_field="response", timeout=20)("test")
+        assert not is_http_error(gzippee), (
+            f"une reponse gzip doit etre JUGEE, pas exclue du score : {gzippee!r}")
+        assert str(gzippee) == "salut compresse"
+
+        # 500 : une chaine [HTTP_ERROR] exploitable, PAS une exception.
+        panne = build_http_callback(f"{base}/boom", prompt_field="p", timeout=20)("test")
+        assert is_http_error(panne), panne
+        assert "500" in str(panne) and "cible en panne" in str(panne), (
+            "le message doit porter le statut ET un extrait du corps, sinon on "
+            "diagnostique a l'aveugle")
+    finally:
+        serveur.shutdown()

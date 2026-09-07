@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT))
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.cibles import CibleRefusee, avertissement_si_libre, valider_cible
 from workflow.paths import affichable, results_dir
 
 OUT_DIR = results_dir()
@@ -73,6 +74,14 @@ def main() -> int:
     ap.add_argument("--profile", default="final", choices=["dev", "ollama", "openai", "final", "dry_run"])
     ap.add_argument("--prompt-field", default="message")
     ap.add_argument("--response-field", default="response")
+    # Voir run_agent.py : `cfg["headers"]` etait deja lu par
+    # `workflow/audit_graph._build_callback`, mais rien ne le remplissait.
+    ap.add_argument("--headers", default=None,
+                    help="en-tetes HTTP JSON envoyes a la cible. "
+                         "Ex. --headers '{\"Authorization\": \"Bearer xxx\"}'. "
+                         "Sans ce drapeau, une cible protegee par un token repond 401 : "
+                         "l'axe est EXCLU du score (jamais note 0) — l'audit ne mesure "
+                         "alors rien, sans le dire assez fort.")
     ap.add_argument("--extra-payload", default=None)
     ap.add_argument("--attacks-per-type", type=int, default=1)
     ap.add_argument("--pyrit-max-turns", type=int, default=2)
@@ -142,7 +151,8 @@ def main() -> int:
         "--timeout", str(args.timeout),
         "--garak-probes", args.garak_probes,
     ]
-    for flag, val in (("--extra-payload", args.extra_payload),
+    for flag, val in (("--headers", args.headers),
+                      ("--extra-payload", args.extra_payload),
                       ("--source-path", args.source_path),
                       ("--requirements-path", args.requirements_path)):
         if val:
@@ -276,10 +286,25 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
         print(f"[global] {category} → {result.score}/10 · "
               f"cumul {record['global_score']}/100 ({record['risk_level']})", flush=True)
 
+    # LA MEME REGLE QUE L'API, PAS UNE COPIE.
+    #     L'allowlist ne protegeait que l'API : en CLI on visait n'importe quoi.
+    #     C'est defendable — qui peut lancer ce script peut lancer `curl` — mais
+    #     elle etait presentee comme bornant la cible, pas l'interface. Une
+    #     garantie a moitie vraie est une garantie sur laquelle on se repose a
+    #     tort. Vide par defaut : le developpement local ne change pas d'un iota.
+    try:
+        valider_cible(args.target)
+    except CibleRefusee as refus:
+        ap.error(str(refus))
+    avertissement = avertissement_si_libre()
+    if avertissement:
+        print(f"[avertissement] {avertissement}", file=sys.stderr)
+
     cfg = {
         "llm_profile": args.profile, "prompt_field": args.prompt_field,
         "response_field": args.response_field,
         "extra_payload": json.loads(args.extra_payload) if args.extra_payload else None,
+        "headers": json.loads(args.headers) if args.headers else None,
         "attacks_per_type": args.attacks_per_type, "max_concurrent": args.max_concurrent,
         "pyrit_max_turns": args.pyrit_max_turns, "http_timeout": args.timeout,
         "garak_probes": args.garak_probes, "garak_request_timeout": int(args.timeout),

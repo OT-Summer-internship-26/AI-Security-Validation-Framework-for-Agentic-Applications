@@ -59,6 +59,10 @@ INTERVALLE_S = float(os.environ.get("AUDIT_WORKER_POLL", "2"))
 # ouvrier bien vivant se ferait retirer son travail entre deux battements.
 BATTEMENT_S = 30.0
 
+# Rythme du menage. Un jour : la retention se compte en jours, purger plus
+# souvent ne supprimerait rien de plus et relirait la table pour rien.
+MENAGE_S = 24 * 3600.0
+
 _ARRET = threading.Event()
 
 
@@ -130,6 +134,22 @@ def boucle(une_seule: bool = False) -> int:
         print(f"[worker] {repris} exécution(s) abandonnée(s) remise(s) en file",
               flush=True)
 
+    # MENAGE : au demarrage, PUIS tous les jours.
+    #     `run_logs` et `run_exchanges` n'etaient jamais nettoyes — croissance
+    #     non bornee sur le volume persistant. Le demarrage SEUL ne suffisait
+    #     pas : un ouvrier en `restart: always` qui ne tombe jamais ne purgeait
+    #     jamais, et c'est justement celui qui tourne depuis six mois qui a le
+    #     plus a purger. `AUDIT_RETENTION_JOURS=0` desactive la purge.
+    def menage() -> float:
+        bilan = store.purger()
+        if bilan["runs"]:
+            print(f"[worker] purge : {bilan['logs']} journal(aux) et "
+                  f"{bilan['echanges']} echange(s) de {bilan['runs']} execution(s) "
+                  f"de plus de {bilan['jours']} jours", flush=True)
+        return time.time()
+
+    dernier_menage = menage()
+
     dernier_balayage = time.time()
     while not _ARRET.is_set():
         travail = store.prendre_run(moi)
@@ -152,6 +172,9 @@ def boucle(une_seule: bool = False) -> int:
             n = store.reprendre_abandonnes()
             if n:
                 print(f"[worker] {n} exécution(s) reprise(s) après abandon", flush=True)
+
+        if time.time() - dernier_menage > MENAGE_S:
+            dernier_menage = menage()
 
         _ARRET.wait(INTERVALLE_S)
 

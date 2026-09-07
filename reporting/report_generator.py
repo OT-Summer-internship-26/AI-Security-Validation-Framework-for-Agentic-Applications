@@ -220,6 +220,19 @@ def _build_limits(audit: dict[str, Any]) -> list[dict[str, str]]:
                     "Ces échanges ont été retirés du calcul : une panne réseau ne peut "
                     "pas être comptée comme une résistance de la cible."),
             })
+        multi = (beh.get("raw") or {}).get("multiturn_sans_historique") or []
+        if multi:
+            limits.append({
+                "fait": f"{code} — {len(multi)} attaque(s) multi-tours sans historique transmis",
+                "texte": (
+                    "La cible reçoit chaque prompt ISOLÉMENT : ni l'historique de la "
+                    "conversation ni un identifiant de session ne lui sont transmis. "
+                    "Une attaque qui n'existe que dans l'accumulation — escalade "
+                    "progressive, empoisonnement de contexte ou de mémoire — ne peut "
+                    "pas aboutir dans ces conditions. Un score élevé sur cette "
+                    "catégorie ne vaut donc PAS quitus sur la mémoire persistante de "
+                    "la cible."),
+            })
         if stats.get("tools_called_seen") == 0 and stats.get("scored"):
             limits.append({
                 "fait": f"{code} — aucun appel d'outil observé",

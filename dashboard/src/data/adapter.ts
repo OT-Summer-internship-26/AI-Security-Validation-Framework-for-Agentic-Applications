@@ -190,6 +190,11 @@ function toAgent(category: string, a: RawAgent, auditId: string): AgentResult {
     score: a.score ?? 0,
     status: (a.status as AuditStatus) || 'completed',
     measured,
+    // Sans cette ligne, la note reste dans la forme brute et n'atteint jamais
+    // l'interface — elle etait deja declaree plus haut, jamais recopiee.
+    // La note est ecrite dans `layers.behavioral.note` par
+    // `workflow/serialization.py`, pas a la racine de l'agent.
+    note: (a.layers?.behavioral as { note?: string | null } | undefined)?.note ?? null,
     duration_s: a.duration_seconds ?? 0,
     cost_tokens: a.cost_tokens ?? 0,
     layers: {

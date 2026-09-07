@@ -32,6 +32,7 @@ except Exception:
 
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.cibles import CibleRefusee, avertissement_si_libre, valider_cible
 from workflow.paths import affichable, results_dir
 
 OUT_DIR = results_dir()
@@ -59,6 +60,18 @@ def main() -> int:
                     help="clé JSON où placer le prompt (défaut: message)")
     ap.add_argument("--response-field", default="response",
                     help="clé JSON d'où lire la réponse (défaut: response)")
+    # POURQUOI CE DRAPEAU A MANQUE SI LONGTEMPS
+    #     `build_http_callback` accepte `headers` depuis toujours, et
+    #     `workflow/audit_graph._build_callback` le lit dans `cfg["headers"]`.
+    #     Mais AUCUN chemin ne le remplissait : ni la CLI, ni le modele de
+    #     requete de l'API. Une cible derriere `Authorization: Bearer …` etait
+    #     donc inauditable — le parametre existait, le cablage non.
+    ap.add_argument("--headers", default=None,
+                    help="en-tetes HTTP JSON envoyes a la cible. "
+                         "Ex. --headers '{\"Authorization\": \"Bearer xxx\"}'. "
+                         "Sans ce drapeau, une cible protegee par un token repond 401 : "
+                         "l'axe est EXCLU du score (jamais note 0) — l'audit ne mesure "
+                         "alors rien, sans le dire assez fort.")
     ap.add_argument("--extra-payload", default=None,
                     help="JSON de champs constants exigés en plus du prompt")
     ap.add_argument("--exchange-log", default=None,
@@ -100,6 +113,26 @@ def main() -> int:
 
     from agents.base_agent import build_http_callback
 
+    # Meme validation que `extra_payload` : un JSON invalide doit echouer ICI,
+    # avant l'audit, et non a la premiere requete HTTP quinze minutes plus tard.
+    # LA MEME REGLE QUE L'API, PAS UNE COPIE.
+    #     L'allowlist ne protegeait que l'API : en CLI on visait n'importe quoi.
+    #     C'est defendable — qui peut lancer ce script peut lancer `curl` — mais
+    #     elle etait presentee comme bornant la cible, pas l'interface. Une
+    #     garantie a moitie vraie est une garantie sur laquelle on se repose a
+    #     tort. Vide par defaut : le developpement local ne change pas d'un iota.
+    try:
+        valider_cible(args.target)
+    except CibleRefusee as refus:
+        ap.error(str(refus))
+    avertissement = avertissement_si_libre()
+    if avertissement:
+        print(f"[avertissement] {avertissement}", file=sys.stderr)
+
+    headers = json.loads(args.headers) if args.headers else None
+    if headers is not None and not isinstance(headers, dict):
+        ap.error("--headers doit etre un objet JSON, ex. '{\"X-API-Key\": \"…\"}'")
+
     extra_payload = json.loads(args.extra_payload) if args.extra_payload else None
     if extra_payload is not None and not isinstance(extra_payload, dict):
         ap.error("--extra-payload doit être un objet JSON (ex. '{\"title\":\"x\"}')")
@@ -127,6 +160,7 @@ def main() -> int:
     transcript: list[dict] = []
     raw_cb = build_http_callback(args.target, prompt_field=args.prompt_field,
                                  response_field=args.response_field,
+                                 headers=headers,
                                  extra_payload=extra_payload, timeout=args.timeout)
 
     # Journal des échanges : un FICHIER JSONL dédié, pas stdout.

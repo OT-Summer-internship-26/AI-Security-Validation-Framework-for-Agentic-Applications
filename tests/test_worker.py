@@ -196,3 +196,36 @@ def test_l_identite_de_l_ouvrier_est_lisible_dans_le_suivi(ouvrier, monkeypatch)
     assert ouvrier._identite() == "ouvrier-de-nuit"
     monkeypatch.delenv("AUDIT_WORKER_ID")
     assert ouvrier._identite().startswith("worker-")
+
+
+def test_le_menage_REPASSE_pendant_que_l_ouvrier_tourne(ouvrier, monkeypatch):
+    """La purge ne doit pas dependre d'un redemarrage pour avoir lieu.
+
+    Elle ne tournait qu'au demarrage de la boucle. Un ouvrier en
+    `restart: always` qui ne tombe jamais ne purgeait donc JAMAIS — et c'est
+    exactement celui qui tourne depuis six mois qui a le plus a purger. Le
+    volume repartait alors en croissance non bornee sans qu'aucune erreur ne
+    soit levee : le service tourne, le disque se remplit.
+    """
+    from api import store
+
+    appels: list[float] = []
+
+    def purger_espion(*a, **k):
+        appels.append(time.time())
+        if len(appels) >= 2:          # demarrage + au moins un passage en boucle
+            ouvrier._ARRET.set()
+        return {"jours": 30, "runs": 0, "logs": 0, "echanges": 0}
+
+    monkeypatch.setattr(store, "purger", purger_espion)
+    monkeypatch.setattr(ouvrier, "MENAGE_S", 0.0)
+    monkeypatch.setattr(ouvrier, "INTERVALLE_S", 0.01)
+
+    fil = threading.Thread(target=ouvrier.boucle, daemon=True)
+    fil.start()
+    fil.join(timeout=5)
+
+    assert not fil.is_alive(), "la boucle n'est pas sortie"
+    assert len(appels) >= 2, (
+        "la purge n'a eu lieu qu'au demarrage : un ouvrier qui ne redemarre "
+        "jamais ne purge jamais")

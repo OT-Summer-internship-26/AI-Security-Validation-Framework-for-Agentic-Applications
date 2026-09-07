@@ -109,6 +109,15 @@ export interface AgentResult {
   attacks: Attack[]
   vulnerabilities: Vulnerability[]
   error?: string
+  /** Limite BOITE-NOIRE constatee pendant la mesure — ce que le score ne couvre
+   *  PAS. Ex. : la cible n'expose pas ses appels d'outils, ou l'historique des
+   *  attaques multi-tours ne lui a jamais ete transmis.
+   *
+   *  Elle etait produite par le socle, serialisee sous `note`... et lue nulle
+   *  part : seul un operateur regardant stdout de `run_agent.py` la voyait. Le
+   *  lecteur d'un rapport ou du dashboard — c'est-a-dire le destinataire d'un
+   *  audit — voyait un score nu. */
+  note?: string | null
 }
 
 export interface Audit {

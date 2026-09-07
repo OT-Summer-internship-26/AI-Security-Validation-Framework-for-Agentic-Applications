@@ -159,6 +159,7 @@ jobs:
           python -m judge.metrics
           python -m api.store
           python -m workflow.paths
+          python -m workflow.cibles
 
       - name: "Les tests protegent-ils VRAIMENT les correctifs ?"
         # Un test qui passe ne prouve rien tant qu'on ne l'a pas vu echouer.

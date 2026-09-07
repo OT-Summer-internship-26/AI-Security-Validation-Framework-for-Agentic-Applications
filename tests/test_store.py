@@ -514,3 +514,63 @@ def test_deux_demarrages_SIMULTANES_ne_migrent_pas_deux_fois(monkeypatch, tmp_pa
             assert not erreurs, f"tour {tour} : migration appliquee plusieurs fois — {erreurs[:2]}"
     finally:
         store.fermer()
+
+
+def test_la_purge_retire_le_VOLUME_et_garde_la_TRACE(magasin):
+    """`run_logs` et `run_exchanges` n'etaient JAMAIS nettoyes.
+
+    Chaque audit y depose un transcript complet — chaque prompt, chaque reponse
+    de la cible. Croissance non bornee sur le volume persistant, exactement ce
+    qu'on a corrige pour les journaux Docker avec `max-size`.
+
+    CE QUE CE TEST EXIGE, ET LES TROIS CAS COMPTENT
+      · une execution TERMINEE et ANCIENNE perd son detail ;
+      · une execution recente le garde ;
+      · une execution EN COURS n'est jamais touchee — purger un audit qui tourne
+        lui ferait perdre son suivi sous les pieds de l'operateur.
+
+    Et la ligne `runs` survit dans les trois cas : c'est elle qui dit QUI a lance
+    QUOI contre QUELLE cible. La perdre effacerait la tracabilite qui justifie
+    les cles a roles.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    vieux = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    cas = [("ancien", vieux), ("recent", datetime.now(timezone.utc).isoformat()),
+           ("en_cours", None)]
+    for rid, fin in cas:
+        magasin.creer_run(rid, REQUETE, "op")
+        for i in range(5):
+            magasin.ajouter_log(rid, "info", f"ligne {i}")
+            magasin.ajouter_echange(rid, {"n": i, "prompt": "p", "response": "r"})
+        if fin:
+            magasin.maj_run(rid, finished_at=fin, status="completed")
+
+    bilan = magasin.purger(jours=30)
+    assert bilan["runs"] == 1 and bilan["logs"] == 5 and bilan["echanges"] == 5
+
+    c = magasin._conn()
+    avec_detail = {r[0] for r in c.execute("SELECT DISTINCT run_id FROM run_logs")}
+    assert avec_detail == {"recent", "en_cours"}, (
+        "la purge a touche une execution recente ou en cours")
+    lignes = {r[0] for r in c.execute("SELECT id FROM runs")}
+    assert lignes == {"ancien", "recent", "en_cours"}, (
+        "la purge a efface la TRACE, pas seulement le volume")
+
+
+def test_la_retention_est_desactivable(magasin):
+    """`AUDIT_RETENTION_JOURS=0` doit tout garder.
+
+    Une purge qu'on ne peut pas arreter est une perte de donnees qu'on subit :
+    un audit conteste six mois plus tard a besoin de son transcript.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    magasin.creer_run("tres-vieux", REQUETE, "op")
+    magasin.ajouter_log("tres-vieux", "info", "x")
+    magasin.maj_run("tres-vieux", status="completed",
+                    finished_at=(datetime.now(timezone.utc) - timedelta(days=900)).isoformat())
+
+    assert magasin.purger(jours=0)["logs"] == 0
+    assert magasin._conn().execute(
+        "SELECT COUNT(*) FROM run_logs").fetchone()[0] == 1

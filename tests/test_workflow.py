@@ -446,3 +446,16 @@ def test_autotest_check_lock():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.demo()
+
+
+def test_autotest_cibles():
+    """Rejoue les controles de la regle d'allowlist.
+
+    Elle vit dans `workflow/cibles.py` et non dans `api/main.py` : c'est ce qui
+    permet aux runners CLI de l'appliquer. Tant qu'elle etait dans l'API, elle
+    bornait ce que l'API a le droit d'atteindre, pas ce que l'outil a le droit
+    d'attaquer — une garantie a moitie vraie.
+    """
+    from workflow import cibles
+
+    cibles.demo()

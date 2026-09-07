@@ -48,7 +48,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -271,6 +271,59 @@ def _verifier_version(actuelle: int) -> None:
 # --------------------------------------------------------------------------- #
 # Exécutions
 # --------------------------------------------------------------------------- #
+
+def retention_jours() -> int:
+    """Age au-dela duquel journaux et echanges sont purges. 0 = jamais.
+
+    `AUDIT_RETENTION_JOURS`, 30 par defaut. Lu A L'APPEL.
+    """
+    brut = os.environ.get("AUDIT_RETENTION_JOURS", "").strip()
+    try:
+        return max(int(brut), 0) if brut else 30
+    except ValueError:
+        return 30
+
+
+def purger(jours: int | None = None) -> dict[str, int]:
+    """Supprime journaux et echanges des executions TERMINEES et anciennes.
+
+    POURQUOI CETTE PURGE EXISTE
+        `run_logs` et `run_exchanges` n'etaient JAMAIS nettoyes. Chaque audit y
+        depose un transcript complet — chaque prompt, chaque reponse de la
+        cible. Croissance non bornee sur le volume persistant, comme les
+        journaux Docker avant qu'on ne leur pose `max-size`.
+
+        Et depuis la borne sur la taille des reponses (base_agent), on sait a
+        quel point une seule cible bavarde peut peser : c'etait 80 Mo par
+        echange avant qu'on ne la pose.
+
+    CE QU'ON GARDE, ET POURQUOI
+        La LIGNE `runs` survit : statut, dates, ouvrier, fichier de resultat.
+        C'est l'historique, il est petit, et le perdre effacerait la trace de QUI
+        a lance QUOI contre QUELLE cible — la tracabilite qui justifie les cles a
+        roles. Ce qui part, c'est le volume : le detail tour par tour.
+
+        Le fichier d'audit lui-meme, sur le volume, n'est pas touche : c'est le
+        livrable, il a sa propre retention (voir docs/ci_limites_connues.md).
+
+    JAMAIS les executions en cours : on ne purge que `finished_at` non nul.
+    """
+    jours = retention_jours() if jours is None else jours
+    if jours <= 0:
+        return {"jours": 0, "runs": 0, "logs": 0, "echanges": 0}
+
+    limite = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    c = _conn()
+    # SOUS-REQUETE, PAS UNE LISTE D'IDS EN PYTHON : un `IN (?,?,...)` construit
+    # avec un marqueur par execution se heurte a la limite de variables liees de
+    # SQLite (`SQLITE_MAX_VARIABLE_NUMBER`) — la purge cesserait de fonctionner
+    # exactement quand il y a le plus a purger. C'est aussi moins de code.
+    vieux = "SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?"
+    n = c.execute(f"SELECT COUNT(*) FROM ({vieux})", (limite,)).fetchone()[0]
+    logs = c.execute(f"DELETE FROM run_logs WHERE run_id IN ({vieux})", (limite,)).rowcount
+    ech = c.execute(f"DELETE FROM run_exchanges WHERE run_id IN ({vieux})", (limite,)).rowcount
+    return {"jours": jours, "runs": n, "logs": logs, "echanges": ech}
+
 
 def creer_run(run_id: str, requete: dict[str, Any], cree_par: str = "") -> None:
     """Dépose une exécution en file. Elle survit désormais au processus."""

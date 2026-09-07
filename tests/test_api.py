@@ -388,7 +388,9 @@ def test_le_suivi_d_execution_survit_a_un_nouvel_objet_api(client_admin):
                                json={"mode": "targeted", "category": "ASI_01",
                                      "target_url": "http://c/chat"}).json()["run_id"]
     store.fermer()                          # « redemarrage » : plus rien en memoire
-    r = client_admin.get(f"/runs/{run_id}")
+    # La clef est desormais EXIGEE en lecture : ce test la fournit, et celui qui
+    # suit verifie qu'elle est bien exigee.
+    r = client_admin.get(f"/runs/{run_id}", headers={"X-API-Key": "amorce-admin"})
     assert r.status_code == 200 and r.json()["run_id"] == run_id
 
 
@@ -530,3 +532,74 @@ def test_un_echec_de_persistance_ne_TUE_pas_l_audit(monkeypatch, tmp_path):
     run.log("INFO", "coucou")
     run.add_exchange({"a": 1})
     assert run.status == "running", "l'objet en memoire doit rester coherent"
+
+
+# --------------------------------------------------------------------------- #
+# Le transcript d'un audit n'est pas public, et les secrets de la cible non plus.
+# --------------------------------------------------------------------------- #
+
+def test_le_transcript_d_un_audit_n_est_PAS_lisible_sans_clef(client_admin):
+    """`GET /runs/{id}` rendait 200 SANS aucune clef, avec le transcript complet.
+
+    LE TROU, MESURE
+        Ces reponses portent chaque prompt envoye et chaque REPONSE DE LA CIBLE.
+        Sur une cible interne, c'est exactement le canal d'exfiltration que
+        l'allowlist pretendait fermer — et il etait ouvert a qui pouvait joindre
+        l'API. Dix points d'entree en lecture etaient dans ce cas.
+
+        Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+        le developpement local ne change pas. C'est le deploiement AVEC clef qui
+        etait ouvert, et c'est le pire des deux.
+    """
+    run_id = client_admin.post("/audits", headers={"X-API-Key": "amorce-admin"},
+                               json={"mode": "targeted", "category": "ASI_01",
+                                     "target_url": "http://c/chat"}).json()["run_id"]
+
+    for chemin in (f"/runs/{run_id}", "/runs", "/audits"):
+        assert client_admin.get(chemin).status_code == 401, (
+            f"{chemin} se lit encore sans clef")
+        assert client_admin.get(
+            chemin, headers={"X-API-Key": "amorce-admin"}).status_code == 200
+
+
+def test_les_identifiants_de_la_CIBLE_ne_sont_jamais_rendus(client_admin):
+    """`AuditRequest.headers` porte le `Bearer` d'acces a la cible.
+
+    LE TROU, MESURE
+        La requete complete etait stockee en clair dans `runs.request` et rendue
+        par `/runs/{id}`. Un jeton d'acces a un systeme interne se retrouvait donc
+        dans une base ET dans une reponse HTTP. Verifie en direct avant
+        correctif : 200 et le jeton en clair.
+
+    Ce test exige les DEUX moities : rien ne fuit, et l'information utile — qu'un
+    audit visait une cible authentifiee — reste lisible.
+    """
+    jeton = "Bearer JETON-QUI-NE-DOIT-PAS-FUIR"
+    run_id = client_admin.post(
+        "/audits", headers={"X-API-Key": "amorce-admin"},
+        json={"mode": "targeted", "category": "ASI_01",
+              "target_url": "http://c/chat",
+              "headers": {"Authorization": jeton}}).json()["run_id"]
+
+    corps = client_admin.get(f"/runs/{run_id}",
+                             headers={"X-API-Key": "amorce-admin"}).text
+    assert "JETON-QUI-NE-DOIT-PAS-FUIR" not in corps, (
+        "les identifiants de la cible ressortent par l'API")
+    assert "masqué" in corps, (
+        "la PRESENCE d'en-tetes doit rester visible : savoir qu'un audit visait "
+        "une cible authentifiee aide a relire son resultat")
+
+    # EN REVANCHE, LE MAGASIN LE GARDE — ET C'EST VOULU.
+    #     Premiere version de ce test : exiger qu'il n'y soit pas non plus. Elle
+    #     etait fausse. L'ouvrier RECHARGE la requete en `AuditRequest` pour
+    #     executer l'audit plus tard : sans la vraie valeur, un audit mis en file
+    #     ne pourrait plus jamais tourner. On aurait remplace une fuite par une
+    #     panne de production.
+    #
+    #     Ce test verrouille donc le contrat REEL : la valeur vit en base, elle
+    #     ne sort jamais de l'API. Le secret au repos est une limite assumee,
+    #     inscrite au registre — les cles du framework, elles, sont hachees ; un
+    #     secret de cible ne peut pas l'etre, il doit etre rejoue.
+    from api import store
+    assert "JETON-QUI-NE-DOIT-PAS-FUIR" in str(store.lire_run(run_id)), (
+        "l'ouvrier ne pourrait plus executer un audit mis en file")

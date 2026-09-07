@@ -521,12 +521,55 @@ class BaseSecurityAgent(ABC):
                     findings=deepteam_findings, raw=raw,
                 )
             raw["deepteam_score"] = deepteam_score
-            # #4 : rendre VISIBLE la limite boîte-noire si aucun appel d'outil observé.
+            # Rendre VISIBLES les limites boîte-noire. Plusieurs peuvent tenir
+            # ensemble : on les accumule au lieu d'écraser la précédente.
+            limites: list[str] = []
+
+            # #4 : la cible n'expose pas ses appels d'outils.
             if stats.get("tools_called_seen", 0) == 0:
-                raw["behavioral_note"] = (
+                limites.append(
                     "tools_called vide → jugement sur le TEXTE seul (la cible n'expose pas "
                     "ses appels d'outils ; câbler build_http_callback(tools_field=…) — doc. technique : limites assumees / pipeline comportemental centralise)"
                 )
+
+            # LE MULTI-TOURS N'ATTEINT JAMAIS LA CIBLE, ET C'EST STRUCTUREL.
+            #     `to_deepteam_callback` reçoit `turns` et ne l'utilise pas : la
+            #     cible est interrogée avec le SEUL prompt courant. PyRIT fait de
+            #     même — il n'envoie que `normalized_conversation[-1]`. Aucun
+            #     identifiant de session n'est transmis non plus, donc une cible
+            #     stateful ne peut même pas corréler les tours d'elle-même.
+            #
+            #     Conséquence : une attaque qui n'existe QUE dans l'accumulation
+            #     — escalade progressive, empoisonnement de contexte — ne peut
+            #     pas aboutir. La cible « résiste », et le score monte.
+            #
+            #     ASI_06 le dit déjà dans sa docstring : « un agent peut réussir
+            #     ASI06 tout en restant vulnérable à un vrai empoisonnement de sa
+            #     mémoire persistante ». Le dire dans un commentaire ne protège
+            #     personne ; le dire DANS LE RÉSULTAT, si.
+            try:
+                multi = [s.get("name") for s in (self.get_scenarios() or [])
+                         if s.get("mode") == "multi-turn"]
+            except Exception:      # get_scenarios est declaratif : il ne doit
+                multi = []         # jamais faire echouer un audit.
+            if multi:
+                limites.append(
+                    f"attaques multi-tours jouées ({', '.join(str(m) for m in multi)}) "
+                    "mais l'historique n'est PAS transmis à la cible : elle reçoit "
+                    "chaque prompt isolément. Une attaque qui repose sur "
+                    "l'accumulation (escalade, empoisonnement de contexte/mémoire) "
+                    "ne peut pas aboutir ici — un score élevé sur cet axe ne vaut "
+                    "PAS quitus sur la mémoire persistante de la cible."
+                )
+
+            if multi:
+                # LE FAIT BRUT, en plus de la phrase. Le rapport construit ses
+                # limites a partir de valeurs MESUREES, pas en relisant du texte :
+                # une limite deduite d'une correspondance de chaine casserait au
+                # premier reformulage.
+                raw["multiturn_sans_historique"] = [str(m) for m in multi]
+            if limites:
+                raw["behavioral_note"] = " | ".join(limites)
             print(
                 f"[{self.asi_category}] DeepTeam OK — score={deepteam_score:.2f}/10, "
                 f"{len(deepteam_findings)} vulnérabilité(s), "
@@ -1608,6 +1651,33 @@ def _slots() -> threading.BoundedSemaphore:
     return _TARGET_SLOTS
 
 
+def taille_max_reponse() -> int:
+    """Octets acceptes d'une reponse de cible. `AUDIT_MAX_RESPONSE_BYTES`.
+
+    POURQUOI UNE BORNE
+        `httpx.request()` bufferise TOUT le corps en memoire. Mesure : une
+        reponse de 80 Mo produit **250 Mo de pic** cote Python — decodage puis
+        parsing JSON amplifient d'un facteur trois. Extrapole, une reponse de
+        2 Go depasse le `mem_limit: 6g` de l'ouvrier : OOM en plein audit.
+
+        Et ce n'est pas que la memoire. Chaque reponse part aussi dans
+        `run_exchanges` et dans le fichier d'audit : une cible bavarde fait
+        gonfler la base et le livrable, pas seulement le processus.
+
+        LA CIBLE EST HOSTILE PAR HYPOTHESE. C'est un outil de red team : la
+        premiere chose qu'un systeme attaque peut faire, c'est repondre trop.
+
+    2 MiB par defaut : trois ordres de grandeur au-dessus d'une reponse de chat
+    normale, et trois ordres en dessous de ce qui tue le processus.
+    """
+    brut = os.environ.get("AUDIT_MAX_RESPONSE_BYTES", "").strip()
+    try:
+        valeur = int(brut) if brut else 2 * 1024 * 1024
+    except ValueError:
+        valeur = 2 * 1024 * 1024
+    return max(valeur, 4096)
+
+
 def build_http_callback(
     target_url: str,
     headers: dict[str, str] | None = None,
@@ -1675,32 +1745,66 @@ def build_http_callback(
         def _wrap(text: str, tools: list[str] | None = None) -> Any:
             return TargetResponse(text=text, tools_called=tools) if tools_field else text
 
+        limite = taille_max_reponse()
         try:
-            resp = httpx.request(
-                method, target_url, json=payload, headers=hdrs, timeout=timeout
-            )
-            resp.raise_for_status()
+            # FLUX ET NON APPEL BUFFERISE.
+            #     `httpx.request()` lit tout le corps avant de rendre la main :
+            #     la cible dicte alors la memoire du processus. En flux, on
+            #     s'arrete des que le plafond est franchi, et la connexion est
+            #     fermee — on ne telecharge pas 2 Go pour les jeter ensuite.
+            with httpx.stream(method, target_url, json=payload,
+                              headers=hdrs, timeout=timeout) as flux:
+                morceaux: list[bytes] = []
+                recu = 0
+                depasse = False
+                for bloc in flux.iter_bytes():
+                    recu += len(bloc)
+                    if recu > limite:
+                        depasse = True
+                        break
+                    morceaux.append(bloc)
+                if depasse:
+                    # EXCLU, PAS TRONQUE. Juger une reponse coupee au milieu
+                    # reviendrait a noter une cible sur une preuve amputee — le
+                    # marqueur [HTTP_ERROR] la sort du calcul, ce qui est le
+                    # comportement honnete deja retenu pour les pannes reseau.
+                    return _wrap(
+                        f"[HTTP_ERROR] reponse de {target_url} au-dela de "
+                        f"{limite} octets (AUDIT_MAX_RESPONSE_BYTES) : test exclu "
+                        "plutot que juge sur une reponse tronquee")
+                # ON NE RECONSTRUIT PAS DE `httpx.Response`.
+                #     `iter_bytes` rend des octets DEJA decompresses. Les
+                #     redonner a une Response avec les en-tetes d'origine la
+                #     faisait gunziper une SECONDE fois : `DecodingError` sur
+                #     toute cible derriere un nginx qui compresse — donc tous
+                #     ses tests exclus du score, silencieusement.
+                statut = flux.status_code
+                texte = b"".join(morceaux).decode(
+                    flux.charset_encoding or "utf-8", errors="replace")
         except httpx.TimeoutException as exc:
             return _wrap(f"[HTTP_ERROR] timeout après {timeout}s vers {target_url}: {exc}")
-        except httpx.HTTPStatusError as exc:
-            return _wrap(
-                f"[HTTP_ERROR] statut {exc.response.status_code} depuis {target_url}: "
-                f"{exc.response.text[:300]}"
-            )
         except httpx.RequestError as exc:
             return _wrap(f"[HTTP_ERROR] réseau vers {target_url}: {type(exc).__name__}: {exc}")
         except Exception as exc:  # ultime filet de sécurité
             return _wrap(f"[HTTP_ERROR] inattendu vers {target_url}: {type(exc).__name__}: {exc}")
 
+        # STATUT LU APRES COUP, PAS `raise_for_status()` SUR LE FLUX.
+        #     Sur un flux non lu, `exc.response.text` leve `ResponseNotRead`
+        #     DANS le gestionnaire d'erreur : l'exception sortait du callback au
+        #     lieu de rendre la chaine [HTTP_ERROR] que promet le contrat
+        #     fail-safe ci-dessus. Ici le corps est deja lu, et borne.
+        if statut >= 400:
+            return _wrap(f"[HTTP_ERROR] statut {statut} depuis {target_url}: {texte[:300]}")
+
         # Extraction : champ JSON configuré si présent, sinon corps brut.
         try:
-            data = resp.json()
+            data = json.loads(texte)
         except Exception:
-            return _wrap(resp.text)
+            return _wrap(texte)
         text = (
             str(data[response_field])
             if isinstance(data, dict) and response_field in data
-            else resp.text
+            else texte
         )
         # Appels d'outils exposés par la cible (optionnel) → liste de str.
         tools: list[Any] | None = None

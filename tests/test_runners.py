@@ -206,3 +206,107 @@ def test_les_compteurs_sont_remis_a_zero_au_demarrage(monkeypatch):
     with pytest.raises(SystemExit):
         runner.main()
     assert metrics.snapshot() == {}, "les compteurs doivent repartir de zero"
+
+
+# --------------------------------------------------------------------------- #
+# Cible AUTHENTIFIEE : le parametre existait, le cablage non.
+# --------------------------------------------------------------------------- #
+
+def test_les_en_tetes_atteignent_la_cible_depuis_la_CLI(monkeypatch):
+    """`--headers` doit arriver jusqu'a `build_http_callback`.
+
+    LE TROU QU'IL FERME
+        `build_http_callback` acceptait `headers` depuis toujours, et
+        `workflow/audit_graph._build_callback` le lisait dans `cfg["headers"]`.
+        Mais AUCUN chemin ne le remplissait — ni la CLI, ni le modele de requete
+        de l'API. Une cible derriere `Authorization: Bearer …` etait donc
+        inauditable : le parametre existait, le cablage non.
+
+        Et l'echec etait DISCRET. La cible repond 401, `build_http_callback` rend
+        `[HTTP_ERROR] statut 401`, l'axe est EXCLU du score — ni 0, ni 10/10.
+        Honnete au niveau du calcul, mais l'operateur voit un audit qui se
+        termine « normalement » sur une cible qu'il n'a jamais atteinte.
+    """
+    runner = _charger("run_agent")
+    vus: dict = {}
+
+    import agents.base_agent as socle
+
+    vrai = socle.build_http_callback
+
+    def espion(target, **kw):
+        vus.update(kw)
+        return vrai(target, **kw)
+
+    monkeypatch.setattr(socle, "build_http_callback", espion)
+
+    class AgentEspion:
+        def __init__(self, target_callback=None, config=None):
+            raise SystemExit(0)
+
+    from workflow import audit_graph
+
+    monkeypatch.setitem(audit_graph.AGENT_REGISTRY, "ASI_01", AgentEspion)
+    monkeypatch.setattr(sys, "argv", ["run_agent.py", *BASE,
+                                      "--headers", '{"Authorization": "Bearer jeton"}'])
+    with pytest.raises(SystemExit):
+        runner.main()
+
+    assert vus.get("headers") == {"Authorization": "Bearer jeton"}, (
+        "les en-tetes se perdent entre la ligne de commande et la cible")
+
+
+def test_des_en_tetes_mal_formes_sont_refuses_AVANT_l_audit(monkeypatch):
+    """Un JSON invalide doit echouer tout de suite, pas au premier 401.
+
+    Meme raison que pour `--extra-payload` : sinon l'audit demarre, tourne des
+    minutes, et se termine sur un axe exclu — sans que personne relie l'exclusion
+    a une faute de frappe dans un jeton.
+    """
+    runner = _charger("run_agent")
+    monkeypatch.setattr(sys, "argv", ["run_agent.py", *BASE, "--headers", "pas du json"])
+    with pytest.raises((SystemExit, ValueError)):
+        runner.main()
+
+
+def test_les_en_tetes_entrent_dans_la_config_du_workflow(monkeypatch, tmp_path):
+    """Chemin `run_audit_global` : les en-tetes doivent atterrir dans `cfg`.
+
+    C'est `cfg["headers"]` que `_build_callback` lit — une cle absente ne leve
+    rien, elle produit juste un audit qui n'atteint pas sa cible.
+    """
+    runner = _charger("run_audit_global")
+    capture: dict = {}
+
+    import workflow.audit_graph as ag
+
+    def faux_graphe(target_url, cfg, **kw):
+        capture.update(cfg)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(ag, "run_audit_graph", faux_graphe)
+    monkeypatch.setenv("AUDIT_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", [
+        "run_audit_global.py", "--target", "http://cible/chat",
+        "--profile", "dry_run", "--categories", "ASI_01",
+        "--headers", '{"X-API-Key": "abc"}'])
+    with pytest.raises(SystemExit):
+        runner.main()
+
+    assert capture.get("headers") == {"X-API-Key": "abc"}
+
+
+def test_l_API_transmet_les_en_tetes_au_runner():
+    """L'API passe par une LIGNE DE COMMANDE : ajouter le champ ne suffisait pas.
+
+    `_build_cmd` doit poser `--headers`, sinon le champ du modele est accepte,
+    stocke, affiche dans le suivi — et jamais applique.
+    """
+    from api.main import AuditRequest, _build_cmd
+
+    req = AuditRequest(target_url="http://cible/chat",
+                       headers={"Authorization": "Bearer via-api"})
+    cmd = _build_cmd(req, "ASI_01")
+
+    assert "--headers" in cmd, "l'API accepte les en-tetes et ne les transmet pas"
+    assert '{"Authorization": "Bearer via-api"}' in cmd[cmd.index("--headers") + 1]

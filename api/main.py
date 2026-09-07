@@ -46,6 +46,8 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parent.parent
 # Point de resolution UNIQUE du repertoire de resultats : en production
 # il pointe vers un volume persistant (AUDIT_RESULTS_DIR).
+from workflow.cibles import CibleRefusee, avertissement_si_libre
+from workflow.cibles import valider_cible as _valider_cible_commune
 from workflow.paths import results_dir
 
 RESULTS_DIR = results_dir()
@@ -138,6 +140,12 @@ class AuditRequest(BaseModel):
     prompt_field: str = Field(default="message")
     response_field: str = Field(default="response")
     extra_payload: dict[str, Any] | None = None
+    #: En-tetes HTTP de la cible (`Authorization`, `X-API-Key`…).
+    #
+    #  L'API PASSE PAR UNE LIGNE DE COMMANDE, d'ou le drapeau correspondant dans
+    #  `_build_cmd` : ajouter le champ ici seul n'aurait rien change. Une cible
+    #  authentifiee etait inauditable par TOUS les chemins, pas seulement la CLI.
+    headers: dict[str, str] | None = None
     profile: str = Field(default="final", description="dev | final | ollama | dry_run")
     attacks_per_type: int = Field(default=3, ge=1, le=10)
     max_concurrent: int = Field(default=2, ge=1, le=10)
@@ -232,7 +240,7 @@ class Run:
             logger.debug("échange non persisté : %s", exc)
 
     def snapshot(self, since: int = 0, since_ex: int = 0) -> dict[str, Any]:
-        etat = store.lire_run(self.id, since, since_ex)
+        etat = masquer_secrets(store.lire_run(self.id, since, since_ex))
         if etat is not None:
             return etat
         # Repli : une exécution absente du magasin (base effacée) ne doit pas
@@ -240,7 +248,10 @@ class Run:
         return {"run_id": self.id, "status": self.status, "progress": self.progress,
                 "stage": self.stage, "started_at": self.started_at,
                 "finished_at": self.finished_at, "result_file": self.result_file,
-                "error": self.error, "request": self.request.model_dump(),
+                "error": self.error,
+                "request": {**self.request.model_dump(),
+                            **({"headers": {n: _MASQUE for n in (self.request.headers or {})}}
+                               if self.request.headers else {})},
                 "logs": [], "log_count": 0, "exchanges": [], "exchange_count": 0,
                 "categories": self.categories, "result_files": self.result_files}
 
@@ -381,93 +392,40 @@ def _drain(run: Run, stream: Any) -> None:
     stream.close()
 
 
-def cibles_autorisees() -> tuple[str, ...]:
-    """Hôtes autorisés, LUS À L'APPEL. Vide = aucune restriction.
-
-    Ex. : AUDIT_TARGET_ALLOWLIST=localhost,127.0.0.1,.interne.exemple.com
-
-    POURQUOI PAS UNE CONSTANTE DE MODULE
-        La première version lisait l'environnement À L'IMPORT. C'est exactement
-        le piège déjà corrigé deux fois ici — `AUDIT_TARGET_CONCURRENCY` figé à
-        l'import dans `base_agent`, puis le chemin de checkpoint dans
-        `audit_graph`. Une variable posée après le chargement du module (test,
-        ouvrier, conteneur reconfiguré) était silencieusement ignorée.
-
-        Effet secondaire qui compte : les tests posent désormais la VRAIE variable
-        au lieu de surcharger un attribut de module. Ils éprouvent donc ce qu'un
-        opérateur configure, pas un raccourci interne.
-    """
-    brut = os.environ.get("AUDIT_TARGET_ALLOWLIST", "")
-    return tuple(h.strip().lower() for h in brut.split(",") if h.strip())
-
 _ALERTE_CIBLE_LIBRE_EMISE = False
 
 
 def valider_cible(url: str) -> str:
-    """POINT UNIQUE de validation d'une cible d'audit. Rend l'URL, ou lève 400/403.
+    """Traduit la regle commune en reponse HTTP. Rend l'URL, ou leve 400/403.
 
-    POURQUOI CE GARDE-FOU EXISTE
-        `target_url` partait DIRECTEMENT du corps de la requête à la ligne de
-        commande du runner, sans la moindre vérification — pas même le contrôle
-        de schéma qui protège déjà les appels au catalogue DVAP (`_open_http`).
-        Un opérateur authentifié pouvait viser `169.254.169.254` (métadonnées
-        cloud), `localhost`, n'importe quelle adresse interne. Et comme les
-        réponses de la cible sont enregistrées dans `run_exchanges` puis
-        relisibles par `/runs/{id}` et le dashboard, **une clé opérateur fuitée
-        devenait un SSRF authentifié avec exfiltration par le transcript**.
+    LA REGLE N'EST PLUS ICI, ET C'EST LE CORRECTIF.
+        Cette fonction portait l'implementation complete — donc l'allowlist ne
+        protegeait QUE l'API. `scripts/run_agent.py` et
+        `scripts/run_audit_global.py` visaient n'importe quoi. On pouvait le
+        defendre (la CLI suppose un acces shell), mais l'allowlist etait
+        presentee comme bornant « ce que target_url a le droit d'atteindre » —
+        et c'etait faux : elle bornait ce que l'API a le droit d'atteindre.
 
-    CE QU'ON N'INTERDIT PAS, ET POURQUOI
-        Les adresses privées restent atteignables : auditer un service interne
-        qu'on POSSÈDE est exactement le métier de cet outil, et la cible par
-        défaut est `http://localhost:8090`. Interdire casserait l'usage légitime.
-        On BORNE : une installation déclare ce qu'elle a le droit d'attaquer.
+        La regle vit maintenant dans `workflow/cibles.py`, seule et unique.
+        Ici on ne fait que la traduire en code HTTP ; les runners la traduisent
+        en refus de ligne de commande. Aucun des deux ne peut diverger.
 
-    LE DÉFAUT EST PERMISSIF, MAIS IL NE SE TAIT PAS
-        Sans `AUDIT_TARGET_ALLOWLIST`, toute cible est acceptée — mode
-        développement. Un avertissement est émis UNE FOIS, pour qu'une mise en
-        production ne reste pas ouverte par simple ignorance. Une fois par
-        processus et non par audit : une alerte répétée à chaque appel finit
-        par être filtrée, donc par ne plus rien signaler.
+    L'AVERTISSEMENT RESTE EMIS UNE SEULE FOIS par processus : une alerte repetee
+    a chaque appel finit par etre filtree, donc par ne plus rien signaler.
     """
     global _ALERTE_CIBLE_LIBRE_EMISE
 
-    decoupe = urllib.parse.urlparse(url)
-    hote = (decoupe.hostname or "").lower()
+    try:
+        cible = _valider_cible_commune(url)
+    except CibleRefusee as refus:
+        raise HTTPException(status_code=refus.http_status, detail=str(refus)) from refus
 
-    if decoupe.scheme not in ("http", "https"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"schéma de cible non autorisé : "
-                   f"{decoupe.scheme or '(aucun)'} — attendu http ou https")
-    if not hote:
-        raise HTTPException(status_code=400, detail=f"cible sans hôte : {url[:80]}")
-
-    liste = cibles_autorisees()
-    if not liste:
-        if not _ALERTE_CIBLE_LIBRE_EMISE:
+    if not _ALERTE_CIBLE_LIBRE_EMISE:
+        message = avertissement_si_libre()
+        if message:
             _ALERTE_CIBLE_LIBRE_EMISE = True
-            logger.warning(
-                "AUDIT_TARGET_ALLOWLIST n'est pas définie : TOUTE cible est "
-                "acceptée (mode développement). En production, déclarez les hôtes "
-                "autorisés — sinon une clé opérateur permet d'atteindre n'importe "
-                "quelle adresse interne, et les réponses sont conservées dans le "
-                "journal d'échanges.")
-        return url
-
-    # Un motif couvre l'hôte exact ; commençant par un point, il couvre aussi
-    # les sous-domaines (`.interne.exemple.com`) mais JAMAIS le domaine nu —
-    # `.exemple.com` n'autorise pas `exemple.com`, qui peut appartenir à un tiers.
-    autorise = any(
-        hote == motif or (motif.startswith(".") and hote.endswith(motif))
-        for motif in liste
-    )
-    if not autorise:
-        raise HTTPException(
-            status_code=403,
-            detail=(f"cible « {hote} » hors de la liste autorisée "
-                    f"({', '.join(liste)}). "
-                    "Ajustez AUDIT_TARGET_ALLOWLIST si cette cible vous appartient."))
-    return url
+            logger.warning(message)
+    return cible
 
 
 def _build_cmd(req: AuditRequest, category: str) -> list[str]:
@@ -483,6 +441,8 @@ def _build_cmd(req: AuditRequest, category: str) -> list[str]:
         "--pyrit-max-turns", str(req.pyrit_max_turns),
         "--timeout", str(req.timeout),
     ]
+    if req.headers:
+        cmd += ["--headers", json.dumps(req.headers)]
     if req.extra_payload:
         cmd += ["--extra-payload", json.dumps(req.extra_payload)]
     if req.source_path:
@@ -747,6 +707,56 @@ def _identifier(x_api_key: str | None, minimum: str = "operator") -> dict[str, A
     raise HTTPException(status_code=401, detail="X-API-Key invalide ou manquant")
 
 
+#: Champs de la requete qui sont des SECRETS DE LA CIBLE. Stockes (l'ouvrier en
+#: a besoin pour executer l'audit plus tard), mais JAMAIS rendus.
+_CHAMPS_SECRETS = ("headers",)
+
+#: Ce qui remplace la valeur. Les NOMS des en-tetes restent : savoir qu'un audit
+#: visait une cible protegee par `Authorization` aide a relire son resultat ; la
+#: valeur, non.
+_MASQUE = "<masqué>"
+
+
+def masquer_secrets(etat: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Masque les secrets de la cible dans un etat d'execution, EN LECTURE.
+
+    POURQUOI EN LECTURE ET NON A L'ECRITURE
+        Premiere version : masquer avant `store.creer_run`. Le test l'a refusee
+        tout de suite, et il avait raison — l'ouvrier RECHARGE la requete en
+        `AuditRequest` (`AuditRequest(**travail["request"])`). Un champ masque
+        cassait la validation Pydantic : un audit mis en file n'aurait plus
+        jamais pu etre execute. Le correctif aurait remplace une fuite par une
+        panne de production.
+
+        La valeur reste donc en base — l'ouvrier en a besoin — et disparait de
+        tout ce qui SORT de l'API.
+
+    POURQUOI UN DICTIONNAIRE ET NON UNE CHAINE
+        Meme raison : ce que l'API rend doit rester du meme TYPE que ce que le
+        modele declare. Une chaine a la place d'un dictionnaire casse tout
+        consommateur type — a commencer par le dashboard.
+
+    CE QUI RESTE EN CLAIR DANS LE MAGASIN
+        Un jeton d'acces a la cible dort donc dans `runs.request`, sur le volume.
+        Les cles d'API du framework, elles, sont HACHEES — un secret de cible ne
+        peut pas l'etre, il doit etre rejoue. Limite assumee, a inscrire au
+        registre.
+    """
+    if not etat:
+        return etat
+    requete = etat.get("request")
+    if not isinstance(requete, dict):
+        return etat
+    propre = dict(requete)
+    touche = False
+    for champ in _CHAMPS_SECRETS:
+        valeur = propre.get(champ)
+        if isinstance(valeur, dict) and valeur:
+            propre[champ] = {nom: _MASQUE for nom in valeur}
+            touche = True
+    return {**etat, "request": propre} if touche else etat
+
+
 def _check_api_key(x_api_key: str | None) -> None:
     """Compatibilité : vérifie sans exploiter l'identité renvoyée."""
     _identifier(x_api_key)
@@ -872,8 +882,15 @@ def metrics() -> str:
 
 
 @app.get("/agents")
-def list_agents() -> dict[str, Any]:
+def list_agents(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Catalogue des agents ASI enregistrés dans le workflow."""
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     try:
         from workflow.audit_graph import AGENT_REGISTRY
         registry = AGENT_REGISTRY
@@ -898,14 +915,28 @@ NAMES_FALLBACK = {
 
 
 @app.get("/audits")
-def list_audits() -> dict[str, Any]:
+def list_audits(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Tous les résultats d'audit enregistrés."""
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     return {"audits": _read_results()}
 
 
 @app.get("/audits/{audit_id}")
-def get_audit(audit_id: str) -> dict[str, Any]:
+def get_audit(audit_id: str, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Un résultat d'audit complet, par identifiant ou nom de fichier."""
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     for d in _read_results():
         if d.get("audit_id") == audit_id or d.get("_file") == audit_id:
             return d
@@ -913,7 +944,8 @@ def get_audit(audit_id: str) -> dict[str, Any]:
 
 
 @app.get("/audits/{audit_id}/report")
-def get_audit_report(audit_id: str) -> Any:
+def get_audit_report(audit_id: str,
+                     x_api_key: str | None = Header(default=None)) -> Any:
     """Rapport de sécurité HTML complet d'un audit (livrable #8).
 
     Renvoie directement le HTML : le dashboard n'a qu'à ouvrir cette URL dans un
@@ -924,6 +956,9 @@ def get_audit_report(audit_id: str) -> Any:
     d'audit sont figées sur disque, mais le générateur, lui, évolue — servir un
     HTML périmé masquerait toute correction apportée au rapport.
     """
+    # LECTURE PROTEGEE — c'est le document le plus complet du produit :
+    # transcript, reponses de la cible, constats. Il etait servi sans clef.
+    _identifier(x_api_key, minimum="viewer")
     from fastapi.responses import HTMLResponse
 
     for d in _read_results():
@@ -1127,8 +1162,15 @@ def _execute_replay(
 
 
 @app.get("/replays")
-def list_replays() -> dict[str, Any]:
+def list_replays(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Tous les rejeux enregistrés, du plus récent au plus ancien."""
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     if not REPLAYS_DIR.exists():
         return {"replays": []}
     out: list[dict[str, Any]] = []
@@ -1294,12 +1336,19 @@ def _exiger_lab_management() -> None:
 
 
 @app.get("/dvap/labs")
-def dvap_labs() -> dict[str, Any]:
+def dvap_labs(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Catalogue des labs DVAP + instances déjà lancées.
 
     Chaque lab en cours d'exécution porte son `target_url` prêt à l'emploi ;
     les autres doivent être lancés (POST /dvap/launch).
     """
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     _exiger_lab_management()
     labs: list[dict[str, Any]] = []
     try:
@@ -1373,11 +1422,18 @@ def dvap_launch(req: LaunchLabRequest,
 
 
 @app.get("/runs")
-def list_runs() -> dict[str, Any]:
+def list_runs(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Toutes les exécutions, en cours ou terminées (sans les journaux)."""
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     # Lues dans le MAGASIN : elles survivent au redemarrage, et toutes les
     # repliques voient les memes. Les rejeux, eux, vivent en processus.
-    runs = store.lister_runs()
+    runs = [masquer_secrets(r) for r in store.lister_runs()]
     rejeux = [{k: v for k, v in r.snapshot().items() if k != "logs"}
               for r in _REJEUX.values()]
     return {"runs": sorted(runs + rejeux,
@@ -1385,16 +1441,23 @@ def list_runs() -> dict[str, Any]:
 
 
 @app.get("/runs/{run_id}")
-def get_run(run_id: str, since: int = 0, since_ex: int = 0) -> dict[str, Any]:
+def get_run(run_id: str, since: int = 0, since_ex: int = 0, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Progression d'une exécution.
 
     `since` / `since_ex` : ne renvoient que les journaux et les échanges NOUVEAUX
     depuis le dernier appel — le dashboard interroge toutes les 1,5 s sans
     retransférer l'historique complet à chaque fois.
     """
+    # LECTURE PROTEGEE. Ces reponses portent le transcript complet d'un audit :
+    # chaque prompt envoye et chaque REPONSE DE LA CIBLE. Sur une cible interne,
+    # c'est le canal d'exfiltration que l'allowlist pretendait fermer — et il
+    # etait ouvert sans aucune cle. Verifie en direct : 200 sans authentification.
+    # Sans clef configuree nulle part, `_identifier` rend un anonyme admin :
+    # le developpement local ne change donc pas d'un iota.
+    _identifier(x_api_key, minimum="viewer")
     run = _REJEUX.get(run_id)
     snap = run.snapshot(since=since, since_ex=since_ex) if run is not None \
-        else store.lire_run(run_id, since, since_ex)
+        else masquer_secrets(store.lire_run(run_id, since, since_ex))
     if snap is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
     if run is not None and getattr(run, "replay_result", None) is not None:
@@ -1415,7 +1478,7 @@ def cancel_run(run_id: str, x_api_key: str | None = Header(default=None)) -> dic
     """Annule une exécution en cours."""
     _check_api_key(x_api_key)
     run = _REJEUX.get(run_id)
-    etat = run.snapshot() if run is not None else store.lire_run(run_id)
+    etat = run.snapshot() if run is not None else masquer_secrets(store.lire_run(run_id))
     if etat is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
     if etat["status"] != "running":

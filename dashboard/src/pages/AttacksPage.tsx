@@ -2,8 +2,7 @@ import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, ChevronDown, RotateCcw, ShieldCheck, ShieldOff,
-  ArrowRight, ArrowLeft, Scale, Radar,
-} from 'lucide-react'
+  ArrowRight, ArrowLeft, Scale, Radar, TriangleAlert } from 'lucide-react'
 import { resolveAudit, getAudits , useAudits} from '@/data/repository'
 import { SeverityBadge, LayerBadge, VerdictBadge } from '@/components/Badges'
 import { AxisBreakdownChart } from '@/charts/AxisBreakdownChart'
@@ -245,6 +244,25 @@ export function AttacksPage() {
                     transition={{ duration: 0.28, ease: 'easeOut' }}
                     className="border-t border-border overflow-hidden"
                   >
+                    {/* CE QUE LE SCORE NE COUVRE PAS.
+                        La note etait produite par le socle et serialisee, puis lue
+                        NULLE PART : seul un operateur regardant stdout de
+                        `run_agent.py` la voyait. Le lecteur du dashboard — le
+                        destinataire de l'audit — voyait un score nu. Affichee ici,
+                        au-dessus des attaques, parce qu'elle change ce qu'on a le
+                        droit de conclure de ce qui suit. */}
+                    {agent.note && (
+                      <div className="px-4 py-3 border-b border-border bg-severity-medium/5
+                                      flex items-start gap-2.5">
+                        <TriangleAlert size={15} className="text-severity-medium shrink-0 mt-0.5" />
+                        <p className="text-[12.5px] leading-relaxed text-text-secondary">
+                          <span className="font-semibold text-text-primary">
+                            Limite de mesure —{' '}
+                          </span>
+                          {agent.note}
+                        </p>
+                      </div>
+                    )}
                     {attacks.length > 0 ? (
                       attacks.map((atk, i) => (
                         <AttackRow key={atk.id} attack={atk} index={i}

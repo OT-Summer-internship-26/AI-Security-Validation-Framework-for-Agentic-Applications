@@ -129,7 +129,7 @@ MUTATIONS = [
     # SSRF authentifie : sans bornage, une cle operateur atteint n'importe quelle
     # adresse interne, et les reponses partent dans le transcript d'audit.
     ("Une cible hors liste autorisee est acceptee",
-     "api/main.py",
+     "workflow/cibles.py",
      "    if not autorise:",
      "    if False:",
      "tests/test_api.py::test_une_cible_hors_liste_est_refusee"),
@@ -141,6 +141,42 @@ MUTATIONS = [
      'c.execute("BEGIN IMMEDIATE")',
      'c.execute("BEGIN DEFERRED")',
      "tests/test_store.py::test_deux_demarrages_SIMULTANES_ne_migrent_pas_deux_fois"),
+
+    # Une cible authentifiee redevient inauditable si ce passage saute — et
+    # l'echec est discret : axe exclu, audit « termine normalement ».
+    ("Les en-tetes d'authentification se perdent avant la cible",
+     "scripts/run_agent.py",
+     "                                 headers=headers,",
+     "                                 headers=None,",
+     "tests/test_runners.py::test_les_en_tetes_atteignent_la_cible_depuis_la_CLI"),
+
+    # Le transcript d'un audit redevient public si cette garde saute.
+    ("Le transcript d'un audit se lit sans clef",
+     "api/main.py",
+     '    _identifier(x_api_key, minimum="viewer")\n    # Lues dans le MAGASIN',
+     '    # Lues dans le MAGASIN',
+     "tests/test_api.py::test_le_transcript_d_un_audit_n_est_PAS_lisible_sans_clef"),
+
+    # Et les identifiants de la cible repartent en clair.
+    ("Les identifiants de la cible sont stockes en clair",
+     "api/main.py",
+     "            propre[champ] = {nom: _MASQUE for nom in valeur}",
+     "            propre[champ] = valeur",
+     "tests/test_api.py::test_les_identifiants_de_la_CIBLE_ne_sont_jamais_rendus"),
+
+    # Sans plafond, une cible bavarde dicte la memoire du processus.
+    ("Une reponse de cible demesuree est acceptee",
+     "agents/base_agent.py",
+     "                    if recu > limite:",
+     "                    if False:",
+     "tests/test_base_agent.py::test_une_reponse_DEMESUREE_est_exclue_et_ne_remplit_pas_la_memoire"),
+
+    # Une purge qui touche une execution EN COURS lui retire son suivi.
+    ("La purge emporte aussi les executions en cours",
+     "api/store.py",
+     "        \"SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?\",",
+     "        \"SELECT id FROM runs WHERE finished_at IS NULL OR finished_at < ?\",",
+     "tests/test_store.py::test_la_purge_retire_le_VOLUME_et_garde_la_TRACE"),
 ]
 
 
@@ -219,14 +255,26 @@ def main() -> int:
             #      correspond plus à rien : elle ne prouve donc plus rien.
             #
             # Dans les deux cas c'est un ÉCHEC, pas une omission.
+            # DEUX CAUSES, ET ON NE PEUT PAS TOUJOURS TRANCHER.
+            #     Si le texte MUTE est encore la, c'est probablement une
+            #     execution interrompue qui n'a pas restaure — le correctif est
+            #     alors DESACTIVE. Mais quand `apres` est une tournure banale
+            #     (`pass`, `if False:`), elle peut aussi exister ailleurs dans le
+            #     fichier : affirmer « non restauree » enverrait alors chercher
+            #     une panne qui n'existe pas. Un diagnostic faux coute plus cher
+            #     qu'un diagnostic prudent — dans les deux cas c'est un ECHEC.
             reste_mute = apres in original
-            resultats.append((
-                libelle, "ANCRE",
-                f"MUTATION NON RESTAUREE dans {fichier} — le correctif est "
-                f"DESACTIVE. Remettre : {avant.strip()[:70]}"
-                if reste_mute else
-                f"ancre absente dans {fichier} : le correctif a change de forme, "
-                "cette mutation ne prouve plus rien"))
+            detail = (f"ancre absente dans {fichier}. "
+                      f"Attendu : {avant.strip()[:70]}")
+            if reste_mute:
+                detail += (" — le texte MUTE est present : soit une execution "
+                           "precedente n'a pas restaure (le correctif est alors "
+                           "DESACTIVE), soit le correctif a change de forme et "
+                           "cette ancre est a mettre a jour.")
+            else:
+                detail += (" — le correctif a change de forme : cette mutation "
+                           "ne prouve plus rien tant qu'elle n'est pas ajustee.")
+            resultats.append((libelle, "ANCRE", detail))
             continue
 
         fd, nom = tempfile.mkstemp(suffix=".bak")

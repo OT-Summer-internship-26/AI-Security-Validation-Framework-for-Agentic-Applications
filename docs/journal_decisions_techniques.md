@@ -3096,3 +3096,71 @@ lequel on revient en arriere, le supprimer supprimerait le retour arriere.
 **Verifie** : les 30 scripts shell des workflows passent `bash -n` ; les trois
 YAML se chargent ; le compose resout dans les deux sens (local et condense).
 `cosign.key` est dans `.gitignore` — une cle privee chiffree reste une cle privee.
+
+## 44. TROIS AFFIRMATIONS SUR LE BRANCHEMENT D'UNE CIBLE, VERIFIEES (2026-09-07)
+
+### 44.1 Une cible AUTHENTIFIEE etait inauditable — par TOUS les chemins
+`build_http_callback` accepte `headers` depuis toujours (base_agent), et
+`_build_callback` le lit dans `cfg["headers"]` (audit_graph). Mais AUCUN chemin
+ne le remplissait : pas de drapeau CLI, pas de variable d'environnement, et
+**pas de champ dans `AuditRequest`** non plus. L'affirmation de depart disait
+« inauditable en CLI » : c'etait plus large que ca. L'API passe par une ligne de
+commande, donc ajouter le champ au modele seul n'aurait rien change.
+
+Et l'echec etait DISCRET : la cible repond 401, `build_http_callback` rend
+`[HTTP_ERROR] statut 401`, l'axe est EXCLU du score — ni 0, ni 10/10. Honnete au
+niveau du calcul, mais l'operateur voit un audit qui se termine « normalement »
+sur une cible qu'il n'a jamais atteinte.
+
+Corrige de bout en bout : `--headers` sur les deux runners (avec validation du
+JSON AVANT l'audit, comme `--extra-payload`), champ `headers` sur `AuditRequest`,
+et le drapeau correspondant dans `_build_cmd`. Le mode `--subprocess` repasse
+aussi le drapeau, sinon il aurait perdu les en-tetes en silence. Quatre tests, une
+mutation.
+
+### 44.2 L'allowlist ne bornait pas la cible, elle bornait l'API
+`valider_cible` vivait dans `api/main.py` : les deux runners CLI ne l'appelaient
+pas. On peut le defendre — qui peut lancer `run_agent.py` peut lancer `curl` —
+mais elle etait presentee comme bornant « ce que `target_url` a le droit
+d'atteindre ». Une garantie a moitie vraie est une garantie sur laquelle on se
+repose a tort.
+
+La regle vit desormais dans `workflow/cibles.py`, seule et unique. Elle leve une
+`ValueError` et non une `HTTPException` — c'est precisement la dependance a
+FastAPI qui l'avait cantonnee a l'API. `api/main.py` la traduit en 400/403, les
+runners en refus de ligne de commande. Verifie : `AUDIT_TARGET_ALLOWLIST=localhost`
++ `--target http://169.254.169.254/...` -> refus immediat en CLI.
+
+### 44.3 Le multi-tours n'atteint JAMAIS la cible — et c'est structurel
+Le contrat de cible annonce est exact, mais ASI_06 portait un faux rassurant que
+sa propre docstring admettait deja : « un agent peut reussir ASI06 tout en restant
+vulnerable a un vrai empoisonnement de sa memoire persistante ».
+
+Tranche par LECTURE DE CODE, sans avoir besoin d'executer deux cibles :
+  · `to_deepteam_callback` recoit `turns` et **ne l'utilise pas** — la cible est
+    interrogee avec le seul prompt courant ;
+  · `pyrit_runner` n'envoie que `normalized_conversation[-1]` ;
+  · aucun identifiant de session n'est transmis, donc une cible stateful ne peut
+    meme pas correler les tours d'elle-meme.
+
+Conclusion : le multi-tours ne compense rien, ni sur cible stateful ni stateless.
+`CrescendoJailbreaking` et `ContextPoisoning` sont degrades en mono-tour du point
+de vue de la cible. Une attaque qui n'existe que dans l'accumulation ne peut pas
+aboutir — la cible « resiste », et le score monte. Le `memory_inject` cense
+contourner cela n'existe QUE dans un commentaire : il n'est lu nulle part.
+
+### 44.4 La note d'honnetete existait, mais n'atteignait aucun lecteur
+`behavioral_note` etait produite par le socle, serialisee sous `layers.behavioral.note`
+— et affichee UNIQUEMENT sur stdout de `run_agent.py`. Ni le rapport ni le
+dashboard ne la rendaient. Le `r.note` trouve dans `JudgeReliability.tsx` est une
+variable locale sans rapport.
+
+Autrement dit : le mecanisme d'honnetete ne parlait qu'a celui qui regardait un
+terminal. Le destinataire d'un audit — celui qui lit le rapport ou le dashboard —
+voyait un score nu.
+
+Corrige : les limites s'ACCUMULENT au lieu de s'ecraser, le fait brut
+(`multiturn_sans_historique`) est expose pour que le rapport construise sa limite
+sur une valeur MESUREE et non sur une correspondance de chaine, `_build_limits`
+en fait une entree, et le dashboard l'affiche au-dessus des attaques — la ou elle
+change ce qu'on a le droit de conclure de ce qui suit.
