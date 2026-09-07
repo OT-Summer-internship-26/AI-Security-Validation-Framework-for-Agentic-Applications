@@ -283,3 +283,37 @@ def test_rapport_markdown_dit_le_verdict_et_les_chiffres():
     assert "BLOCAGE" in md, "le verdict doit etre lisible en tete"
     assert "Injection shell" in md, "le finding qui bloque doit etre nomme"
     assert "| 1 | 1 |" in md.replace(" ", " "), "le tableau de comptage doit etre juste"
+
+
+def test_le_gate_REFUSE_de_choisir_lui_meme_son_sujet(monkeypatch, capsys):
+    """Sans audit indique, le gate ne doit rendre AUCUN verdict.
+
+    LE BUG QU'IL ATTRAPE, CONSTATE EN EXECUTION
+        `ci_gate.py` prenait par defaut LE PLUS RECENT fichier trouve dans
+        `data/audit_results/`. Or ce dossier contient 38 resultats VERSIONNES,
+        qui alimentent la demo du dashboard. Sur une pull request — ou aucune
+        cible n'est auditee — le gate jugeait donc un audit du 1er septembre
+        contre une cible bidon `http://c/chat`, et annoncait :
+
+            QUALITY GATE — PASS — deploiement autorise
+
+        Verdict vert sur TOUTES les PR, pour toujours, et poste en commentaire
+        ou il se lit comme une decision de securite. Un faux vert coute plus
+        cher qu'un controle absent : il fait CROIRE que quelqu'un a regarde.
+
+    Le comportement n'est pas supprime, il est DEMANDE (`--dernier`). Ce test
+    exige que le defaut soit le refus, et que le refus explique quoi faire.
+    """
+    import sys as _sys
+
+    import ci_gate
+
+    monkeypatch.setattr(_sys, "argv", ["ci_gate.py"])
+    code = ci_gate.main()
+    sortie = capsys.readouterr().out
+
+    assert code != 0, "sans sujet, le gate ne doit pas rendre un code de succes"
+    assert "PASS" not in sortie, (
+        "il a rendu un VERDICT alors qu'on ne lui a designe aucun audit")
+    assert "--dernier" in sortie, (
+        "un refus qui n'explique pas comment proceder se contourne au hasard")

@@ -226,9 +226,43 @@ def markdown(audit: dict, verdict: str, rules: list[dict], counts: dict, src: st
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("audit", nargs="?", help="fichier d'audit (défaut : le plus récent)")
+    ap.add_argument("audit", nargs="?", help="fichier d'audit à juger")
+    ap.add_argument("--dernier", action="store_true",
+                    help="juger le fichier le plus récent trouvé sur disque "
+                         "(à n'utiliser qu'en connaissance de cause)")
     ap.add_argument("--summary", help="écrit un rapport Markdown dans ce fichier")
     args = ap.parse_args()
+
+    # PRENDRE « LE PLUS RÉCENT SUR DISQUE » EST DÉSORMAIS EXPLICITE.
+    #
+    #     C'était le comportement PAR DÉFAUT, et il a produit un faux verdict
+    #     vert. `data/audit_results/` contient 38 résultats VERSIONNÉS (ils
+    #     alimentent la démo du dashboard). Sur une pull request, où aucune cible
+    #     n'est auditée, le gate jugeait donc le plus récent d'entre eux — un
+    #     audit du 1er septembre contre une cible bidon `http://c/chat` — et
+    #     annonçait « PASS — déploiement autorisé », commenté dans la PR.
+    #
+    #     La CI est protégée par une condition de workflow. Ça ne suffisait pas :
+    #     l'outil lancé À LA MAIN faisait toujours la même chose, en silence.
+    #     Un verdict de sécurité doit dire SUR QUOI il porte ; s'il choisit
+    #     lui-même son sujet, il finit par répondre à une autre question que
+    #     celle qu'on lui pose.
+    #
+    #     Le comportement n'est pas supprimé — il est demandé. `--dernier` reste
+    #     commode après un audit local ; il faut juste l'écrire.
+    if not args.audit and not args.dernier:
+        recent = latest_audit()
+        print("\u274c Aucun audit indiqué.")
+        print("   Ce gate rend un verdict SUR UN AUDIT PRÉCIS — il ne choisit pas")
+        print("   lui-même son sujet : `data/audit_results/` contient des résultats")
+        print("   versionnés qui servent la démo, et les juger passerait pour un")
+        print("   verdict sur votre code.")
+        print()
+        print("   Indiquez le fichier :   python scripts/ci_gate.py <audit.json>")
+        if recent:
+            print(f"   Ou, en connaissance de cause :   python scripts/ci_gate.py --dernier")
+            print(f"   (le plus récent serait : {recent.name})")
+        return 2
 
     path = Path(args.audit) if args.audit else latest_audit()
     if path and not path.exists():

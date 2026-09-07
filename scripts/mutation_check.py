@@ -93,6 +93,54 @@ MUTATIONS = [
      "            expired.append(d)\n            continue",
      "            active.append(d)\n            continue",
      "tests/test_ci_gate.py::test_derogation_a_date_illisible_est_traitee_comme_expiree"),
+
+    # Panne de PRODUCTION, pas de logique : le checkpoint quittait le volume.
+    # La mutation restaure un chemin code en dur, aveugle a AUDIT_DATA_DIR.
+    ("Le point de reprise repart hors du volume de donnees",
+     "workflow/audit_graph.py",
+     "db = str(checkpoints_path())",
+     'db = "data/checkpoints.sqlite"',
+     "tests/test_workflow.py::test_le_checkpoint_atterrit_SUR_LE_VOLUME_des_resultats"),
+
+    # Un axe exclu qui accuse la cible a tort envoie chercher la panne au mauvais
+    # endroit. La mutation restaure le diagnostic devine d'origine.
+    ("L'axe garak exclu accuse la cible sans avoir lu le journal",
+     "judge/garak_runner.py",
+     "        if saute or absent:",
+     "        if False:",
+     "tests/test_axes_runners.py::test_un_detecteur_indisponible_n_est_PAS_impute_a_la_cible"),
+
+    # Le faux vert le plus cher du projet : un verdict de securite rendu sur un
+    # audit que personne n'a designe. La mutation retablit le choix implicite.
+    ("Le gate choisit lui-meme l'audit qu'il juge",
+     "scripts/ci_gate.py",
+     "    if not args.audit and not args.dernier:",
+     "    if False:",
+     "tests/test_ci_gate.py::test_le_gate_REFUSE_de_choisir_lui_meme_son_sujet"),
+
+    # Le retour arriere sur etat durable : une image ancienne devant une base
+    # recente doit refuser de demarrer. La mutation retire le garde-fou.
+    ("Une image plus ancienne que la base demarre quand meme",
+     "api/store.py",
+     "    if actuelle > SCHEMA_VERSION:",
+     "    if False:",
+     "tests/test_store.py::test_une_base_PLUS_RECENTE_que_le_code_REFUSE_de_demarrer"),
+
+    # SSRF authentifie : sans bornage, une cle operateur atteint n'importe quelle
+    # adresse interne, et les reponses partent dans le transcript d'audit.
+    ("Une cible hors liste autorisee est acceptee",
+     "api/main.py",
+     "    if not autorise:",
+     "    if False:",
+     "tests/test_api.py::test_une_cible_hors_liste_est_refusee"),
+
+    # Compose lance l'API et l'ouvrier ensemble : sans verrou, la migration
+    # s'applique deux fois, et l'un des deux services ne demarre pas.
+    ("La migration se fait sans verrou d'ecriture",
+     "api/store.py",
+     'c.execute("BEGIN IMMEDIATE")',
+     'c.execute("BEGIN DEFERRED")',
+     "tests/test_store.py::test_deux_demarrages_SIMULTANES_ne_migrent_pas_deux_fois"),
 ]
 
 
@@ -105,6 +153,47 @@ def lancer(test: str) -> bool:
     return r.returncode == 0
 
 
+def synthese(resultats):
+    """(reels, total, perdues) — LE CALCUL QUI A MENTI, isole pour etre eprouve.
+
+    « ANCRE » compte dans le TOTAL. Il en etait exclu, et le script affichait
+    donc un ratio complet sur un perimetre retreci : « 16/16 », sortie 0, pendant
+    qu'un correctif de securite (`valider_cible`) etait NEUTRALISE dans le
+    fichier par une execution precedente non restauree.
+
+    Un denominateur qui retrecit en silence est un mensonge par omission — et
+    c'est exactement le defaut que ce script est cense debusquer ailleurs. D'ou
+    cette fonction : le calcul est trop important pour n'exister que dans un
+    `print`.
+    """
+    reels = sum(1 for _, e, _ in resultats if e == "OK")
+    total = sum(1 for _, e, _ in resultats if e in ("OK", "INUTILE", "ANCRE"))
+    perdues = [(lib, det) for lib, e, det in resultats if e == "ANCRE"]
+    return reels, total, perdues
+
+
+def demo() -> None:
+    """Auto-controle du calcul. Aucun fichier touche, aucun test lance."""
+    # 1. Cas nominal.
+    assert synthese([("a", "OK", ""), ("b", "OK", "")])[:2] == (2, 2)
+
+    # 2. Un test decoratif fait baisser le ratio, sans sortir du perimetre.
+    assert synthese([("a", "OK", ""), ("b", "INUTILE", "")])[:2] == (1, 2)
+
+    # 3. LE CAS QUI A COUTE : une ancre absente ne doit PAS retrecir le total.
+    reels, total, perdues = synthese([("a", "OK", ""), ("b", "ANCRE", "non restauree")])
+    assert (reels, total) == (1, 2), (
+        "une ancre absente sort du denominateur : le script afficherait un ratio "
+        "complet alors qu'un correctif n'est plus eprouve du tout")
+    assert perdues and perdues[0][0] == "b"
+
+    # 4. Une mutation non mecanisable reste hors perimetre, elle, et c'est voulu :
+    #    elle est declaree telle quelle, ce n'est pas un accident.
+    assert synthese([("a", "OK", ""), ("b", "\u2014", "non mutee")])[:2] == (1, 1)
+
+    print("scripts.mutation_check : 4/4 controles OK")
+
+
 def main() -> int:
     resultats = []
     for libelle, fichier, avant, apres, test in MUTATIONS:
@@ -115,7 +204,29 @@ def main() -> int:
         chemin = RACINE / fichier
         original = chemin.read_text(encoding="utf-8")
         if avant not in original:
-            resultats.append((libelle, "?", f"ancre absente dans {fichier}"))
+            # DEUX CAUSES, ET LES DEUX SONT GRAVES.
+            #
+            #   a) Le texte muté est TOUJOURS LÀ : une exécution précédente a été
+            #      interrompue et n'a pas restauré. Le correctif est donc DÉSACTIVÉ
+            #      dans l'arbre de travail — c'est arrivé, sur le garde-fou SSRF
+            #      de `valider_cible`, et personne ne l'a vu : l'ancre manquante
+            #      était rangée en « ? », EXCLUE du total, et le script sortait
+            #      quand même en 0. « 16/16 » au lieu de « un correctif de
+            #      sécurité est neutralisé ». Exactement la maladie que ce script
+            #      est censé débusquer chez les autres.
+            #
+            #   b) Le correctif a été renommé ou supprimé, et la mutation ne
+            #      correspond plus à rien : elle ne prouve donc plus rien.
+            #
+            # Dans les deux cas c'est un ÉCHEC, pas une omission.
+            reste_mute = apres in original
+            resultats.append((
+                libelle, "ANCRE",
+                f"MUTATION NON RESTAUREE dans {fichier} — le correctif est "
+                f"DESACTIVE. Remettre : {avant.strip()[:70]}"
+                if reste_mute else
+                f"ancre absente dans {fichier} : le correctif a change de forme, "
+                "cette mutation ne prouve plus rien"))
             continue
 
         fd, nom = tempfile.mkstemp(suffix=".bak")
@@ -139,14 +250,22 @@ def main() -> int:
     print("=" * 78 + "\n")
     for libelle, etat, detail in resultats:
         marque = {"OK": "[FILET REEL] ", "INUTILE": "[DECORATIF]  ",
-                  "—": "[non mutee]  ", "?": "[ANCRE KO]   "}[etat]
+                  "—": "[non mutee]  ", "ANCRE": "[ANCRE KO]   "}[etat]
         print(f"  {marque}{libelle}")
         print(f"                {detail}")
-    reels = sum(1 for _, e, _ in resultats if e == "OK")
-    total = sum(1 for _, e, _ in resultats if e in ("OK", "INUTILE"))
+    reels, total, perdues = synthese(resultats)
     print(f"\n  {reels}/{total} correctifs adosses a un test qui echoue quand on les casse.")
+    if perdues:
+        print(f"\n  {len(perdues)} mutation(s) n'ont PAS PU ETRE JOUEES :")
+        for lib, det in perdues:
+            print(f"    - {lib}\n      {det}")
+        print("\n  Tant que ces ancres ne sont pas retablies, ce script ne dit")
+        print("  RIEN sur les correctifs concernes.")
     return 0 if reels == total else 1
 
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        demo()
+        raise SystemExit(0)
     raise SystemExit(main())
