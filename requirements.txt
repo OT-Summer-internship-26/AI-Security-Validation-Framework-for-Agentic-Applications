@@ -6,6 +6,12 @@
 # Core
 langchain
 langgraph
+# Meme piege que sentry-sdk plus bas : `workflow/audit_graph.py` importe
+# `langgraph.checkpoint.sqlite`, qui vit dans un paquet SEPARE que langgraph
+# ne tire pas. L'environnement de developpement l'avait (installe a la main),
+# l'image construite depuis le verrou avec `--no-deps` ne l'avait PAS : le
+# mode parallele — donc la reprise sur incident — plantait au premier appel.
+langgraph-checkpoint-sqlite
 langchain-openai
 langchain-community
 
@@ -21,19 +27,41 @@ deepeval
 #
 # Ce sont pourtant les deux axes qui ont detecte un detournement la ou DeepTeam
 # rendait 10/10. Une image sans eux est un auditeur degrade qui ne le dit pas.
+#
+# LES DEUX NE SE TRAITENT PAS PAREIL, ET LE FICHIER SE CONTREDISAIT :
+# `garak` etait declare ICI (actif) et re-declare 10 lignes plus bas comme
+# « volontairement commente ». La premiere ligne gagnait : `pip install -r`
+# tentait bel et bien l'installation, donc le build Rust que le bloc suivant
+# dit d'eviter. Une seule declaration desormais, celle du bas, commentee.
 pyrit
-garak
 # Dependance NON DECLAREE par deepeval : son code fait `import sentry_sdk` sans
 # l'inscrire dans ses metadonnees. Un environnement de developpement l'a deja
 # (une autre bibliotheque l'installe), une image construite depuis le verrou ne
 # l'a PAS — et l'audit echoue au premier import, pas au demarrage de l'API.
 # Constate en lancant l'image : /health repondait, `import deepteam` echouait.
 sentry-sdk
-# garak : NE PAS installer dans cet environnement. La version récente exige Rust (build de litellm),
-# et la version sans-Rust (0.9.0.11, via `--only-binary=:all:`) épingle openai==0.28.1, ce qui CASSE
-# deepteam / deepeval / langchain-openai (openai 2.x). Les deux ne peuvent pas coexister.
-# → garak est installé isolé dans un venv dédié : voir docs/garak_isolated_env.md (~/garak-venv).
-# garak   # <- volontairement commenté : outil d'attaque secondaire, isolé hors de cet env.
+# garak : NE PAS installer dans cet environnement — mais IL EST DANS L'IMAGE.
+#
+# LE CONFLIT EST RÉEL, ET IL EST DE VERSION D'OPENAI
+#     garak 0.9.0.11 épingle `openai<1.0.0`. deepteam, deepeval et
+#     langchain-openai exigent openai 2.x. Dans un même site-packages, l'un des
+#     deux casse (`ModuleNotFoundError: No module named 'openai.types'`).
+#     → venv DÉDIÉ, deux résolutions indépendantes, aucun arbitrage à rendre.
+#
+# CE QUI A CHANGÉ : L'IMAGE N'EN AVAIT AUCUN, ELLE L'A MAINTENANT
+#     `garak_available()` rendait False en production, l'axe sortait
+#     « unavailable » — le SEUL axe indépendant du LLM manquait à tous les
+#     audits, sans que rien ne le dise. Le Dockerfile construit désormais ce
+#     venv dans un étage dédié (`FROM ... AS garak`).
+#
+# ET IL NE COÛTE PAS 1,4 Go
+#     garak DÉCLARE torch/transformers/datasets/nltk, d'où un venv de 1,4 Go en
+#     installation normale. Ces paquets servent aux générateurs HuggingFace
+#     LOCAUX, inutilisés ici (on attaque une cible HTTP). Installé `--no-deps`
+#     plus onze paquets légers : **91 Mo, même verdict** — vérifié via
+#     `judge/garak_runner.py`, mêmes compteurs bruts. Recette et mesures :
+#     docs/garak_isolated_env.md.
+# garak   # <- volontairement commenté : installé dans son venv, pas ici.
 
 # Observability
 langfuse

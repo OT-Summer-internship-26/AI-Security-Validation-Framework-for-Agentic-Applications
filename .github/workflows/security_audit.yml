@@ -2,11 +2,25 @@
 #  Audit de sécurité IA — porte de qualité CI/CD
 #
 #  CE QUI TOURNE ICI, ET POURQUOI
-#      Uniquement les axes DÉTERMINISTES : Semgrep, pip-audit, Garak, sandbox.
-#      Ils ne consomment aucun appel LLM — donc aucun plafond de débit — et
-#      donnent le même résultat à chaque exécution. Bloquer un développeur sur
-#      un score stochastique (DeepTeam, PyRIT) serait indéfendable : deux runs
-#      identiques ont donné 9,66 et 7,93 sur la même cible.
+#      Uniquement du DÉTERMINISTE : Semgrep, pip-audit, la suite hors-ligne,
+#      les auto-contrôles d'infrastructure et le test de mutation. Aucun appel
+#      LLM — donc aucun plafond de débit — et le même résultat à chaque
+#      exécution. Bloquer un développeur sur un score stochastique (DeepTeam,
+#      PyRIT) serait indéfendable : deux runs identiques ont donné 9,66 et 7,93
+#      sur la même cible.
+#
+#      ⚠ CET EN-TÊTE ANNONÇAIT « Garak ». C'ÉTAIT FAUX, ET DEPUIS TOUJOURS :
+#      garak n'apparaît nulle part dans ce fichier. Un en-tête qui promet une
+#      couverture inexistante est pire qu'un en-tête absent — il dispense de
+#      vérifier.
+#
+#      ET LA RAISON N'EST PAS QU'IL SERAIT INSTALLABLE : IL L'EST.
+#      Dans un venv dédié il tient en 91 Mo (recette mesurée :
+#      docs/garak_isolated_env.md) et l'IMAGE l'embarque désormais. S'il ne
+#      tourne pas ICI, c'est que cette porte n'audite AUCUNE cible : garak
+#      attaque une URL, il n'a rien à dire sur une pull request. Il s'exécute
+#      là où il y a une cible — audit manuel, ou `workflow_dispatch` avec
+#      `target_url`.
 #
 #      L'audit comportemental complet tourne la nuit (workflow séparé) et
 #      alimente la baseline, il ne bloque pas.
@@ -29,6 +43,15 @@ on:
         required: false
         default: ""
 
+# Une seule exécution par branche : un `push` rapide en annule l'ancienne.
+# Sans ça, trois commits en cinq minutes lancent trois builds d'image complets
+# dont deux sont déjà périmés en démarrant — du temps de runner brûlé, et un
+# verdict qui peut arriver APRÈS celui du commit suivant.
+# `cancel-in-progress` est sûr ici : aucun de ces jobs ne publie ni ne déploie.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -37,7 +60,18 @@ jobs:
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # BUDGET MESURÉ, pas estimé (poste de développement, caches tièdes) :
+    #     install semgrep+pip-audit ~60 s · install deps de test 100 s ·
+    #     docker pull ~15 s · pytest 66 s · auto-contrôles ~15 s ·
+    #     MUTATION 153 s · semgrep 24 s · pip-audit ~30 s
+    #     -> environ 9 à 10 min.
+    #
+    # Pourquoi 20 et non 15 : un runner GitHub est plus lent qu'un poste, et les
+    # installations dépendent du réseau. À 15, la marge était de 5 min — assez
+    # pour qu'un jour de réseau lent fasse rougir la porte sans qu'aucun test
+    # n'ait échoué. Un timeout sert à attraper un BLOCAGE, pas à sanctionner une
+    # journée chargée : un échec qui ne veut rien dire finit par ne plus être lu.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +98,44 @@ jobs:
           # Les dependances des tests, pas celles du framework : la suite est
           # hors-ligne par conception. `-r requirements.txt` prendrait 15 min
           # pour rien, et ferait dependre les tests du reseau.
-          pip install pytest pytest-cov pydantic fastapi httpx jinja2 pyyaml
+          #
+          # CETTE LISTE A ETE MESUREE, pas devinee. Avec les seuls paquets web
+          # (pytest/pydantic/fastapi/httpx/jinja2/pyyaml), 22 tests sur 242
+          # ECHOUAIENT ici alors qu'ils passaient en local : langgraph, deepeval
+          # et deepteam manquaient. La porte etait rouge sur du vide, ou pire,
+          # personne ne lisait le rouge. Les cinq ajouts coutent 1 min 40, cache
+          # pip compris.
+          #
+          # PyRIT reste dehors, pour son COUT seul : 4 min 44 mesurees, sur une
+          # porte qui doit rendre son verdict vite. Ce n'est PAS une
+          # incompatibilite — `requirements.lock` le resout avec `click==8.1.8`
+          # et l'image l'embarque. Son unique test se met en skip tout seul.
+          #
+          # `-c requirements.lock` : LA PORTE DOIT TESTER CE QUI EST LIVRÉ.
+          #     Sans cette contrainte, pip prenait les versions du JOUR. Ce
+          #     n'est pas théorique — mesuré : la CI installait deepeval
+          #     **4.2.1** quand l'image embarque **4.2.0**. La porte validait
+          #     donc un assemblage qui n'existe nulle part en production, et
+          #     une publication amont pouvait casser le gate un matin sans
+          #     qu'une seule ligne du dépôt ait bougé.
+          #
+          #     Le verrou sert de fichier de CONTRAINTES : il n'installe rien
+          #     de plus (la liste ci-dessous reste la seule à être installée),
+          #     il impose seulement les versions exactes de l'image. Vérifié :
+          #     deepteam, deepeval, langgraph, pytest et fastapi alignés.
+          pip install -c requirements.lock pytest pytest-cov pydantic fastapi httpx jinja2 pyyaml deepteam deepeval langgraph langgraph-checkpoint-sqlite sentry-sdk
+
+          # SANS CETTE LIGNE, CINQ TESTS DE SÉCURITÉ NE TOURNENT NULLE PART.
+          #     `DockerSandboxProvider.is_available()` exige que l'image soit
+          #     DÉJÀ PRÉSENTE localement (`docker image inspect`). Sur un runner
+          #     neuf elle ne l'est pas : les cinq tests d'isolation réelle —
+          #     réseau bloqué, système de fichiers en lecture seule, exécution
+          #     non-root, boucle infinie tuée — se mettaient en skip. Ils sautent
+          #     aussi DANS l'image (pas de socket Docker), donc ils ne
+          #     s'exécutaient à aucun endroit. Or c'est la raison d'être du bac
+          #     à sable : « l'exfiltration doit être impossible ».
+          docker pull -q python:3.11-slim
+
           python -m pytest tests/ -q
 
 
@@ -77,6 +148,14 @@ jobs:
         run: |
           python scripts/setup_docker.py --self-test
           python scripts/backup_volume.py --self-test
+          python scripts/check_lock.py --self-test
+          # Le calcul du controle de mutation lui-meme : il a deja menti une
+          # fois — une ancre absente sortait du DENOMINATEUR, si bien qu'il
+          # affichait « 16/16 » et sortait en 0 pendant qu'un correctif de
+          # securite etait neutralise dans le fichier. L'outil qui prouve les
+          # autres doit se prouver aussi.
+          python scripts/mutation_check.py --self-test
+          python scripts/check_lock.py
           python -m judge.metrics
           python -m api.store
           python -m workflow.paths
@@ -110,7 +189,22 @@ jobs:
         continue-on-error: true
         run: |
           # Code de sortie 1 = CVE trouvées, pas une erreur : on lit toujours le JSON.
-          pip-audit -r requirements.txt --format json --output pipaudit.json || true
+          #
+          # LE VERROU, PAS requirements.txt — ON AUDITE CE QUI EST LIVRÉ.
+          #     `requirements.txt` ne porte que les 25 dépendances DIRECTES, sans
+          #     versions. pip-audit devait donc les résoudre lui-même, et il
+          #     auditait les versions du JOUR — pas les 214 paquets épinglés que
+          #     l'image embarque réellement. Le scan ne parlait pas de l'artefact.
+          #
+          #     `--no-deps --disable-pip` : le verrou est déjà entièrement épinglé,
+          #     aucune résolution n'est nécessaire. Effet de bord utile, vérifié :
+          #     plus aucune compilation, donc le contrôle tourne aussi sous Windows
+          #     (où `uvloop` faisait échouer l'ancienne forme).
+          #
+          #     Résultat attendu aujourd'hui : 1 CVE — `click 8.1.8`
+          #     (PYSEC-2026-2132, corrigée en 8.3.3). C'est le compromis DÉLIBÉRÉ
+          #     documenté dans requirements.txt, pas une surprise.
+          pip-audit -r requirements.lock --no-deps --disable-pip                     --format json --output pipaudit.json || true
           python - <<'PY'
           import json, pathlib
           p = pathlib.Path("pipaudit.json")
@@ -137,10 +231,37 @@ jobs:
 
       - name: Quality Gate — décision
         id: gate
+        # ⚠ NE DÉCIDE QUE S'IL Y A UNE CIBLE AUDITÉE DANS CETTE EXÉCUTION.
+        #
+        #     `ci_gate.py` sans argument prend LE PLUS RÉCENT fichier d'audit
+        #     TROUVÉ SUR DISQUE. Or 54 résultats d'audit sont versionnés dans
+        #     `data/audit_results/`. Sur une pull request — où aucune cible n'est
+        #     auditée, l'étape précédente étant conditionnée à `target_url` — le
+        #     gate jugeait donc un artefact du 1er septembre, contre une cible
+        #     bidon `http://c/chat`, et rendait invariablement :
+        #
+        #         QUALITY GATE — PASS — déploiement autorisé
+        #         findings 0 Critical · 0 High · 0 Medium · 0 Low
+        #
+        #     Verdict vert sur TOUTES les PR, pour toujours, sans rapport avec
+        #     la PR. Et posté en commentaire, où il se lit comme une décision de
+        #     sécurité réelle. Un faux vert coûte plus cher qu'un contrôle absent :
+        #     il fait CROIRE que quelqu'un a regardé.
+        #
+        #     Le gate est un verdict SUR UNE CIBLE. Sans cible, il n'a rien à
+        #     dire — et il se tait, au lieu d'inventer. L'étape de commentaire
+        #     n'écrit alors rien (elle sort si `gate_summary.md` n'existe pas).
+        #     Ce qui protège la PR, ce sont les tests, la mutation, Semgrep et
+        #     pip-audit — pas ce verdict-là.
+        if: inputs.target_url != ''
         env:
           PYTHONUTF8: "1"
         run: |
-          python scripts/ci_gate.py --summary gate_summary.md
+          # `--dernier` est EXPLICITE depuis que le gate refuse de choisir
+          # lui-meme son sujet. Ici c'est legitime et verifiable : l'etape
+          # precedente vient d'ecrire l'audit de CETTE execution, c'est donc
+          # bien le plus recent. Sans cible auditee, cette etape ne tourne pas.
+          python scripts/ci_gate.py --dernier --summary gate_summary.md
           # exit 1 => le job échoue => la PR est bloquée.
 
       - name: Rapport dans la pull request

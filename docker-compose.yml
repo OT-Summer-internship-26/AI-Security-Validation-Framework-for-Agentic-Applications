@@ -48,8 +48,23 @@ services:
       context: .
       dockerfile: Dockerfile
     # Étiquette VERSIONNÉE et non `latest` : `latest` d'hier n'existe plus, donc
-    # aucun retour arrière possible. `AUDIT_VERSION` vient de .env ou de la CI.
-    image: ai-security-framework:${AUDIT_VERSION:-dev}
+    # aucun retour arrière possible.
+    #
+    # CE N'ÉTAIT QU'UNE INTENTION — RIEN NE PRODUISAIT CETTE ÉTIQUETTE.
+    #     `AUDIT_VERSION` n'existait ni dans `.env.example` ni en CI : le défaut
+    #     `dev` s'appliquait toujours, et comme aucune image ne portait ce nom,
+    #     `compose up` RECONSTRUISAIT sur la machine cible. L'artefact exécuté
+    #     n'était donc jamais celui que la CI avait éprouvé.
+    #
+    #     La CI publie désormais l'image testée sur GHCR, étiquetée `sha-<7>`.
+    #     En production on pose les deux variables (voir .env.example) et on fait
+    #     `docker compose pull` : on exécute l'objet exact qui a passé les tests.
+    #     Sans elles, le comportement local ne change pas d'un iota.
+    # `AUDIT_REF_API` prime : elle porte une reference COMPLETE, ce qui permet
+    # d'epingler par CONDENSE (`...@sha256:...`). Une etiquette reste
+    # techniquement re-poussable ; un condense, non. En production c'est la
+    # seule forme qui garantit que l'octet execute est celui qui a ete teste.
+    image: ${AUDIT_REF_API:-${AUDIT_IMAGE_API:-ai-security-framework}:${AUDIT_VERSION:-dev}}
     container_name: ai_security_api
     <<: [*journal, *redemarrage]
 
@@ -115,7 +130,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-security-framework:${AUDIT_VERSION:-dev}
+    # Même image que l'API — donc même étiquette, forcément : un ouvrier d'une
+    # autre version que l'API qui le nourrit lirait un état qu'il ne comprend pas.
+    image: ${AUDIT_REF_API:-${AUDIT_IMAGE_API:-ai-security-framework}:${AUDIT_VERSION:-dev}}
     command: ["python", "scripts/worker.py"]
     <<: [*journal, *redemarrage]
 
@@ -183,7 +200,7 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-    image: ai-security-dashboard:${AUDIT_VERSION:-dev}
+    image: ${AUDIT_REF_DASHBOARD:-${AUDIT_IMAGE_DASHBOARD:-ai-security-dashboard}:${AUDIT_VERSION:-dev}}
     container_name: ai_security_dashboard
     <<: [*journal, *redemarrage]
 

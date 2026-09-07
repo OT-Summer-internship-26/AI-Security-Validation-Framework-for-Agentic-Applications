@@ -65,3 +65,15 @@ data/state.sqlite-shm
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Archives de sauvegarde du volume. Elles contiennent la base d'etat COMPLETE :
+# empreintes des cles d'API, file d'attente, et tous les resultats d'audit avec
+# les reponses des cibles. Un `git add -A` distrait les publierait.
+sauvegardes/
+
+# Cle PRIVEE de signature des images. Chiffree, mais une clé privée chiffrée
+# reste une clé privée : elle ne va QUE dans les secrets GitHub, jamais ici.
+# `cosign.pub` (la publique), elle, DOIT etre versionnee — c'est elle qui permet
+# a quiconque de verifier qu'une image vient bien de cette chaine.
+cosign.key
+*.key

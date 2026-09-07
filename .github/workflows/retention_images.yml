@@ -1,0 +1,82 @@
+# ==============================================================================
+#  Rétention des images publiées
+#
+#  POURQUOI CE WORKFLOW EXISTE
+#      Chaque `push` sur `main` publie une image étiquetée `sha-<7>`. Sans
+#      ménage, le registre grossit indéfiniment — la même croissance non bornée
+#      que celle déjà corrigée pour les journaux (`max-size` × `max-file`) et
+#      pour les sauvegardes du volume. Un stockage qui ne se purge jamais finit
+#      par se purger tout seul, au pire moment et sans qu'on choisisse quoi.
+#
+#  CE QU'IL NE SUPPRIME JAMAIS
+#      Les étiquettes de VERSION (`1.2.3`). Elles sont le nom par lequel on
+#      déploie et par lequel on revient en arrière : les perdre reviendrait à
+#      supprimer la possibilité de revenir. Seules les `sha-<7>` anciennes
+#      partent, et on en garde largement de quoi remonter plusieurs semaines.
+#
+#  SÉPARÉ DE `images.yml`, ET C'EST VOULU
+#      Y ajouter un déclencheur `schedule` aurait relancé toute la construction
+#      chaque semaine. Ici on ne construit rien : on ne fait que supprimer.
+# ==============================================================================
+name: Rétention des images
+
+on:
+  schedule:
+    # Lundi 4 h UTC : hors des heures où quelqu'un pourrait être en train de
+    # déployer, donc aucun risque de supprimer une image en cours de traction.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: retention-images
+  cancel-in-progress: false
+
+jobs:
+  purger:
+    name: Purger les anciennes images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      # `fail-fast: false` : si la purge de l'API échoue, celle du dashboard doit
+      # quand même avoir lieu. Un ménage partiel vaut mieux qu'aucun.
+      fail-fast: false
+      matrix:
+        paquet: [ai-security-framework, ai-security-dashboard]
+    steps:
+      - name: Supprimer les `sha-*` les plus anciennes
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ matrix.paquet }}
+          package-type: container
+          # AU PREMIER PASSAGE, LE PAQUET N'EXISTE PAS ENCORE.
+          #     Ce workflow est planifie : il tournera peut-etre avant le premier
+          #     `push` sur main, donc avant qu'aucune image n'ait ete publiee.
+          #     Sans cette ligne, il echouerait sur un 404 — un job rouge
+          #     hebdomadaire qui ne signale RIEN, et qu'on apprend a ignorer.
+          #     C'est ainsi qu'une alarme utile devient du bruit.
+          ignore-missing-package: true
+          # 90 ET NON 30 — PARCE QU'UNE IMAGE, C'EST TROIS VERSIONS.
+          #     cosign stocke la signature et l'attestation SBOM comme des
+          #     ETIQUETTES du meme paquet (`sha256-<condense>.sig` et `.att`).
+          #     Elles comptent donc dans ce plafond. A 30, on ne gardait pas
+          #     30 images mais une DIZAINE — et le reste du compte partait en
+          #     signatures. 90 = 30 images reellement conservees.
+          min-versions-to-keep: 90
+          # ⚠️ LA LIGNE QUI PROTÈGE LES RELEASES.
+          #     `1.2.3` est le nom par lequel on déploie et on revient en
+          #     arrière. Sans cette exclusion, une version publiée il y a six
+          #     mois disparaîtrait au premier ménage — et avec elle la seule
+          #     façon de la redéployer.
+          #
+          #     ET LES SIGNATURES, SANS QUOI LE RETOUR ARRIERE SE CASSE.
+          #     Une image dont la signature a ete supprimee est INDEPLOYABLE :
+          #     `deploiement.yml` verifie la signature avant de deployer et
+          #     refuse si elle manque. Supprimer une `.sig` en gardant son image,
+          #     c'est donc detruire silencieusement la possibilite de revenir a
+          #     cette version — exactement ce que la retention est censee
+          #     preserver. Les etiquettes `sha256-*` sont donc intouchables.
+          ignore-versions: '^(\d+\.\d+\.\d+|sha256-.*)$'

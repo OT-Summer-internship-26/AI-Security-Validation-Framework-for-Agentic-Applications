@@ -21,14 +21,33 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
-# Python du venv garak isolé (surchargeable par variable d'environnement).
-GARAK_VENV_PYTHON = os.environ.get(
-    "GARAK_VENV_PYTHON", r"C:\Users\asser\garak-venv\Scripts\python.exe"
-)
+# Python du venv garak isolé (surchargeable par `GARAK_VENV_PYTHON`).
+#
+# LE DEFAUT ETAIT LE CHEMIN PERSONNEL DE L'AUTEUR, EN DUR.
+#     C:\Users\asser\garak-venv\Scripts\python.exe . Sur toute AUTRE machine — un
+#     collegue, un runner, et surtout L'IMAGE qui est Linux —
+#     `garak_available()` rendait False pour toujours. L'axe garak, le SEUL
+#     axe independant du LLM, disparaissait de tous les audits sans que rien
+#     ne le dise : « unavailable » etait traite comme un axe exclu, jamais
+#     comme un defaut d'installation. Meme classe de panne que PyRIT absent
+#     du verrou — declare quelque part, introuvable la ou ca compte.
+#
+#     Le defaut se deduit maintenant du systeme et du dossier personnel : il
+#     designe LE MEME FICHIER qu'avant sur le poste de l'auteur, donc rien ne
+#     change pour lui, et un chemin atteignable partout ailleurs.
+def _venv_garak_par_defaut() -> str:
+    if os.name == "nt":
+        return str(Path.home() / "garak-venv" / "Scripts" / "python.exe")
+    return str(Path.home() / "garak-venv" / "bin" / "python")
+
+
+GARAK_VENV_PYTHON = os.environ.get("GARAK_VENV_PYTHON") or _venv_garak_par_defaut()
 # Probes ASI01 par défaut (jailbreak / override d'objectif) — petit set pour la vitesse.
 DEFAULT_PROBES = os.environ.get("GARAK_PROBES", "dan.AntiDAN,dan.DAN_Jailbreak")
 _TIMEOUT = int(os.environ.get("GARAK_TIMEOUT", "600"))
@@ -186,8 +205,33 @@ def run_garak(
         "returncode": proc.returncode,
         "timed_out": timed_out,
     }
-    # Aucune évaluation exploitable (cible injoignable ?) -> non scorable (PAS 10/10).
+    # Aucune évaluation exploitable -> non scorable (PAS 10/10, PAS 0).
+    #
+    # ON NE DEVINE PLUS LA CAUSE, ON LA LIT DANS LE JOURNAL.
+    #     Ce point rendait TOUJOURS « cible injoignable ? ». C'est une cause
+    #     plausible, pas la seule — et un diagnostic faux coûte plus cher
+    #     qu'un diagnostic absent : il envoie chercher la panne du mauvais
+    #     côté. Le journal de garak est déjà lu plus haut, autant s'en servir.
+    #
+    #     CAS RÉEL, CONSTATÉ EN ÉPROUVANT LE VENV ALLÉGÉ : une probe à
+    #     détecteur ML (`realtoxicityprompts.RTPBlank`) ressortait « cible
+    #     injoignable ? » alors que la cible répondait parfaitement. garak
+    #     ATTRAPE lui-même l'import manquant, SAUTE le détecteur, et sort en
+    #     CODE 0. Ni le code de retour ni une exception ne trahissent rien ;
+    #     seule cette ligne du journal le dit, mot pour mot :
+    #         detector load failed: toxicity.ToxicCommentModel, skipping >>
     if total_total == 0:
+        journal = stderr or ""
+        saute = re.search(r"detector load failed: ([\w.]+)", journal)
+        absent = re.search(r"No module named '([\w.]+)'", journal)
+        if saute or absent:
+            quoi = saute.group(1) if saute else absent.group(1)
+            return None, findings, (
+                f"excluded: garak n'a pas pu évaluer — détecteur/module « {quoi} » "
+                f"indisponible dans {GARAK_VENV_PYTHON}. La cible n'est PAS en "
+                "cause. Probe à détecteur ML sur un venv allégé ? "
+                "Voir docs/garak_isolated_env.md."
+            ), {**raw, "detecteur_indisponible": quoi}
         return None, findings, "excluded: aucune évaluation garak (cible injoignable ?)", raw
 
     score = round((passed_total / total_total) * 10, 2)

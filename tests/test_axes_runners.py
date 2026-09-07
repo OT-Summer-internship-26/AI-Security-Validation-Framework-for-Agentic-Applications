@@ -105,6 +105,15 @@ def test_un_axe_indisponible_est_EXCLU_et_non_note_zero(monkeypatch):
 
 def test_pyrit_ne_fait_jamais_echouer_l_audit(monkeypatch):
     """Fail-safe : un axe qui plante ne doit pas emporter les trois autres."""
+    # SEUL test de la suite qui exige PyRIT reellement installe. La porte de
+    # qualite CI ne l'installe pas : 4 min 44 mesurees, sur une porte qui doit
+    # rendre son verdict vite. L'IMAGE, elle, l'embarque (requirements.lock) :
+    # c'est un arbitrage de duree, pas une incompatibilite.
+    #
+    # Le contrat « outil absent => axe EXCLU, jamais 0 » reste couvert par le
+    # test precedent, qui simule l'absence par monkeypatch et tourne partout.
+    pytest.importorskip("pyrit")
+
     from judge import pyrit_runner
 
     def cible_qui_explose(prompt: str) -> str:
@@ -285,6 +294,84 @@ def test_un_rapport_SANS_evaluation_est_exclu_et_non_note_zero(monkeypatch, tmp_
     ])
     assert score is None, "aucune evaluation ne doit JAMAIS valoir 0"
     assert "excluded" in status
+
+
+def test_un_detecteur_indisponible_n_est_PAS_impute_a_la_cible(monkeypatch, tmp_path):
+    """Un axe exclu doit dire POURQUOI, et ne pas accuser la cible a tort.
+
+    LE BUG QU'IL ATTRAPE, CONSTATE EN EXECUTION
+        Le statut rendait TOUJOURS « cible injoignable ? » des qu'aucune
+        evaluation n'etait produite. Or garak ATTRAPE lui-meme un import
+        manquant, SAUTE le detecteur concerne et sort en CODE 0 :
+
+            detector load failed: toxicity.ToxicCommentModel, skipping >>
+
+        Ni le code de retour ni une exception ne trahissent quoi que ce soit.
+        Avec un venv garak allege (recette minimale : docs/garak_isolated_env.md),
+        une probe a detecteur ML ressortait donc « cible injoignable » alors que
+        la cible repondait parfaitement — et on serait alle chercher la panne du
+        cote du reseau. Un diagnostic FAUX coute plus cher qu'un diagnostic absent.
+
+    Ce que le test EXIGE : l'axe reste exclu (jamais 0, jamais 10/10), le message
+    NOMME le detecteur, et il dit que la cible est hors de cause.
+    """
+    import json as _json
+    import subprocess
+    import tempfile
+
+    from judge import garak_runner
+
+    faux = tmp_path / "python"
+    faux.write_text("")
+    monkeypatch.setattr(garak_runner, "GARAK_VENV_PYTHON", faux)
+
+    atelier = tmp_path / "atelier_detecteur"
+    atelier.mkdir()
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **k: str(atelier))
+
+    # Un rapport SANS ligne `eval` — exactement ce que garak produit quand il a
+    # saute le seul detecteur de la probe.
+    (atelier / "run.report.jsonl").write_text(
+        _json.dumps({"entry_type": "start_run setup"}), encoding="utf-8")
+
+    class _GarakQuiSauteUnDetecteur(_PopenFactice):
+        """garak ecrit sur SA sortie standard, que `run_garak` redirige vers le
+        journal — c'est de la qu'il faut faire venir la ligne.
+
+        Deposer le fichier journal a l'avance ne marcherait PAS : `run_garak`
+        l'ouvre en mode "w" et le tronque avant de lancer le sous-processus.
+        La premiere version de ce test s'y est cassee.
+        """
+
+        def __init__(self, *a, **k):
+            flux = k.get("stdout")
+            if flux is not None:
+                flux.write(
+                    " detector load failed: toxicity.ToxicCommentModel, skipping >>\n")
+                flux.flush()
+
+    monkeypatch.setattr(subprocess, "Popen", _GarakQuiSauteUnDetecteur)
+    score, _findings, statut, brut = garak_runner.run_garak("http://cible/chat")
+
+    assert score is None, "un detecteur absent ne vaut ni 0 ni 10/10"
+    assert "toxicity.ToxicCommentModel" in statut, (
+        "le statut doit NOMMER le detecteur indisponible, pas laisser deviner")
+    assert "cible n'est PAS en cause" in statut, (
+        "sans cette phrase, on repart chercher une panne reseau qui n'existe pas")
+    assert brut.get("detecteur_indisponible") == "toxicity.ToxicCommentModel"
+
+
+def test_sans_indice_dans_le_journal_le_doute_sur_la_cible_reste(monkeypatch, tmp_path):
+    """L'inverse compte autant : ne pas inventer une cause qu'on n'a pas lue.
+
+    Si le journal ne dit rien, « cible injoignable ? » — avec son point
+    d'interrogation — reste la formulation honnete.
+    """
+    score, _f, statut, _r = _garak_avec_rapport(monkeypatch, tmp_path, [
+        {"entry_type": "start_run setup"},
+    ])
+    assert score is None
+    assert "cible injoignable" in statut
 
 
 def test_les_lignes_illisibles_n_emportent_pas_le_rapport(monkeypatch, tmp_path):

@@ -31,13 +31,50 @@ on:
       - "docker-compose.yml"
       - "dashboard/**"
       - ".github/workflows/images.yml"
+      # LE CODE LIVRÉ DÉCLENCHE AUSSI CE JOB — SANS ÇA, LE GARDE-FOU EST INUTILE.
+      #     `check_lock.py --imports` vit dans ce job, et c'est le seul contrôle
+      #     capable d'attraper « le code importe un paquet que personne n'a
+      #     déclaré ». Or cette panne naît d'un changement de CODE : la ligne
+      #     `from langgraph.checkpoint.sqlite import ...` a été ajoutée sans
+      #     toucher au Dockerfile ni aux requirements. Avec le filtre d'origine,
+      #     ce job ne se serait pas déclenché sur cette PR — le contrôle aurait
+      #     manqué la panne une SECONDE fois.
+      #     La liste ci-dessous est exactement celle des dossiers copiés dans
+      #     l'image (DOSSIERS_LIVRES dans scripts/check_lock.py).
+      - "agents/**"
+      - "api/**"
+      - "judge/**"
+      - "workflow/**"
+      - "sandbox/**"
+      - "reporting/**"
+      - "scripts/**"
+      - "config/**"
   push:
     branches: [main]
+    # Un tag `v1.2.3` publie AUSSI l'étiquette de version. Le SHA suffit à la
+    # traçabilité et au retour arrière ; la version, elle, se communique.
+    tags: ['v*']
   workflow_dispatch:
+
+# Une seule exécution par branche : un `push` rapide n'en accumule pas trois.
+#
+# MAIS ON N'ANNULE PAS — ET C'EST UN CHANGEMENT DE PIED ASSUMÉ.
+#     Ce bloc portait « `cancel-in-progress` est sûr ici : aucun de ces jobs ne
+#     publie ni ne déploie ». C'était vrai quand je l'ai écrit ; ça ne l'est
+#     plus depuis que ces jobs POUSSENT sur GHCR. Annuler en plein `docker push`
+#     laisserait un jeu d'étiquettes incomplet — le SHA poussé, la promotion non,
+#     ou l'API publiée sans le dashboard. Une file d'attente coûte quelques
+#     minutes de runner ; un registre incohérent coûte une enquête.
+#     La porte de qualité (security_audit.yml), elle, ne publie rien : elle garde
+#     `cancel-in-progress: true`.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
   security-events: write      # dépôt des résultats de scan dans l'onglet Security
+  packages: write             # publication des images sur GHCR (jeton intégré)
 
 jobs:
   # ------------------------------------------------------------------------ #
@@ -46,6 +83,11 @@ jobs:
   api:
     name: API — construction, exécution, scan
     runs-on: ubuntu-latest
+    # Sans `timeout-minutes`, GitHub laisse tourner 6 HEURES. Un `docker
+    # build` bloqué sur le réseau, ou un conteneur qui ne démarre jamais,
+    # consomme alors une journée de runner avant d'être remarqué.
+    # Mesuré : ce job tient largement sous 30 min, cache de couches compris.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -57,19 +99,36 @@ jobs:
           context: .
           load: true                    # charge dans le démon local pour la tester
           tags: ai-security-framework:ci
+          # Injecte le commit dans l'image : `/health` le rendra. Placé très bas
+          # dans le Dockerfile, cet ARG n'invalide que les dernières couches.
+          build-args: |
+            AUDIT_BUILD=sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Le verrou est-il à jour ?
-        # `requirements.txt` peut gagner une dépendance sans que le verrou soit
-        # régénéré. L'image se construirait quand même, avec un arbre périmé.
-        run: |
-          docker run --rm -v "$PWD:/w" -w /w python:3.11-slim sh -c '
-            pip install -q pip-tools &&
-            pip-compile --quiet --strip-extras --output-file=/tmp/lock.check requirements.txt'
-          if ! diff -q <(grep -v '^#' requirements.lock) <(grep -v '^#' /tmp/lock.check) >/dev/null 2>&1; then
-            echo "::warning::requirements.lock diverge de requirements.txt — le régénérer"
-          fi
+      - name: Le verrou couvre-t-il requirements.txt ?
+        # L'IMAGE INSTALLE LE VERROU AVEC `--no-deps` : ce qui n'y est pas
+        # n'existe pas dedans, et la construction n'en dit rien.
+        #
+        # CE CONTROLE NE FAISAIT RIEN, POUR TROIS RAISONS.
+        #   1. Il emettait `::warning::`. Un avertissement ne fait PAS echouer
+        #      un job : le verrou pouvait mentir indefiniment sans bloquer.
+        #   2. Il comparait une resolution NEUVE (versions du jour) au verrou
+        #      INCREMENTAL du depot. La difference etait garantie, l'alarme
+        #      permanente — donc plus lue par personne.
+        #   3. Cette resolution complete prend une TRENTAINE DE MINUTES, mesuree.
+        #      Sur chaque pull request, personne ne l'aurait gardee longtemps.
+        #
+        # CE QUE ÇA A COUTE : `pyrit` et `langgraph-checkpoint-sqlite` etaient
+        # declares et absents du verrou. L'image partait sans eux ; le chemin
+        # d'audit PAR DEFAUT plantait dedans.
+        #
+        # Le script pose la seule question qui casse l'image, en une seconde :
+        # tout ce qui est declare est-il epingle ? Rafraichir l'arbre transitif
+        # reste une operation manuelle, documentee dans le Dockerfile.
+        # `python3`, pas `python` : ce job n'a pas de `setup-python`, et seul
+        # `python3` est garanti sur le PATH d'un runner ubuntu.
+        run: python3 scripts/check_lock.py
 
       - name: Démarrer le conteneur
         run: |
@@ -92,6 +151,95 @@ jobs:
           docker exec api-ci sh -c \
             'ls /var/lib/ai-security/audit_results/*.json >/dev/null' \
             || { echo "::error::aucun résultat écrit sur le volume"; exit 1; }
+
+      - name: Le chemin PAR DÉFAUT (LangGraph) tourne-t-il dans l'image ?
+        # L'étape précédente n'exerce QU'UN agent, en séquentiel, via
+        # `run_agent.py`. Or un audit complet passe par LangGraph et sa base de
+        # reprise SQLite : c'est le chemin par DÉFAUT de `run_audit_global.py`,
+        # et il n'était couvert nulle part. C'est pour ça que l'absence de
+        # `langgraph-checkpoint-sqlite` dans le verrou n'a jamais été vue —
+        # l'image se construisait, démarrait, répondait /health, et le seul
+        # chemin qui compte vraiment plantait au premier appel.
+        #
+        # Deux catégories en dry_run : aucun appel LLM, déterministe, ~3 s.
+        # Le second contrôle est distinct du premier : il vérifie que le POINT
+        # DE REPRISE atterrit sur le volume, pas sur le disque éphémère du
+        # conteneur — sinon `--resume` rejoue les dix agents après redémarrage.
+        run: |
+          docker exec api-ci python scripts/run_audit_global.py --target http://127.0.0.1:9 --profile dry_run --categories ASI_01,ASI_02 | tee /tmp/graph.txt
+          grep -q "SCORE GLOBAL : 55.7/100" /tmp/graph.txt || { echo "::error::le chemin LangGraph n'a pas rendu le score de référence 55.7/100"; exit 1; }
+          docker exec api-ci test -f /var/lib/ai-security/checkpoints.sqlite || { echo "::error::point de reprise absent du volume — la reprise ne survivrait pas au redémarrage"; exit 1; }
+
+      - name: Tout ce que le code importe existe-t-il DANS l'image ?
+        # LE CONTROLE QUI AURAIT ATTRAPE LES DEUX PANNES, AVANT QU'ON LES SUBISSE.
+        #
+        # `check_lock.py` (sans argument) compare declare et epingle. Il ne suffit
+        # PAS : verifie, en retirant `langgraph-checkpoint-sqlite` des DEUX
+        # fichiers — l'etat exact d'avant la panne — il repond « OK ». Un paquet
+        # que personne n'a declare lui est invisible.
+        #
+        # `--imports` lit les `import` du code, y compris ceux places DANS des
+        # fonctions (les deux pannes etaient de cette forme), et exige que chacun
+        # se resolve. Lance dans l'image, ou l'environnement est CENSE etre
+        # complet : ailleurs, une absence serait normale et ne dirait rien.
+        #
+        # Passe sur l'image livree d'alors, il sort en 1 et nomme les six
+        # modules : `langgraph.checkpoint.sqlite` et les cinq `pyrit.*`.
+        run: docker exec api-ci python scripts/check_lock.py --imports
+
+      - name: L'axe garak est-il RÉELLEMENT disponible dans l'image ?
+        # AVANT, LA RÉPONSE ÉTAIT NON — ET PERSONNE NE LE VOYAIT.
+        #     L'image ne contenait aucun garak. `garak_available()` rendait False,
+        #     l'axe sortait « unavailable », traité comme un axe exclu — jamais
+        #     comme un défaut d'installation. Le SEUL axe indépendant du LLM
+        #     manquait à tous les audits de production, en silence.
+        #
+        #     Le venv vit maintenant dans un étage Docker dédié : 91 Mo, sans
+        #     torch ni transformers, pour un verdict identique au venv complet de
+        #     1,4 Go (mesuré via judge/garak_runner.py, mêmes compteurs bruts).
+        #
+        #     Ce contrôle interroge le MÊME point de décision que l'audit, pas le
+        #     système de fichiers : si le chemin change, si l'étage disparaît, si
+        #     l'utilisateur `audit` perd le venv, il rougit.
+        run: |
+          docker exec api-ci python -c "from judge.garak_runner import GARAK_VENV_PYTHON, garak_available; print('venv cherché :', GARAK_VENV_PYTHON); assert garak_available(), 'garak introuvable dans l image — l axe serait absent de tous les audits'"
+          # `import garak`, PAS `-m garak --version` : garak ecrit `garak.log`
+          # dans le repertoire courant, et /app n'est pas inscriptible par
+          # l'utilisateur `audit` (PermissionError, constate). Le runner, lui,
+          # passe `cwd=workdir` — il n'a pas ce probleme ; une invocation
+          # manuelle depuis /app, si.
+          docker exec api-ci /home/audit/garak-venv/bin/python -c "import garak; print('garak', garak.__version__)"
+
+      - name: La suite hors-ligne passe-t-elle DANS l'image ?
+        # LE SEUL ENDROIT OU LE TEST PYRIT S'EXECUTE VRAIMENT.
+        #     La porte de qualite ne l'installe pas (4 min 44). Ici, l'image
+        #     l'embarque : le test `test_pyrit_ne_fait_jamais_echouer_l_audit`
+        #     tourne pour de bon au lieu de se mettre en skip. Verifie a la main :
+        #     il passe dedans.
+        #
+        #     `pytest` n'est pas installe expres — il arrive avec deepeval, donc
+        #     il est dans le verrou, donc dans l'image. Rien a ajouter.
+        #
+        #     Cinq tests de bac a sable se mettent en skip : ils exigent un
+        #     socket Docker, que le conteneur n'a pas. C'est attendu, et c'est
+        #     justement pour ca que la suite tourne AUSSI sur le runner.
+        # Mesure : 10 s.
+        run: docker exec api-ci python -m pytest tests/ -q
+
+      - name: L'audit produit alimente-t-il VRAIMENT le dashboard ?
+        # `scripts/check_dashboard_contract.py` existe depuis longtemps, sa
+        # docstring dit « utilisable en CI » — et il n'était appelé NULLE PART :
+        # ni dans un workflow, ni dans un test. Un contrôle écrit pour la CI mais
+        # jamais branché ne vaut que par la mémoire de qui pense à le lancer.
+        #
+        # POURQUOI ICI, ET SUR `--last 1`
+        #     Il inspecte les champs qu'attend le dashboard. Le passer sur les
+        #     audits VERSIONNÉS ne prouverait rien — ils ne changent jamais.
+        #     Lancé ici, il porte sur l'audit que les deux étapes précédentes
+        #     viennent de produire DANS l'image : si un changement de format côté
+        #     runner, socle ou API casse le dashboard, ça se voit maintenant et
+        #     pas devant une page vide.
+        run: docker exec api-ci python scripts/check_dashboard_contract.py --last 1
 
       - name: Les durcissements tiennent-ils ?
         run: |
@@ -117,6 +265,222 @@ jobs:
           sarif_file: trivy-api.sarif
           category: image-api
 
+      - name: Le scan BLOQUE-T-IL la publication ? (API)
+        # D1 FERMEE — ET SANS AUCUN `.trivyignore`, DONC SANS RISQUE ACCEPTE.
+        #
+        # POURQUOI DEUX ETAPES DE SCAN ET NON UNE
+        #     Celle du dessus produit le SARIF pour l'onglet Security : elle ne
+        #     doit JAMAIS echouer, sinon le rapport ne remonte pas et on perd la
+        #     trace au moment ou elle sert. Celle-ci DECIDE. Un rapport qui
+        #     bloque et une decision qui informe, c'est le meme controle qui
+        #     essaie de faire deux metiers et les rate tous les deux.
+        #
+        # CE QUE J'AVAIS ECRIT, ET QUI ETAIT FAUX
+        #     « Rendre le scan bloquant arreterait la chaine sur la CVE `click`
+        #     deja acceptee ». Mesure : Trivy ne signale PAS `click` (c'est
+        #     pip-audit qui la voit, via une autre base). Il trouvait DEUX HIGH,
+        #     tous deux venant de l'etage `garak` — pas du verrou. Corriges a la
+        #     source : plus rien a ignorer, donc pas de `.trivyignore` a tenir a
+        #     jour ni de derogation a re-justifier chaque annee.
+        #
+        # `ignore-unfixed` : une faille sans correctif publie ne se corrige pas.
+        # Bloquer dessus n'apprendrait rien et apprendrait a ignorer le rouge.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-framework:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Inventaire des composants (API)
+        # SBOM au format CycloneDX, sur l'image DÉJÀ TESTÉE.
+        #
+        # POURQUOI PAS LES ATTESTATIONS `buildx`
+        #     Elles imposent `build --push`, donc une RECONSTRUCTION. Ça romprait
+        #     la garantie centrale de cette chaîne : on publie l'objet qui a été
+        #     éprouvé, pas un jumeau. Trivy lit l'image telle qu'elle est — même
+        #     résultat utile, sans rien reconstruire.
+        #
+        # À quoi ça sert concrètement : quand une CVE tombe sur un paquet, la
+        # question « est-ce qu'on l'embarque, et dans quelle version ? » se répond
+        # en lisant ce fichier, sans redéployer ni fouiller l'image.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-framework:ci
+          format: cyclonedx
+          output: sbom-api.cdx.json
+
+      - name: Conserver le SBOM (API)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-api
+          path: sbom-api.cdx.json
+          retention-days: 90
+
+      - name: Publier l'image ÉPROUVÉE (API)
+        # ON PUBLIE L'OBJET QUI VIENT D'ÊTRE TESTÉ, PAS UNE RECONSTRUCTION.
+        #     L'image a été construite avec `load: true` : elle est dans le démon
+        #     du runner, et c'est elle que toutes les étapes précédentes ont
+        #     éprouvée. On la RÉÉTIQUETTE et on la pousse — le condensé publié est
+        #     donc exactement celui qui a passé les contrôles. Reconstruire ici,
+        #     même depuis le cache, romprait cette garantie : on livrerait un
+        #     artefact que rien n'a vérifié.
+        #
+        # POURQUOI AUCUN `latest`
+        #     Le compose le dit déjà : « `latest` d'hier n'existe plus, donc aucun
+        #     retour arrière possible ». On ne publie que de l'IMMUABLE :
+        #       · `sha-<7>`   — traçabilité et retour arrière, sur chaque `main` ;
+        #       · `<version>` — seulement sur un tag `v*`, pour communiquer.
+        #     Un déploiement désigne une étiquette qui ne bougera jamais.
+        #
+        # Jamais sur une pull request : une PR ne publie rien.
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          DEPOT="ghcr.io/${{ github.repository_owner }}/ai-security-framework"
+          DEPOT=$(echo "$DEPOT" | tr '[:upper:]' '[:lower:]')   # GHCR n'accepte que des minuscules
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          SHA="sha-${GITHUB_SHA::7}"
+          docker tag ai-security-framework:ci "$DEPOT:$SHA"
+          docker push "$DEPOT:$SHA"
+          echo "publié : $DEPOT:$SHA"
+
+          # L'ÉTIQUETTE DE VERSION N'EST PAS POUSSÉE ICI — elle est PROMUE.
+          #     `sha-<7>` est immuable et traçable : le publier tôt ne coûte rien,
+          #     personne ne déploie un SHA par accident. `1.2.3`, en revanche, est
+          #     le nom par lequel on déploie : il ne doit exister que si la PILE
+          #     COMPLÈTE a validé — or ce job-ci s'exécute AVANT `pile`.
+          #     C'est le job `promouvoir` qui l'ajoute, après.
+          # LE CONDENSÉ, QUI EST LA SEULE RÉFÉRENCE VRAIMENT IMMUABLE.
+          #     Une étiquette peut être repoussée ; un condensé désigne des
+          #     octets. `AUDIT_REF_API` / `AUDIT_REF_DASHBOARD` acceptent cette
+          #     forme complète dans le compose : c'est ce qu'il faut poser en
+          #     production. L'étiquette reste pratique pour lire un journal.
+          # LE CONDENSE SE CALCULE, IL NE SE LIT PAS DANS UN AFFICHAGE.
+          #     `imagetools inspect --format '{{.Manifest.Digest}}'` a ete essaye
+          #     d'abord : sur buildx v0.30.1 le drapeau est IGNORE en silence et la
+          #     commande sort son listing complet. `DIGEST` aurait donc recu un
+          #     pave multi-lignes, et la signature aurait echoue sur une reference
+          #     absurde. Trouve en eprouvant la chaine sur un registre local, avant
+          #     qu'elle ne tourne pour de vrai.
+          #
+          #     Ici on ne lit rien : le condense EST le sha256 des octets du
+          #     manifeste. Aucun format d'affichage ne peut le changer.
+          DIGEST=$(docker buildx imagetools inspect "$DEPOT:$SHA" --raw | sha256sum | awk '{print "sha256:"$1}')
+          echo "$DIGEST" > digest-api.txt
+          echo "Étiquette      : $DEPOT:$SHA"
+          echo "Condensé       : $DEPOT@$DIGEST"
+          {
+            echo "### Image publiée — API"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Étiquette | \`$DEPOT:$SHA\` |"
+            echo "| **Condensé (à déployer)** | \`$DEPOT@$DIGEST\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Outil de signature
+        # Installé seulement si une clé existe : inutile de télécharger un binaire
+        # pour une étape qui va sortir immédiatement.
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          # VERSION EPINGLEE, ET CE N'EST PAS DU ZELE.
+          #     Eprouve en local sur un registre jetable : le cosign COURANT
+          #     REJETTE `--tlog-upload=false` (« not supported with
+          #     --signing-config »). Sans ce pin, l'etape aurait echoue au premier
+          #     push — et elle aurait echoue le JOUR ou cosign a publie ce
+          #     changement, pas le jour ou nous avons ecrit la ligne.
+          #     Un outil non epingle change de CLI sous vos pieds.
+          cosign-release: 'v2.4.1'
+
+      - name: Signer l'image publiée (API)
+        # SIGNATURE PAR CLÉ, PAS « keyless » — ET C'EST DÉLIBÉRÉ.
+        #     Le mode par défaut de cosign inscrit le nom et le condensé de
+        #     l'image dans Rekor, le journal de transparence PUBLIC de Sigstore.
+        #     Pour un outil interne, publier l'existence et l'empreinte de chaque
+        #     build est une divulgation qu'on n'a pas demandée. `--key` +
+        #     `--tlog-upload=false` : la signature est poussée À CÔTÉ DE L'IMAGE
+        #     dans votre GHCR, comme un artefact OCI. Rien ne sort.
+        #
+        # SIGNÉ PAR CONDENSÉ, JAMAIS PAR ÉTIQUETTE.
+        #     Une étiquette peut être repoussée ; signer `:sha-abc` signerait
+        #     « ce que cette étiquette désignera ». Le condensé désigne des octets.
+        #
+        # INACTIVE TANT QUE LE SECRET N'EXISTE PAS : l'étape sort en 0 avec un
+        # avis. La chaîne ne casse donc pas avant que la clé soit en place.
+        if: github.event_name == 'push'
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          # D4 FERMÉE : L'ABSENCE DE SIGNATURE EST UN ÉCHEC, PLUS UN AVIS.
+          #     Tant que la clé n'existait pas, cette étape sortait en 0 avec un
+          #     `::notice::` — il aurait été absurde de bloquer la livraison pour
+          #     une clé que personne n'avait encore générée. Les secrets existent
+          #     désormais : la condition est levée.
+          #
+          #     Et un avis ne se lit pas. Une image NON SIGNÉE qui part quand même
+          #     est pire qu'une construction qui échoue : la seconde se voit et se
+          #     corrige en cinq minutes, la première circule en se faisant passer
+          #     pour vérifiée. Le coût d'un secret mal collé est un job rouge ; le
+          #     coût d'une signature silencieusement absente est de ne plus savoir
+          #     ce qui a été livré.
+          if [ -z "${COSIGN_KEY:-}" ]; then
+            echo "::error::COSIGN_KEY absent — impossible de signer. Créez les secrets"
+            echo "::error::COSIGN_KEY et COSIGN_PASSWORD (voir integration_guide §6)."
+            exit 1
+          fi
+          set -euo pipefail
+          DEPOT=$(echo "ghcr.io/${{ github.repository_owner }}/ai-security-framework" | tr '[:upper:]' '[:lower:]')
+          DIGEST=$(cat digest-api.txt)
+          cosign sign --yes --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
+          echo "signé : $DEPOT@$DIGEST"
+
+          # D5 FERMÉE : LE SBOM VOYAGE AVEC L'IMAGE, ET IL EST SIGNÉ.
+          #     Il n'existait que comme artefact du job, conservé 90 jours :
+          #     qui tirait l'image depuis GHCR n'avait pas son inventaire, et
+          #     au bout de 90 jours plus personne ne l'avait.
+          #
+          #     `attest` ET NON `attach sbom` — éprouvé en local, et les deux
+          #     avertissements de cosign sont sans appel : `attach sbom` est
+          #     DÉPRÉCIÉ (retrait annoncé), et surtout il NE SIGNE PAS le SBOM.
+          #     Un inventaire non signé accroché à une image signée est une
+          #     demi-mesure : quiconque a l'écriture sur le registre peut le
+          #     remplacer sans que rien ne le détecte.
+          #
+          #     Vérification côté consommateur :
+          #       cosign verify-attestation --key cosign.pub --type cyclonedx \n          #         --insecure-ignore-tlog=true <image>@<condensé>
+          #
+          #     L'artefact du job est conservé malgré tout : il se lit sans
+          #     accès au registre, ce qui compte le jour où une CVE tombe un
+          #     dimanche et qu'on veut juste savoir si on embarque le paquet.
+          cosign attest --yes --predicate sbom-dashboard.cdx.json --type cyclonedx --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
+          echo "SBOM signé et attaché : $DEPOT@$DIGEST"
+
+          # D5 FERMÉE : LE SBOM VOYAGE AVEC L'IMAGE, ET IL EST SIGNÉ.
+          #     Il n'existait que comme artefact du job, conservé 90 jours :
+          #     qui tirait l'image depuis GHCR n'avait pas son inventaire, et
+          #     au bout de 90 jours plus personne ne l'avait.
+          #
+          #     `attest` ET NON `attach sbom` — éprouvé en local, et les deux
+          #     avertissements de cosign sont sans appel : `attach sbom` est
+          #     DÉPRÉCIÉ (retrait annoncé), et surtout il NE SIGNE PAS le SBOM.
+          #     Un inventaire non signé accroché à une image signée est une
+          #     demi-mesure : quiconque a l'écriture sur le registre peut le
+          #     remplacer sans que rien ne le détecte.
+          #
+          #     Vérification côté consommateur :
+          #       cosign verify-attestation --key cosign.pub --type cyclonedx \n          #         --insecure-ignore-tlog=true <image>@<condensé>
+          #
+          #     L'artefact du job est conservé malgré tout : il se lit sans
+          #     accès au registre, ce qui compte le jour où une CVE tombe un
+          #     dimanche et qu'on veut juste savoir si on embarque le paquet.
+          cosign attest --yes --predicate sbom-api.cdx.json --type cyclonedx --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
+          echo "SBOM signé et attaché : $DEPOT@$DIGEST"
+
       - name: Arrêter le conteneur
         if: always()
         run: docker rm -f api-ci || true
@@ -127,6 +491,7 @@ jobs:
   dashboard:
     name: Dashboard — construction, exécution, scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -182,6 +547,180 @@ jobs:
           sarif_file: trivy-dashboard.sarif
           category: image-dashboard
 
+      - name: Le scan BLOQUE-T-IL la publication ? (Dashboard)
+        # D1 FERMEE — ET SANS AUCUN `.trivyignore`, DONC SANS RISQUE ACCEPTE.
+        #
+        # POURQUOI DEUX ETAPES DE SCAN ET NON UNE
+        #     Celle du dessus produit le SARIF pour l'onglet Security : elle ne
+        #     doit JAMAIS echouer, sinon le rapport ne remonte pas et on perd la
+        #     trace au moment ou elle sert. Celle-ci DECIDE. Un rapport qui
+        #     bloque et une decision qui informe, c'est le meme controle qui
+        #     essaie de faire deux metiers et les rate tous les deux.
+        #
+        # CE QUE J'AVAIS ECRIT, ET QUI ETAIT FAUX
+        #     « Rendre le scan bloquant arreterait la chaine sur la CVE `click`
+        #     deja acceptee ». Mesure : Trivy ne signale PAS `click` (c'est
+        #     pip-audit qui la voit, via une autre base). Il trouvait DEUX HIGH,
+        #     tous deux venant de l'etage `garak` — pas du verrou. Corriges a la
+        #     source : plus rien a ignorer, donc pas de `.trivyignore` a tenir a
+        #     jour ni de derogation a re-justifier chaque annee.
+        #
+        # `ignore-unfixed` : une faille sans correctif publie ne se corrige pas.
+        # Bloquer dessus n'apprendrait rien et apprendrait a ignorer le rouge.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-dashboard:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Inventaire des composants (Dashboard)
+        # SBOM au format CycloneDX, sur l'image DÉJÀ TESTÉE.
+        #
+        # POURQUOI PAS LES ATTESTATIONS `buildx`
+        #     Elles imposent `build --push`, donc une RECONSTRUCTION. Ça romprait
+        #     la garantie centrale de cette chaîne : on publie l'objet qui a été
+        #     éprouvé, pas un jumeau. Trivy lit l'image telle qu'elle est — même
+        #     résultat utile, sans rien reconstruire.
+        #
+        # À quoi ça sert concrètement : quand une CVE tombe sur un paquet, la
+        # question « est-ce qu'on l'embarque, et dans quelle version ? » se répond
+        # en lisant ce fichier, sans redéployer ni fouiller l'image.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ai-security-dashboard:ci
+          format: cyclonedx
+          output: sbom-dashboard.cdx.json
+
+      - name: Conserver le SBOM (Dashboard)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-dashboard
+          path: sbom-dashboard.cdx.json
+          retention-days: 90
+
+      - name: Publier l'image ÉPROUVÉE (Dashboard)
+        # ON PUBLIE L'OBJET QUI VIENT D'ÊTRE TESTÉ, PAS UNE RECONSTRUCTION.
+        #     L'image a été construite avec `load: true` : elle est dans le démon
+        #     du runner, et c'est elle que toutes les étapes précédentes ont
+        #     éprouvée. On la RÉÉTIQUETTE et on la pousse — le condensé publié est
+        #     donc exactement celui qui a passé les contrôles. Reconstruire ici,
+        #     même depuis le cache, romprait cette garantie : on livrerait un
+        #     artefact que rien n'a vérifié.
+        #
+        # POURQUOI AUCUN `latest`
+        #     Le compose le dit déjà : « `latest` d'hier n'existe plus, donc aucun
+        #     retour arrière possible ». On ne publie que de l'IMMUABLE :
+        #       · `sha-<7>`   — traçabilité et retour arrière, sur chaque `main` ;
+        #       · `<version>` — seulement sur un tag `v*`, pour communiquer.
+        #     Un déploiement désigne une étiquette qui ne bougera jamais.
+        #
+        # Jamais sur une pull request : une PR ne publie rien.
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          DEPOT="ghcr.io/${{ github.repository_owner }}/ai-security-dashboard"
+          DEPOT=$(echo "$DEPOT" | tr '[:upper:]' '[:lower:]')   # GHCR n'accepte que des minuscules
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          SHA="sha-${GITHUB_SHA::7}"
+          docker tag ai-security-dashboard:ci "$DEPOT:$SHA"
+          docker push "$DEPOT:$SHA"
+          echo "publié : $DEPOT:$SHA"
+
+          # L'ÉTIQUETTE DE VERSION N'EST PAS POUSSÉE ICI — elle est PROMUE.
+          #     `sha-<7>` est immuable et traçable : le publier tôt ne coûte rien,
+          #     personne ne déploie un SHA par accident. `1.2.3`, en revanche, est
+          #     le nom par lequel on déploie : il ne doit exister que si la PILE
+          #     COMPLÈTE a validé — or ce job-ci s'exécute AVANT `pile`.
+          #     C'est le job `promouvoir` qui l'ajoute, après.
+          # LE CONDENSÉ, QUI EST LA SEULE RÉFÉRENCE VRAIMENT IMMUABLE.
+          #     Une étiquette peut être repoussée ; un condensé désigne des
+          #     octets. `AUDIT_REF_API` / `AUDIT_REF_DASHBOARD` acceptent cette
+          #     forme complète dans le compose : c'est ce qu'il faut poser en
+          #     production. L'étiquette reste pratique pour lire un journal.
+          # LE CONDENSE SE CALCULE, IL NE SE LIT PAS DANS UN AFFICHAGE.
+          #     `imagetools inspect --format '{{.Manifest.Digest}}'` a ete essaye
+          #     d'abord : sur buildx v0.30.1 le drapeau est IGNORE en silence et la
+          #     commande sort son listing complet. `DIGEST` aurait donc recu un
+          #     pave multi-lignes, et la signature aurait echoue sur une reference
+          #     absurde. Trouve en eprouvant la chaine sur un registre local, avant
+          #     qu'elle ne tourne pour de vrai.
+          #
+          #     Ici on ne lit rien : le condense EST le sha256 des octets du
+          #     manifeste. Aucun format d'affichage ne peut le changer.
+          DIGEST=$(docker buildx imagetools inspect "$DEPOT:$SHA" --raw | sha256sum | awk '{print "sha256:"$1}')
+          echo "$DIGEST" > digest-dashboard.txt
+          echo "Étiquette      : $DEPOT:$SHA"
+          echo "Condensé       : $DEPOT@$DIGEST"
+          {
+            echo "### Image publiée — Dashboard"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Étiquette | \`$DEPOT:$SHA\` |"
+            echo "| **Condensé (à déployer)** | \`$DEPOT@$DIGEST\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Outil de signature
+        # Installé seulement si une clé existe : inutile de télécharger un binaire
+        # pour une étape qui va sortir immédiatement.
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          # VERSION EPINGLEE, ET CE N'EST PAS DU ZELE.
+          #     Eprouve en local sur un registre jetable : le cosign COURANT
+          #     REJETTE `--tlog-upload=false` (« not supported with
+          #     --signing-config »). Sans ce pin, l'etape aurait echoue au premier
+          #     push — et elle aurait echoue le JOUR ou cosign a publie ce
+          #     changement, pas le jour ou nous avons ecrit la ligne.
+          #     Un outil non epingle change de CLI sous vos pieds.
+          cosign-release: 'v2.4.1'
+
+      - name: Signer l'image publiée (Dashboard)
+        # SIGNATURE PAR CLÉ, PAS « keyless » — ET C'EST DÉLIBÉRÉ.
+        #     Le mode par défaut de cosign inscrit le nom et le condensé de
+        #     l'image dans Rekor, le journal de transparence PUBLIC de Sigstore.
+        #     Pour un outil interne, publier l'existence et l'empreinte de chaque
+        #     build est une divulgation qu'on n'a pas demandée. `--key` +
+        #     `--tlog-upload=false` : la signature est poussée À CÔTÉ DE L'IMAGE
+        #     dans votre GHCR, comme un artefact OCI. Rien ne sort.
+        #
+        # SIGNÉ PAR CONDENSÉ, JAMAIS PAR ÉTIQUETTE.
+        #     Une étiquette peut être repoussée ; signer `:sha-abc` signerait
+        #     « ce que cette étiquette désignera ». Le condensé désigne des octets.
+        #
+        # INACTIVE TANT QUE LE SECRET N'EXISTE PAS : l'étape sort en 0 avec un
+        # avis. La chaîne ne casse donc pas avant que la clé soit en place.
+        if: github.event_name == 'push'
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          # D4 FERMÉE : L'ABSENCE DE SIGNATURE EST UN ÉCHEC, PLUS UN AVIS.
+          #     Tant que la clé n'existait pas, cette étape sortait en 0 avec un
+          #     `::notice::` — il aurait été absurde de bloquer la livraison pour
+          #     une clé que personne n'avait encore générée. Les secrets existent
+          #     désormais : la condition est levée.
+          #
+          #     Et un avis ne se lit pas. Une image NON SIGNÉE qui part quand même
+          #     est pire qu'une construction qui échoue : la seconde se voit et se
+          #     corrige en cinq minutes, la première circule en se faisant passer
+          #     pour vérifiée. Le coût d'un secret mal collé est un job rouge ; le
+          #     coût d'une signature silencieusement absente est de ne plus savoir
+          #     ce qui a été livré.
+          if [ -z "${COSIGN_KEY:-}" ]; then
+            echo "::error::COSIGN_KEY absent — impossible de signer. Créez les secrets"
+            echo "::error::COSIGN_KEY et COSIGN_PASSWORD (voir integration_guide §6)."
+            exit 1
+          fi
+          set -euo pipefail
+          DEPOT=$(echo "ghcr.io/${{ github.repository_owner }}/ai-security-dashboard" | tr '[:upper:]' '[:lower:]')
+          DIGEST=$(cat digest-dashboard.txt)
+          cosign sign --yes --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
+          echo "signé : $DEPOT@$DIGEST"
+
       - name: Arrêter le conteneur
         if: always()
         run: docker rm -f dash-ci || true
@@ -192,16 +731,47 @@ jobs:
   pile:
     name: Pile complète — le dashboard joint-il l'API ?
     runs-on: ubuntu-latest
+    # L'audit par la file attend jusqu'à 60 sondages de 3 s (3 min) ; le
+    # reste est du démarrage de conteneurs.
+    timeout-minutes: 20
     needs: [api, dashboard]
     steps:
       - uses: actions/checkout@v4
 
       - name: Lever la pile
+        # SUR UN PUSH, ON TIRE LES IMAGES PUBLIÉES — ON NE RECONSTRUIT PAS.
+        #     Ce job faisait `up --build`. Il ne testait donc NI l'image que le
+        #     job `api` avait éprouvée, NI celle qui allait être publiée : une
+        #     quatrième construction, sortie de nulle part. La chaîne vérifiait
+        #     trois objets différents et en livrait un autre.
+        #
+        #     Désormais il tire `sha-<7>` et lance `up --no-build` : exactement
+        #     la procédure de déploiement documentée (integration_guide §6). Le
+        #     test de pile devient donc AUSSI le test de la procédure — si le
+        #     compose de production ne sait pas tirer ses images, on l'apprend
+        #     ici et pas le jour de la mise en service.
+        #
+        #     Sur une pull request, rien n'est publié : on reconstruit, faute de
+        #     mieux, et c'est dit.
         run: |
           # `env_file: .env` est obligatoire dans le compose ; en CI le fichier
           # n'existe pas et aucun secret n'est nécessaire pour ce contrôle.
           cp .env.example .env
-          docker compose up -d --build
+          if [ "${{ github.event_name }}" = "push" ]; then
+            DEPOT="ghcr.io/${{ github.repository_owner }}"
+            DEPOT=$(echo "$DEPOT" | tr '[:upper:]' '[:lower:]')
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            {
+              echo "AUDIT_IMAGE_API=$DEPOT/ai-security-framework"
+              echo "AUDIT_IMAGE_DASHBOARD=$DEPOT/ai-security-dashboard"
+              echo "AUDIT_VERSION=sha-${GITHUB_SHA::7}"
+            } >> .env
+            docker compose pull
+            docker compose up -d --no-build
+          else
+            echo "::notice::pull request — rien n'est publié, la pile est reconstruite"
+            docker compose up -d --build
+          fi
           for i in $(seq 1 45); do
             if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
             sleep 3
@@ -218,6 +788,48 @@ jobs:
           curl -fsS http://localhost:8080/api/agents >/dev/null \
             || { echo "::error::/api/agents inaccessible via le relais"; exit 1; }
 
+      - name: Un audit passe-t-il vraiment par la FILE et l'OUVRIER ?
+        # LE CHEMIN DE PRODUCTION N'ÉTAIT ÉPROUVÉ NULLE PART.
+        #     Ce job levait déjà la pile complète — donc `AUDIT_INLINE_WORKER: "0"`
+        #     et l'ouvrier séparé — mais il ne vérifiait QUE le relais du
+        #     dashboard. Aucun audit n'était jamais soumis. Or c'est précisément
+        #     là que production et développement divergent :
+        #       · en développement (`=1`) l'API exécute l'audit elle-même — c'est
+        #         ce que couvrent les tests unitaires ;
+        #       · en production (`=0`) elle ne fait que METTRE EN FILE, et un
+        #         processus séparé doit prendre le travail.
+        #     Rien ne prouvait que ce second chemin fonctionnait bout en bout.
+        #
+        # CE QUE L'ÉTAPE EXIGE, ET POURQUOI LES DEUX ASSERTIONS COMPTENT
+        #     1. l'audit atteint `completed` — la chaîne a fonctionné ;
+        #     2. le suivi NOMME un ouvrier — sans quoi un retour au mode « l'API
+        #        exécute elle-même » passerait inaperçu : le test serait vert
+        #        alors que la topologie de production aurait disparu.
+        #
+        # `dry_run` : aucun appel LLM, aucun réseau, résultat déterministe.
+        # La clé est celle de `.env.example`, copié en `.env` à l'étape de levée.
+        run: |
+          RUN=$(curl -fsS -X POST http://localhost:8000/audits \
+                  -H "Content-Type: application/json" \
+                  -H "X-API-Key: your-secret-key" \
+                  -d '{"mode":"targeted","category":"ASI_01","profile":"dry_run","target_url":"http://127.0.0.1:9"}')
+          echo "$RUN"
+          ID=$(echo "$RUN" | python3 -c "import sys,json;print(json.load(sys.stdin)['run_id'])")
+          STATUT=""; OUVRIER=""
+          for i in $(seq 1 60); do
+            ETAT=$(curl -fsS "http://localhost:8000/runs/$ID" -H "X-API-Key: your-secret-key")
+            STATUT=$(echo "$ETAT" | python3 -c "import sys,json;print(json.load(sys.stdin).get('status') or '')")
+            OUVRIER=$(echo "$ETAT" | python3 -c "import sys,json;print(json.load(sys.stdin).get('worker') or '')")
+            echo "  $i : $STATUT (ouvrier : ${OUVRIER:-aucun})"
+            if [ "$STATUT" = "completed" ]; then break; fi
+            if [ "$STATUT" = "failed" ]; then echo "::error::l'audit a echoue"; exit 1; fi
+            sleep 3
+          done
+          test "$STATUT" = "completed" \
+            || { echo "::error::l'audit n'a jamais ete execute (reste en $STATUT)"; exit 1; }
+          test -n "$OUVRIER" \
+            || { echo "::error::aucun ouvrier n'a pris le travail — l'API l'a-t-elle execute elle-meme ?"; exit 1; }
+
       - name: Journaux en cas d'échec
         if: failure()
         run: docker compose logs --tail=60
@@ -225,3 +837,33 @@ jobs:
       - name: Démonter
         if: always()
         run: docker compose down -v || true
+
+
+  # ------------------------------------------------------------------------ #
+  # Promotion — l'étiquette par laquelle on DÉPLOIE n'existe qu'après TOUT.
+  # ------------------------------------------------------------------------ #
+  promouvoir:
+    name: Promouvoir la version (tag git)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Après les deux images ET la pile complète. C'est là tout l'intérêt :
+    # `sha-<7>` peut exister sans que la pile soit validée ; `1.2.3`, jamais.
+    needs: [api, dashboard, pile]
+    if: github.ref_type == 'tag'
+    steps:
+      - name: Copier `sha-<7>` vers l'étiquette de version
+        # `imagetools create` copie le MANIFESTE côté registre : même condensé,
+        # aucun téléchargement, aucune reconstruction. `1.2.3` désigne donc
+        # l'octet près la même image que le SHA déjà éprouvé.
+        run: |
+          set -euo pipefail
+          DEPOT="ghcr.io/${{ github.repository_owner }}"
+          DEPOT=$(echo "$DEPOT" | tr '[:upper:]' '[:lower:]')
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          SHA="sha-${GITHUB_SHA::7}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          for IMAGE in ai-security-framework ai-security-dashboard; do
+            docker buildx imagetools create -t "$DEPOT/$IMAGE:$VERSION" "$DEPOT/$IMAGE:$SHA"
+            echo "promu : $DEPOT/$IMAGE:$SHA -> :$VERSION"
+          done
