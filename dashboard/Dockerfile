@@ -54,6 +54,23 @@ FROM nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d59
 # Les 4 vulnérabilités restantes de l'image de base (libcrypto3, libssl3,
 # libexpat) ont un correctif publié côté Alpine. Une image d'outil de sécurité
 # ne les laisse pas passer pour économiser dix secondes de construction.
+# ⚠️ CE `ARG` EXISTE POUR CASSER LE CACHE DE LA LIGNE SUIVANTE.
+#
+#     `apk upgrade` / `apt-get upgrade` dans une couche MISE EN CACHE cessent
+#     silencieusement de mettre à jour quoi que ce soit : la couche est réutilisée
+#     telle qu'elle était le jour de sa construction, correctifs de sécurité
+#     compris — c'est-à-dire non compris.
+#
+#     MESURÉ, PAS SUPPOSÉ : l'image du dashboard portait **7 HIGH** (util-linux /
+#     libuuid, TOCTOU sur `mount`) alors que `apk upgrade --no-cache` était déjà
+#     dans ce fichier depuis longtemps. Reconstruite avec `--no-cache` : **0**.
+#     La ligne n'était pas fausse — elle ne s'exécutait simplement plus.
+#
+#     En CI, `cache-from: type=gha` rend le problème PERMANENT : la couche ne
+#     serait plus jamais rejouée. Recevoir le SHA du commit ici la fait rejouer à
+#     chaque `push`. Placé dans l'étage d'exécution, qui est petit : la
+#     construction de l'application, elle, reste en cache.
+ARG AUDIT_BUILD=inconnu
 RUN apk upgrade --no-cache
 
 # Configuration du site. La configuration par défaut est retirée : la laisser

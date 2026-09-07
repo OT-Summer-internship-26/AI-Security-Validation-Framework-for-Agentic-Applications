@@ -7,8 +7,19 @@
  * dans chaque page, un store minimal centralise le chargement, le cache et la
  * notification — les pages consomment `useAudits()` et n'ont rien d'autre à savoir.
  *
- * Repli : si l'API est injoignable, on sert le jeu de démonstration et
- * `source` vaut `'demo'`, ce que la barre supérieure affiche explicitement.
+ * Repli : si l'API est injoignable, on sert le jeu de démonstration et `source`
+ * vaut `'demo'`.
+ *
+ * ⚠ CETTE DOCSTRING A MENTI, ET ÇA A COÛTÉ.
+ *     Elle affirmait que « la barre supérieure l'affiche explicitement ». Aucun
+ *     composant ne lisait `source` — ni la barre, ni la page Historique. Et
+ *     `DataGate` n'affichait son écran « API injoignable » que si la liste était
+ *     VIDE, ce que ce repli rend impossible : il la remplit avec quatre audits
+ *     de juillet 2026. Le dashboard présentait donc des données d'exemple comme
+ *     un historique réel, sans un mot.
+ *
+ *     C'est `DataGate` qui porte l'avertissement désormais — un bandeau
+ *     persistant en tête de page. Si vous déplacez ce repli, déplacez-le aussi.
  */
 import { useSyncExternalStore } from 'react'
 import { fetchAudits } from './api'
