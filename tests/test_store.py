@@ -340,3 +340,177 @@ def test_le_chemin_de_la_base_suit_la_configuration(magasin, monkeypatch, tmp_pa
     from workflow.paths import results_dir
     assert magasin.db_path().parent == results_dir().parent, (
         "la base doit vivre avec les resultats d'audit")
+
+
+# --------------------------------------------------------------------------- #
+# Schéma versionné : ce qui rend le RETOUR ARRIÈRE sur état durable.
+# --------------------------------------------------------------------------- #
+
+def test_une_base_neuve_est_estampillee(monkeypatch, tmp_path):
+    """Sans estampille, aucune migration future ne saurait quoi appliquer."""
+    from api import store
+
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "neuve.sqlite"))
+    store.fermer()
+    try:
+        store.init()
+        assert store.version_schema() == store.SCHEMA_VERSION
+    finally:
+        store.fermer()
+
+
+def test_un_volume_ANTERIEUR_est_adopte_sans_perte(monkeypatch, tmp_path):
+    """Les bases d'avant ce mecanisme portent les tables et AUCUNE estampille.
+
+    Le piege qu'il ecarte : estampiller en RECREANT, ce qui perdrait les
+    executions et les cles d'un volume de production. La migration 1 est en
+    `IF NOT EXISTS` exactement pour ca — appliquee a une base existante, elle ne
+    fait rien, et la base est simplement reconnue.
+    """
+    import sqlite3
+
+    from api import store
+
+    base = tmp_path / "ancienne.sqlite"
+    c = sqlite3.connect(base)
+    c.executescript(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, "
+        "progress INTEGER NOT NULL DEFAULT 0, stage TEXT NOT NULL DEFAULT '', "
+        "request TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', "
+        "started_at TEXT NOT NULL, claimed_at TEXT, heartbeat REAL, worker TEXT, "
+        "finished_at TEXT, result_file TEXT, result_files TEXT, categories TEXT, "
+        "error TEXT);")
+    c.execute("INSERT INTO runs (id, status, request, started_at) "
+              "VALUES ('avant-migration', 'completed', '{}', '2026-01-01')")
+    c.commit()
+    c.close()
+    assert sqlite3.connect(base).execute("PRAGMA user_version").fetchone()[0] == 0
+
+    monkeypatch.setenv("AUDIT_STATE_DB", str(base))
+    store.fermer()
+    try:
+        store.init()
+        assert store.version_schema() == store.SCHEMA_VERSION, "la base n'a pas ete estampillee"
+        garde = store._conn().execute(
+            "SELECT id FROM runs WHERE id = 'avant-migration'").fetchone()
+        assert garde is not None, (
+            "une execution d'un volume de PRODUCTION a disparu a la migration")
+    finally:
+        store.fermer()
+
+
+def test_une_base_PLUS_RECENTE_que_le_code_REFUSE_de_demarrer(monkeypatch, tmp_path):
+    """Le retour arriere dangereux doit echouer AU DEMARRAGE, pas en production.
+
+    POURQUOI CE TEST EXISTE
+        La chaine publie des images etiquetees par SHA pour permettre le retour
+        arriere. Mais revenir a une image ANCIENNE devant une base RECENTE est le
+        scenario symetrique de celui qu'on vient de corriger, et il etait tout
+        aussi silencieux : `CREATE TABLE IF NOT EXISTS` ne dit rien, et la panne
+        arrive a la premiere requete qui touche une colonne absente — des heures
+        plus tard, en pleine execution, jamais au healthcheck.
+
+        Un conteneur qui refuse de demarrer se voit. Une requete qui echoue a
+        3 h du matin, non.
+    """
+    import sqlite3
+
+    from api import store
+
+    base = tmp_path / "future.sqlite"
+    c = sqlite3.connect(base)
+    c.execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
+    c.commit()
+    c.close()
+
+    monkeypatch.setenv("AUDIT_STATE_DB", str(base))
+    store.fermer()
+    try:
+        with pytest.raises(RuntimeError) as erreur:
+            store.init()
+        message = str(erreur.value)
+        assert "PLUS ANCIENNE" in message, "le message doit dire QUI est en retard"
+        assert "backup_volume" in message, (
+            "un refus qui ne dit pas quoi faire se contourne au hasard")
+    finally:
+        store.fermer()
+
+
+def test_deux_demarrages_SIMULTANES_ne_migrent_pas_deux_fois(monkeypatch, tmp_path):
+    """`docker compose` lance l'API et l'ouvrier EN MEME TEMPS.
+
+    LE BUG QU'IL ATTRAPE, MESURE
+        La premiere version lisait `user_version` AVANT la transaction : deux
+        processus lisaient donc « 0 » et appliquaient la meme migration deux
+        fois. Invisible tant que la migration 1 est en `IF NOT EXISTS` — mais
+        toutes les suivantes seront des `ALTER TABLE`. Mesure avec une migration
+        non idempotente : 6 demarrages simultanes -> echec
+        `duplicate column name`. Ca se serait produit exactement le jour du
+        deploiement qui change le schema, sur l'un des deux services.
+
+        Le correctif : `BEGIN IMMEDIATE` prend le verrou d'ecriture, et la
+        version est RELUE dedans. Le second processus attend, puis ne fait rien.
+
+    POURQUOI PLUSIEURS TOURS, ET PAS UN SEUL
+        Une course ne se reproduit pas a coup sur. Avec un seul tour, ce test
+        laissait passer la regression environ une fois sur sept — constate en
+        rejouant le controle de mutation : « 17/17, 16/17, 17/17 ». Un filet qui
+        n'attrape que parfois est un filet decoratif avec de la chance.
+
+        Cinq tours sur cinq bases neuves ramenent la probabilite de rater la
+        regression sous le millieme, sans rendre le test lent (quelques dizaines
+        de millisecondes par tour, en memoire).
+    """
+    import threading
+
+    from api import store
+
+    def un_tour(numero: int) -> list[str]:
+        """Une base neuve, une migration NON idempotente, six demarrages d'un coup."""
+        monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / f"course{numero}.sqlite"))
+        store.fermer()
+        store.init()
+
+        version_suivante = store.SCHEMA_VERSION + 1
+        monkeypatch.setattr(
+            store, "_MIGRATIONS",
+            [*store._MIGRATIONS,
+             (version_suivante, "ALTER TABLE runs ADD COLUMN essai_course TEXT;")])
+        monkeypatch.setattr(store, "SCHEMA_VERSION", version_suivante)
+
+        erreurs: list[str] = []
+        depart = threading.Barrier(6)
+
+        def demarre():
+            try:
+                store.fermer()
+                depart.wait(timeout=5)   # tous partent au meme instant
+                store.init()
+            except threading.BrokenBarrierError:
+                pass
+            except Exception as exc:
+                erreurs.append(f"{type(exc).__name__}: {exc}")
+
+        fils = [threading.Thread(target=demarre) for _ in range(6)]
+        for f in fils:
+            f.start()
+        for f in fils:
+            f.join()
+
+        colonnes = [r[1] for r in store._conn().execute("PRAGMA table_info(runs)")]
+        if colonnes.count("essai_course") != 1:
+            erreurs.append(f"colonne ajoutee {colonnes.count('essai_course')} fois")
+        if store.version_schema() != version_suivante:
+            erreurs.append(f"version {store.version_schema()} au lieu de {version_suivante}")
+
+        # La version du module a ete relevee par le monkeypatch de ce tour ; on la
+        # remet pour que le tour suivant reparte de la vraie valeur.
+        monkeypatch.undo()
+        return erreurs
+
+    try:
+        for tour in range(5):
+            erreurs = un_tour(tour)
+            assert not erreurs, f"tour {tour} : migration appliquee plusieurs fois — {erreurs[:2]}"
+    finally:
+        store.fermer()

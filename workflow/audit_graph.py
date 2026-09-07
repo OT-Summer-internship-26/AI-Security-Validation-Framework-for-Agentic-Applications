@@ -35,6 +35,7 @@ from agents.asi08_cascading_failures import ASI08CascadingFailuresAgent
 from agents.asi09_trust_exploitation import ASI09TrustExploitationAgent
 from agents.asi10_rogue_agents import ASI10RogueAgentsAgent
 from agents.base_agent import build_http_callback
+from workflow.paths import checkpoints_path
 from workflow.scoring import calculate_global_score, get_risk_level
 from workflow.state import AuditState
 
@@ -314,10 +315,27 @@ _CHECKPOINT_TYPES = {
 # zéro et rejouait les dix agents. Le checkpoint existait pourtant, complet.
 
 # Base de reprise. Un fichier, pas une base serveur : l'audit tourne sur un poste.
-CHECKPOINT_DB = os.environ.get(
-    "AUDIT_CHECKPOINT_DB",
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "checkpoints.sqlite"),
-)
+#
+# LE CHEMIN VIENT DE `workflow.paths`, PAS D'ICI, ET IL EST LU A L'APPEL.
+#     Ce module lisait `AUDIT_CHECKPOINT_DB` et retombait sur `<depot>/data`.
+#     Mais la variable DOCUMENTEE (doc. technique : variables d'environnement)
+#     est `AUDIT_CHECKPOINTS`, lue par `checkpoints_path()` : celle du document
+#     n'avait donc AUCUN effet, et deux sources de verite coexistaient.
+#
+#     Consequence dans l'image : `AUDIT_DATA_DIR` designe le volume persistant,
+#     les resultats y allaient, le checkpoint restait dans /app/data — disque
+#     EPHEMERE. Au redemarrage du conteneur, `--resume` ne retrouvait rien et
+#     rejouait les dix agents sans le dire. C'est precisement ce que la
+#     docstring de `checkpoints_path()` interdit : « les separer ferait rejouer
+#     des agents dont les resultats existent deja ».
+#
+#     Lu a l'APPEL et non a l'import : une variable posee apres le chargement du
+#     module (conteneur, test, ouvrier) doit compter. C'est le meme piege que
+#     `AUDIT_TARGET_CONCURRENCY` fige a l'import, deja corrige dans base_agent.
+#
+#     Plus de constante de module a surcharger non plus : les tests posent
+#     `AUDIT_CHECKPOINTS`, comme un operateur. Un point d'entree de moins, et
+#     celui qui reste est celui que la documentation promet.
 
 
 def run_audit_graph(
@@ -360,7 +378,8 @@ def run_audit_graph(
     cfg = dict(target_config or {})
     cats = categories or list(AGENT_REGISTRY.keys())
     thread = thread_id or f"audit-{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
-    os.makedirs(os.path.dirname(CHECKPOINT_DB), exist_ok=True)
+    db = str(checkpoints_path())
+    os.makedirs(os.path.dirname(db), exist_ok=True)
 
     state = AuditState(target_url=target_url, target_config=cfg)
     from judge.tracing import graph_callbacks
@@ -374,7 +393,7 @@ def run_audit_graph(
                   # vide si LangFuse n'est pas configuré.
                   "callbacks": graph_callbacks()}
 
-    with SqliteSaver.from_conn_string(CHECKPOINT_DB) as saver:
+    with SqliteSaver.from_conn_string(db) as saver:
         saver.serde = JsonPlusSerializer(allowed_msgpack_modules=_CHECKPOINT_TYPES)
         graph = build_audit_graph(cats).compile(checkpointer=saver)
 

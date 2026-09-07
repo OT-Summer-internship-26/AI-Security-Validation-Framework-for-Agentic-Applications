@@ -25,12 +25,21 @@ CIBLE = "http://cible-factice/chat"
 
 @pytest.fixture()
 def checkpoint_db(monkeypatch):
-    """Base de reprise isolee : les tests ne touchent pas celle du projet."""
-    db = os.path.join(tempfile.mkdtemp(), "cp.sqlite")
-    monkeypatch.setenv("AUDIT_CHECKPOINT_DB", db)
-    import workflow.audit_graph as ag
+    """Base de reprise isolee : les tests ne touchent pas celle du projet.
 
-    monkeypatch.setattr(ag, "CHECKPOINT_DB", db)
+    ON NE POSE QUE LA VARIABLE DOCUMENTEE, ET C'EST VOULU.
+        La fixture posait `AUDIT_CHECKPOINT_DB` *et* surchargeait la constante du
+        module — deux ceintures, donc aucune ne prouvait rien. Le code lisait en
+        realite un nom que la documentation n'a jamais mentionne, et la variable
+        `AUDIT_CHECKPOINTS` du document n'avait AUCUN effet : dans l'image, les
+        checkpoints tombaient hors du volume et la reprise rejouait tout.
+
+        En ne posant plus que `AUDIT_CHECKPOINTS`, ces tests echouent — ils
+        ecriraient dans le dossier du projet — si quelqu'un re-court-circuite
+        `workflow.paths`. C'est le seul montage qui garde le contrat vivant.
+    """
+    db = os.path.join(tempfile.mkdtemp(), "cp.sqlite")
+    monkeypatch.setenv("AUDIT_CHECKPOINTS", db)
     return db
 
 
@@ -391,6 +400,49 @@ def test_autotest_backup_volume():
     from pathlib import Path
     chemin = Path(__file__).resolve().parent.parent / "scripts" / "backup_volume.py"
     spec = importlib.util.spec_from_file_location("backup_volume", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.demo()
+
+
+def test_le_checkpoint_atterrit_SUR_LE_VOLUME_des_resultats(tmp_path, monkeypatch):
+    """Le point de reprise doit suivre `AUDIT_DATA_DIR`, comme les resultats.
+
+    LE BUG QU'IL ATTRAPE, CONSTATE EN PRODUCTION
+        `audit_graph` lisait `AUDIT_CHECKPOINT_DB` et retombait sur `<depot>/data`,
+        alors que la variable documentee est `AUDIT_CHECKPOINTS`, lue par
+        `workflow.paths`. Dans l'image, `AUDIT_DATA_DIR` designe le volume
+        persistant : les resultats y allaient, le checkpoint restait sur le disque
+        EPHEMERE du conteneur. Au redemarrage, `--resume` ne retrouvait rien et
+        rejouait les dix agents — sans erreur, sans message.
+
+        Aucun test ne pouvait le voir : la fixture posait elle-meme le chemin.
+        Celui-ci ne pose que la racine des donnees et regarde ou le fichier tombe.
+    """
+    monkeypatch.setenv("AUDIT_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("AUDIT_CHECKPOINTS", raising=False)
+
+    from workflow.audit_graph import run_audit_graph
+
+    run_audit_graph(CIBLE, DRY, categories=["ASI_01"])
+
+    assert (tmp_path / "checkpoints.sqlite").exists(), (
+        "le point de reprise n'a pas suivi AUDIT_DATA_DIR : il est parti hors du "
+        "volume, donc la reprise ne survit pas au redemarrage du conteneur")
+
+
+def test_autotest_check_lock():
+    """Rejoue les controles du garde-fou du verrou.
+
+    Il tourne aussi dans la suite hors-ligne, et pas seulement en CI : c'est lui
+    qui repond a « ce que requirements.txt declare est-il dans requirements.lock ? ».
+    Deux paquets y avaient echappe — `pyrit` et `langgraph-checkpoint-sqlite` —
+    et l'image se construisait sans eux sans que rien ne le dise.
+    """
+    import importlib.util
+    from pathlib import Path
+    chemin = Path(__file__).resolve().parent.parent / "scripts" / "check_lock.py"
+    spec = importlib.util.spec_from_file_location("check_lock", chemin)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.demo()

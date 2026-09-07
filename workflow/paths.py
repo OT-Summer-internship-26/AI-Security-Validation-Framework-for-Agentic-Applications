@@ -27,6 +27,7 @@ CONFIGURATION
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -78,7 +79,20 @@ def checkpoints_path() -> Path:
     Elle doit vivre avec les résultats : reprendre un audit suppose de retrouver
     À LA FOIS son point de reprise et les catégories déjà écrites. Les séparer
     ferait rejouer des agents dont les résultats existent déjà.
+
+    L'ANCIEN NOM NE FAIT PLUS RIEN — ET IL LE DIT.
+        `workflow/audit_graph.py` lisait `AUDIT_CHECKPOINT_DB`, un nom qui n'a
+        jamais été documenté. Il ne le lit plus. Quelqu'un a pu le poser en
+        suivant le code plutôt que la documentation : l'ignorer sans un mot
+        remplacerait un bug silencieux par un autre — ses checkpoints
+        atterriraient ailleurs qu'où il croit, et sa reprise rejouerait tout.
     """
+    if os.environ.get("AUDIT_CHECKPOINT_DB") and not os.environ.get("AUDIT_CHECKPOINTS"):
+        warnings.warn(
+            "AUDIT_CHECKPOINT_DB n'est plus lue : utiliser AUDIT_CHECKPOINTS "
+            "(ou AUDIT_DATA_DIR, dont elle découle). Sans cela, les points de "
+            "reprise vont au chemin par défaut, pas au vôtre.",
+            RuntimeWarning, stacklevel=2)
     return _depuis_env("AUDIT_CHECKPOINTS", data_dir() / "checkpoints.sqlite")
 
 
@@ -162,7 +176,29 @@ def demo() -> None:
     assert affichable(RACINE / "data" / "x.json") == str(Path("data") / "x.json")
     assert affichable(Path("/var/lib/ai-security/x.json")).endswith("x.json")
 
-    print("workflow.paths : 7/7 controles OK")
+    # 8. L'ANCIEN nom de variable ne fait plus rien, mais il PREVIENT. Sans cet
+    #    avertissement, un operateur qui l'avait pose verrait ses points de
+    #    reprise partir ailleurs, sans un mot — le bug d'origine, retourne.
+    import warnings as _w
+    os.environ["AUDIT_CHECKPOINT_DB"] = "/chemin/historique"
+    try:
+        with _w.catch_warnings(record=True) as capture:
+            _w.simplefilter("always")
+            checkpoints_path()
+        assert capture, "l'ancien nom est ignore EN SILENCE"
+
+        # ... et il se tait des que la variable ACTUELLE est posee : un
+        #     avertissement qui crie sans raison finit par ne plus etre lu.
+        os.environ["AUDIT_CHECKPOINTS"] = "/chemin/actuel"
+        with _w.catch_warnings(record=True) as capture:
+            _w.simplefilter("always")
+            checkpoints_path()
+        assert not capture, "avertissement inutile alors que la nouvelle est posee"
+    finally:
+        os.environ.pop("AUDIT_CHECKPOINT_DB", None)
+        os.environ.pop("AUDIT_CHECKPOINTS", None)
+
+    print("workflow.paths : 8/8 controles OK")
 
 
 if __name__ == "__main__":

@@ -104,10 +104,41 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
-def init() -> None:
-    """Crée le schéma. Idempotent : appelé au démarrage de l'API ET de l'ouvrier."""
-    c = _conn()
-    c.executescript("""
+# --------------------------------------------------------------------------- #
+# Schéma : versionné DANS la base, et migré explicitement
+# --------------------------------------------------------------------------- #
+#
+# POURQUOI CE MÉCANISME EXISTE
+#     Le schéma était créé par un simple `CREATE TABLE IF NOT EXISTS`. Tant qu'on
+#     n'ajoute rien, ça marche. Le jour où une colonne s'ajoute à `runs` ou
+#     `api_keys`, le `IF NOT EXISTS` **passe son chemin** sur un volume existant :
+#     l'ancienne table survit, et ça casse à la PREMIÈRE REQUÊTE qui utilise la
+#     colonne. Pas au démarrage, donc pas au healthcheck : en pleine production,
+#     sur un `sqlite3.OperationalError: no such column`.
+#
+# ET SURTOUT : ÇA REND LE RETOUR ARRIÈRE SÛR.
+#     La chaîne publie des images étiquetées par SHA précisément pour pouvoir
+#     revenir en arrière (voir integration_guide §6). Mais revenir à une image
+#     ANCIENNE devant une base RÉCENTE est le scénario symétrique, et il était
+#     tout aussi silencieux. `init()` refuse désormais de démarrer dans ce cas,
+#     avec un message qui dit quoi faire. Un conteneur qui ne démarre pas est
+#     visible ; une requête qui échoue trois heures plus tard ne l'est pas.
+#
+# COMMENT AJOUTER UNE MIGRATION
+#     1. écrire le SQL dans `_MIGRATIONS` avec le numéro suivant ;
+#     2. incrémenter `SCHEMA_VERSION` ;
+#     3. ne JAMAIS modifier une migration déjà publiée — les bases déployées
+#        l'ont déjà appliquée, la réécrire ne les rattraperait pas.
+#     Chaque migration s'exécute dans UNE transaction avec son estampillage :
+#     une coupure de courant laisse la base soit avant, soit après, jamais entre.
+SCHEMA_VERSION = 1
+
+_MIGRATIONS: list[tuple[int, str]] = [
+    # 1 — socle. Volontairement en `IF NOT EXISTS` : les volumes antérieurs à ce
+    #     mécanisme portent déjà ces tables avec `user_version = 0`. Les appliquer
+    #     ne fait rien, et la base est simplement estampillée — aucune reprise
+    #     manuelle, aucune perte.
+    (1, """
         CREATE TABLE IF NOT EXISTS runs (
             id            TEXT PRIMARY KEY,
             status        TEXT NOT NULL,
@@ -146,7 +177,95 @@ def init() -> None:
             revoked_at  TEXT,
             last_used   TEXT
         );
-    """)
+    """),
+]
+
+
+def version_schema() -> int:
+    """Version du schéma portée par la base (0 = jamais migrée)."""
+    return int(_conn().execute("PRAGMA user_version").fetchone()[0])
+
+
+def _instructions(script: str):
+    """Découpe un script SQL en instructions, sans se tromper sur les littéraux.
+
+    `sqlite3.complete_statement` est la fonction de la bibliothèque standard qui
+    répond à « ce texte forme-t-il une instruction complète ? » — elle connaît
+    les chaînes et les commentaires. Découper naïvement sur `;` casserait sur le
+    premier point-virgule dans un littéral.
+
+    POURQUOI NE PAS UTILISER `executescript`
+        `executescript` émet un COMMIT avant de démarrer : il mettrait fin à la
+        transaction qui protège la migration, et c'est précisément cette
+        transaction qui empêche deux processus de migrer en même temps.
+    """
+    tampon = ""
+    for ligne in script.splitlines(keepends=True):
+        tampon += ligne
+        if sqlite3.complete_statement(tampon):
+            instruction = tampon.strip()
+            if instruction:
+                yield instruction
+            tampon = ""
+    reste = tampon.strip()
+    if reste:
+        yield reste
+
+
+def init() -> None:
+    """Crée ou met à jour le schéma. Appelé au démarrage de l'API ET de l'ouvrier.
+
+    Idempotent, concurrent-safe, et surtout : REFUSE une base plus récente que le
+    code.
+
+    TOUTE LA PHASE EST SOUS UN VERROU D'ÉCRITURE, ET LA VERSION EST RELUE DEDANS.
+        `docker compose` lance l'API et l'ouvrier EN MÊME TEMPS : les deux
+        appellent `init()` à la seconde près. Une première version lisait la
+        version AVANT la transaction — les deux processus lisaient donc « 0 » et
+        appliquaient la même migration deux fois.
+
+        Invisible aujourd'hui, parce que la migration 1 est en `IF NOT EXISTS`.
+        Mesuré avec une migration non idempotente (un `ALTER TABLE`, c'est-à-dire
+        toutes les suivantes) : 6 démarrages simultanés → 1 échec
+        `duplicate column name`. Ça se serait produit exactement le jour du
+        déploiement qui change le schéma, sur l'un des deux services.
+
+        `BEGIN IMMEDIATE` prend le verrou d'écriture tout de suite : le second
+        processus attend, puis relit une version déjà à jour et ne fait rien.
+    """
+    c = _conn()
+
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        actuelle = int(c.execute("PRAGMA user_version").fetchone()[0])
+        _verifier_version(actuelle)
+        for version, sql in _MIGRATIONS:
+            if version <= actuelle:
+                continue
+            for instruction in _instructions(sql):
+                c.execute(instruction)
+            c.execute(f"PRAGMA user_version = {int(version)}")
+        c.execute("COMMIT")
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
+
+
+def _verifier_version(actuelle: int) -> None:
+    """Refuse une base plus récente que le code. Voir le bloc ci-dessus."""
+    if actuelle > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Base de données en version de schéma {actuelle}, "
+            f"code en version {SCHEMA_VERSION} : cette image est PLUS ANCIENNE "
+            f"que la base ({db_path()}).\n"
+            "  Démarrer quand même corromprait les données ou échouerait en pleine "
+            "exécution, pas au démarrage.\n"
+            "  → redéployer une image au moins aussi récente, OU restaurer la "
+            "sauvegarde d'avant la montée de version :\n"
+            "       python scripts/backup_volume.py --lister\n"
+            "       python scripts/backup_volume.py --restaurer <archive>"
+        )
+
 
 
 # --------------------------------------------------------------------------- #
