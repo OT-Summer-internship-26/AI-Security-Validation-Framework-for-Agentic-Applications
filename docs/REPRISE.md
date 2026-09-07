@@ -120,13 +120,9 @@ suivi.
 
 ## Ce qui reste après le point 1
 
-1. **Rangement du dépôt avant livraison** — retirer du suivi `presentation/`,
-   `presentation.jsx`, `.outils/`, `.deepeval/`, et 44 des 48 résultats d'audit.
-   Décidé, jamais exécuté : il manquait l'accord sur les audits à garder.
-   **Ne demande aucun réseau — faisable maintenant.**
-2. **Étude de validation DVAP** — outillage et cartographie prêts et testés,
+1. **Étude de validation DVAP** — outillage et cartographie prêts et testés,
    mais un seul laboratoire audité sur quinze.
-3. **Push vers le dépôt d'entreprise** — bloqué sur deux décisions : l'URL du
+2. **Push vers le dépôt d'entreprise** — bloqué sur deux décisions : l'URL du
    dépôt, et le sort des ~50 commits signés `Ton Nom <ton.email@exemple.com>`.
 
 ## Faiblesses connues, nommées plutôt que tues

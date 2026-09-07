@@ -52,10 +52,13 @@ data/checkpoints.sqlite*
 # --- Artefacts d'execution et d'outillage (regenerables) -------------------
 # Ils etaient soit suivis a tort, soit deposes a la racine par un outil.
 .coverage
-runs/                    # rapports .jsonl produits par garak a chaque run
-reports/                 # sorties de bandit / radon / pip-audit
+# rapports .jsonl produits par garak a chaque run
+runs/
+# sorties de bandit / radon / pip-audit
+reports/
 garak.log
--p/                      # dossier ne d'un « mkdir -p » interprete par cmd.exe
+# dossier ne d'un « mkdir -p » interprete par cmd.exe
+-p/
 # Base d'etat des executions et des cles : elle contient des empreintes de cles
 # d'API et l'historique des audits d'un poste. Elle s'est retrouvee commitee une
 # fois par un `git add -A` — une base d'EXECUTION n'a rien a faire dans un depot.
@@ -77,3 +80,20 @@ sauvegardes/
 # a quiconque de verifier qu'une image vient bien de cette chaine.
 cosign.key
 *.key
+
+# --- Outillage local, jamais un livrable ------------------------------------
+# Ces trois-la etaient SUIVIS : `.gitignore` n'agit pas sur ce qui l'est deja,
+# il a fallu un `git rm --cached`. Ils restent sur le disque, hors du depot.
+# liste d'autorisations locale, avec les chemins absolus de CE poste
+.outils/
+# telemetrie de deepeval
+.deepeval/
+# doublon racine de presentation/src/App.jsx (886 vs 868 lignes)
+presentation.jsx
+# deck de projet, deja « materiel hors produit » pour .dockerignore
+presentation/
+
+# Les audits `dry_run` sont des fumigenes locaux : reponses simulees, aucune
+# cible reelle. Ils n'alimentent pas la demo du dashboard et repoussent a chaque
+# execution. Ceux deja commites restent, on arrete juste d'en ajouter.
+data/audit_results/*_dry_run.json
