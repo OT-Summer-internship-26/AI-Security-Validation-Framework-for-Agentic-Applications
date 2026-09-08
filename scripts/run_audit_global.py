@@ -101,6 +101,31 @@ def main() -> int:
                          "pas rejoues. L'identifiant est affiche au lancement.")
     args = ap.parse_args()
 
+    # LA MEME REGLE QUE L'API, PAS UNE COPIE — ET DANS `main()`, PAS AILLEURS.
+    #     L'allowlist ne protegeait que l'API : en CLI on visait n'importe quoi.
+    #     C'est defendable — qui peut lancer ce script peut lancer `curl` — mais
+    #     elle etait presentee comme bornant la cible, pas l'interface. Une
+    #     garantie a moitie vraie est une garantie sur laquelle on se repose a
+    #     tort. Vide par defaut : le developpement local ne change pas d'un iota.
+    #
+    #     CE CONTROLE ETAIT DANS `_run_via_graph`, ET IL Y ETAIT FAUX DEUX FOIS :
+    #       · `ap` n'y existe pas — c'est un local de `main()`. Le refus levait
+    #         `NameError` au lieu de refuser. La branche n'ayant jamais ete
+    #         parcourue par un test, la suite restait verte.
+    #       · il ne couvrait qu'UN des deux chemins. `--subprocess` ne passe pas
+    #         par le graphe : la cible n'y etait jamais validee ici, et l'audit
+    #         se montait — dossier de sortie, thread de reprise — avant meme
+    #         qu'on se demande si on avait le droit de l'attaquer.
+    #     Remonte ici, la regle borne les DEUX chemins et tombe avant tout
+    #     travail, comme le controle de categorie juste en dessous.
+    try:
+        valider_cible(args.target)
+    except CibleRefusee as refus:
+        ap.error(str(refus))
+    avertissement = avertissement_si_libre()
+    if avertissement:
+        print(f"[avertissement] {avertissement}", file=sys.stderr)
+
     from workflow.audit_graph import AGENT_REGISTRY, consolidate
 
     cats = ([c.strip() for c in args.categories.split(",")] if args.categories
@@ -285,20 +310,6 @@ def _run_via_graph(args, cats, record, out, t0) -> int:
                        encoding="utf-8")
         print(f"[global] {category} → {result.score}/10 · "
               f"cumul {record['global_score']}/100 ({record['risk_level']})", flush=True)
-
-    # LA MEME REGLE QUE L'API, PAS UNE COPIE.
-    #     L'allowlist ne protegeait que l'API : en CLI on visait n'importe quoi.
-    #     C'est defendable — qui peut lancer ce script peut lancer `curl` — mais
-    #     elle etait presentee comme bornant la cible, pas l'interface. Une
-    #     garantie a moitie vraie est une garantie sur laquelle on se repose a
-    #     tort. Vide par defaut : le developpement local ne change pas d'un iota.
-    try:
-        valider_cible(args.target)
-    except CibleRefusee as refus:
-        ap.error(str(refus))
-    avertissement = avertissement_si_libre()
-    if avertissement:
-        print(f"[avertissement] {avertissement}", file=sys.stderr)
 
     cfg = {
         "llm_profile": args.profile, "prompt_field": args.prompt_field,

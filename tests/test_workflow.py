@@ -459,3 +459,56 @@ def test_autotest_cibles():
     from workflow import cibles
 
     cibles.demo()
+
+
+# --------------------------------------------------------------------------- #
+# Les auto-tests embarques : plus aucun ne doit pouvoir passer inapercu.
+# --------------------------------------------------------------------------- #
+
+def _modules_avec_autotest() -> list[str]:
+    """Tout module du depot portant un `def demo()`, en notation pointee.
+
+    Lecture du TEXTE et non import : la decouverte tourne a la collecte, avant
+    que pytest n'ait importe quoi que ce soit, et un module casse doit faire
+    echouer SON test — pas la collecte de tout le fichier.
+    """
+    from pathlib import Path
+
+    racine = Path(__file__).resolve().parent.parent
+    trouves = []
+    for dossier in ("agents", "api", "judge", "reporting", "sandbox", "scripts",
+                    "workflow"):
+        for chemin in sorted((racine / dossier).glob("*.py")):
+            if chemin.name == "__init__.py":
+                continue
+            texte = chemin.read_text(encoding="utf-8", errors="replace")
+            if any(l.startswith("def demo(") for l in texte.splitlines()):
+                trouves.append(f"{dossier}.{chemin.stem}")
+    return trouves
+
+
+@pytest.mark.parametrize("module", _modules_avec_autotest())
+def test_aucun_autotest_demo_n_est_orphelin(module):
+    """Rejoue le `demo()` de CHAQUE module qui en porte un.
+
+    LE BUG QU'IL ATTRAPE, CONSTATE DEUX FOIS
+        Les quatre juges portaient chacun un `demo()` que RIEN ne lancait. La
+        correction fut une LISTE, dans `test_judge.py::test_module_self_check`.
+        Une liste ne s'etend pas toute seule : `workflow/serialization.py` est
+        arrive avec le sien et y est reste orphelin (19 % de couverture pour un
+        module dont l'auto-test verifie 5 invariants du format d'audit), et
+        `scripts/mutation_check.py` de meme — celui-la n'etant jamais importe,
+        il etait invisible JUSQUE DANS LE RAPPORT DE COUVERTURE, qui ne montre
+        pas ce qu'il n'a pas vu.
+
+        Un auto-test que personne ne rejoue est pire qu'absent : il se lit comme
+        une garantie dans le fichier qu'il accompagne.
+
+    D'ou la DECOUVERTE plutot que la liste : un module qui n'existe pas encore
+    est deja couvert par ce test. Les tests nommes qui rejouent certains de ces
+    `demo()` restent — ils portent chacun le defaut precis qui les a fait naitre,
+    ce qu'un test parametre ne sait pas dire.
+    """
+    import importlib
+
+    importlib.import_module(module).demo()

@@ -142,9 +142,12 @@ def demo() -> None:
         assert avertissement_si_libre() is not None
 
     # 2. Le schéma est refusé AVANT la liste : `file://` ne doit jamais passer,
-    #    même en mode développement.
+    #    même en mode développement. Et un schéma VALIDE ne suffit pas : sans
+    #    hôte, il n'y a rien à comparer à la liste — `http://` la traverserait
+    #    donc sans être bornée par quoi que ce soit.
     with liste(None):
-        for mauvaise in ("file:///etc/passwd", "gopher://x/", "sans-schema"):
+        for mauvaise in ("file:///etc/passwd", "gopher://x/", "sans-schema",
+                         "http://", "https:///chemin-sans-hote"):
             try:
                 valider_cible(mauvaise)
                 raise AssertionError(f"{mauvaise} aurait dû être refusée")

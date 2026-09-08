@@ -171,21 +171,62 @@ MUTATIONS = [
      "                    if False:",
      "tests/test_base_agent.py::test_une_reponse_DEMESUREE_est_exclue_et_ne_remplit_pas_la_memoire"),
 
+    # LE GARDE-FOU SSRF DU RUNNER GLOBAL. Il a deja ete faux ici, et de deux
+    # facons a la fois : place dans `_run_via_graph`, il levait `NameError`
+    # (`ap` est un local de `main()`) au lieu de refuser, et il ne couvrait pas
+    # `--subprocess`, qui ne passe pas par le graphe. Aucun test ne parcourait
+    # la branche : la suite est restee verte tout du long.
+    ("L'allowlist ne borne plus le runner global",
+     "scripts/run_audit_global.py",
+     "        valider_cible(args.target)",
+     "        pass",
+     "tests/test_runners.py::test_une_cible_HORS_LISTE_est_refusee_par_LES_DEUX_runners"),
+
     # Une purge qui touche une execution EN COURS lui retire son suivi.
+    #
+    # ANCRE REPRISE LE 2026-09-08. La requete a ete extraite dans une variable
+    # (`vieux = ...`) pour etre reutilisee par les trois DELETE : elle a perdu
+    # l'indentation et la virgule que cette mutation attendait. Resultat, l'ancre
+    # ne correspondait plus a rien et le controle rendait « ANCRE KO » — donc ce
+    # correctif n'etait plus eprouve DU TOUT. On ancre desormais sur le litteral
+    # seul, qui ne depend plus de la facon dont il est passe aux appels.
     ("La purge emporte aussi les executions en cours",
      "api/store.py",
-     "        \"SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?\",",
-     "        \"SELECT id FROM runs WHERE finished_at IS NULL OR finished_at < ?\",",
+     "\"SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?\"",
+     "\"SELECT id FROM runs WHERE finished_at IS NULL OR finished_at < ?\"",
      "tests/test_store.py::test_la_purge_retire_le_VOLUME_et_garde_la_TRACE"),
 ]
 
 
-def lancer(test: str) -> bool:
-    """True si le test PASSE."""
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", test, "-q", "-p", "no:cacheprovider",
-         "--no-header", "-x"],
-        cwd=RACINE, capture_output=True, text=True, timeout=300)
+DELAI_TEST_S = 300
+
+
+def lancer(test: str) -> bool | None:
+    """True si le test PASSE, False s'il echoue, None s'il n'a pas abouti.
+
+    LE TIMEOUT EST UN TROISIEME ETAT, ET C'EST TOUT L'ENJEU
+        `TimeoutExpired` remontait jusqu'a `main()` et tuait la verification
+        ENTIERE : aucun rapport imprime, et toutes les mutations suivantes
+        jamais jouees — sans que rien ne le dise. Un seul test lent effacait
+        donc le controle en silence. Mesure : l'execution est morte sur la
+        mutation 12, les 5 suivantes n'ont jamais ete testees.
+
+        Le compter comme « le test a echoue » serait PIRE que le plantage : la
+        mutation passerait pour un FILET REEL alors que rien n'a ete mesure.
+        C'est exactement le faux vert que ce script existe pour debusquer.
+
+        `timeout=` ne borne d'ailleurs pas ce qu'on croit : sous Windows, avec
+        `capture_output`, il ne couvre pas le drainage des tuyaux. Un delai de
+        300 s s'est termine a 917 s (« timed out after -617 s »). Le traiter
+        comme un cas possible plutot que comme une impossibilite theorique.
+    """
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", test, "-q", "-p", "no:cacheprovider",
+             "--no-header", "-x"],
+            cwd=RACINE, capture_output=True, text=True, timeout=DELAI_TEST_S)
+    except subprocess.TimeoutExpired:
+        return None
     return r.returncode == 0
 
 
@@ -203,8 +244,8 @@ def synthese(resultats):
     `print`.
     """
     reels = sum(1 for _, e, _ in resultats if e == "OK")
-    total = sum(1 for _, e, _ in resultats if e in ("OK", "INUTILE", "ANCRE"))
-    perdues = [(lib, det) for lib, e, det in resultats if e == "ANCRE"]
+    total = sum(1 for _, e, _ in resultats if e in ("OK", "INUTILE", "ANCRE", "TIMEOUT"))
+    perdues = [(lib, det) for lib, e, det in resultats if e in ("ANCRE", "TIMEOUT")]
     return reels, total, perdues
 
 
@@ -227,7 +268,16 @@ def demo() -> None:
     #    elle est declaree telle quelle, ce n'est pas un accident.
     assert synthese([("a", "OK", ""), ("b", "\u2014", "non mutee")])[:2] == (1, 1)
 
-    print("scripts.mutation_check : 4/4 controles OK")
+    # 5. UN TEST QUI N'ABOUTIT PAS ne prouve rien : il doit peser dans le
+    #    denominateur comme une ancre absente, et etre SIGNALE. Le compter
+    #    parmi les reels ferait passer une mutation jamais jouee pour un filet.
+    reels, total, perdues = synthese([("a", "OK", ""), ("b", "TIMEOUT", "non abouti")])
+    assert (reels, total) == (1, 2), (
+        "un timeout hors du denominateur rendrait \u00ab 1/1 \u00bb et une sortie 0 "
+        "alors qu'un correctif n'a pas ete eprouve du tout")
+    assert perdues and perdues[0][0] == "b"
+
+    print("scripts.mutation_check : 5/5 controles OK")
 
 
 def main() -> int:
@@ -284,10 +334,18 @@ def main() -> int:
         try:
             chemin.write_text(original.replace(avant, apres, 1), encoding="utf-8")
             passe = lancer(test)
-            # On EXIGE l'echec : un test qui passe encore ne teste rien.
-            resultats.append((libelle, "OK" if not passe else "INUTILE",
-                              "le test devient rouge" if not passe
-                              else "LE TEST PASSE ENCORE — il ne protege rien"))
+            if passe is None:
+                # Ni filet ni decor : rien n'a ete mesure. Compte dans le TOTAL,
+                # jamais dans les reels — sinon le ratio parlerait d'un controle
+                # qui n'a pas eu lieu.
+                resultats.append((libelle, "TIMEOUT",
+                                  f"le test n'a pas abouti en {DELAI_TEST_S}s — "
+                                  "cette mutation ne prouve RIEN"))
+            else:
+                # On EXIGE l'echec : un test qui passe encore ne teste rien.
+                resultats.append((libelle, "OK" if not passe else "INUTILE",
+                                  "le test devient rouge" if not passe
+                                  else "LE TEST PASSE ENCORE — il ne protege rien"))
         finally:
             chemin.write_text(sauvegarde.read_text(encoding="utf-8"), encoding="utf-8")
             sauvegarde.unlink(missing_ok=True)
@@ -298,7 +356,8 @@ def main() -> int:
     print("=" * 78 + "\n")
     for libelle, etat, detail in resultats:
         marque = {"OK": "[FILET REEL] ", "INUTILE": "[DECORATIF]  ",
-                  "—": "[non mutee]  ", "ANCRE": "[ANCRE KO]   "}[etat]
+                  "—": "[non mutee]  ", "ANCRE": "[ANCRE KO]   ",
+                  "TIMEOUT": "[NON ABOUTI] "}[etat]
         print(f"  {marque}{libelle}")
         print(f"                {detail}")
     reels, total, perdues = synthese(resultats)

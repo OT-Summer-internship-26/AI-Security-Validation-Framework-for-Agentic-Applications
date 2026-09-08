@@ -310,3 +310,52 @@ def test_l_API_transmet_les_en_tetes_au_runner():
 
     assert "--headers" in cmd, "l'API accepte les en-tetes et ne les transmet pas"
     assert '{"Authorization": "Bearer via-api"}' in cmd[cmd.index("--headers") + 1]
+
+
+# --------------------------------------------------------------------------- #
+# L'allowlist : elle doit borner LA CIBLE, pas seulement l'API.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("runner,argv", [
+    ("run_agent", ["ASI_01", "--target", "http://169.254.169.254/latest/meta-data/",
+                   "--profile", "dry_run"]),
+    ("run_audit_global", ["--target", "http://169.254.169.254/latest/meta-data/",
+                          "--profile", "dry_run"]),
+    # `--subprocess` ne passe PAS par le graphe. Tant que la validation vivait
+    # dans `_run_via_graph`, ce chemin ne validait rien du tout.
+    ("run_audit_global", ["--target", "http://169.254.169.254/latest/meta-data/",
+                          "--profile", "dry_run", "--subprocess"]),
+])
+def test_une_cible_HORS_LISTE_est_refusee_par_LES_DEUX_runners(
+        monkeypatch, capsys, runner, argv):
+    """Le refus doit tomber en CLI, sur les deux runners, AVANT tout audit.
+
+    LE TROU QUE CE TEST FERME
+        `valider_cible` a ete sortie d'`api/main.py` vers `workflow/cibles.py`
+        precisement pour que les runners l'appliquent aussi. Le branchement
+        etait la, verifie A LA MAIN une fois — mais aucun test ne le tenait :
+        la branche `except CibleRefusee` des deux runners n'etait jamais
+        parcourue. Un remaniement qui la supprimerait aurait laisse la suite
+        VERTE, et l'allowlist serait silencieusement redevenue ce qu'elle
+        etait : une garde d'API, pas une garde de cible.
+
+        Ce qui est en jeu n'est pas theorique. Les reponses de la cible sont
+        conservees dans `run_exchanges` et relues par `/runs/{id}` : une cible
+        hors liste, c'est un SSRF dont le resultat ressort par le transcript.
+
+    Les DEUX runners, parametres, et non un seul : c'est la divergence entre
+    chemins d'execution qui avait cree le trou d'origine.
+    """
+    monkeypatch.setenv("AUDIT_TARGET_ALLOWLIST", "localhost")
+    module = _charger(runner)
+    monkeypatch.setattr(sys, "argv", [f"{runner}.py", *argv])
+
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+
+    assert exc.value.code != 0, "une cible hors liste ne doit pas lancer d'audit"
+    # Un refus qui ne nomme pas l'hote laisse l'operateur deviner ce qu'il doit
+    # ajuster — il finit par elargir la liste au hasard, ou par la desactiver.
+    sortie = capsys.readouterr()
+    assert "169.254.169.254" in sortie.err + sortie.out
+    assert "AUDIT_TARGET_ALLOWLIST" in sortie.err + sortie.out
