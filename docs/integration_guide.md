@@ -273,6 +273,22 @@ identifiant à fournir**. Une pull request ne publie rien.
 
 ### Déployer
 
+> **La voie normale est le workflow, pas ces commandes.**
+> `.github/workflows/deploiement.yml` — *Actions → Déploiement → Run workflow*,
+> puis version et environnement — est la seule porte qui **vérifie la signature
+> avant de déployer** et qui peut exiger une approbation humaine, via la règle de
+> protection d'un *GitHub Environment*. Une image dont la signature ne se vérifie
+> pas n'est pas déployée : c'est tout l'intérêt de l'avoir signée.
+>
+> Les commandes ci-dessous sont **ce que ce workflow exécute**. Elles restent
+> utiles pour comprendre la procédure, pour un hôte hors CI, et parce que le
+> transport SSH reste inerte tant que ses secrets n'existent pas — le workflow
+> rend alors ces commandes exactes et s'arrête là.
+>
+> Les jouer à la main, c'est sauter la vérification de signature et le contrôle
+> par condensé. C'est possible ; ça revient à ne tirer aucun bénéfice de la
+> chaîne qui les produit.
+
 ```bash
 # .env de la machine cible
 AUDIT_IMAGE_API=ghcr.io/<votre-org>/ai-security-framework

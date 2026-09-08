@@ -1052,7 +1052,7 @@ fonctionnalité)** : un run `final`/Gemini pour un verdict fiable, quand quota d
   `self.get_microsoft_scenarios()` (une ligne, plus de copie). Vérifié : `primary` = mapping §14
   exact (ASI01→4, ASI02→2 payloads) ; f-string `'f'*64` évaluée correctement (bac à sable).
   ASI01 & ASI02 migrés (get_scenarios inchangé en sortie : 16 et 10 scénarios).
-- **Priorité gravité `type précis > classe > défaut`** ([base_agent.py:474-485](agents/base_agent.py#L474-L485)) :
+- **Priorité gravité `type précis > classe > défaut`** ([base_agent.py:474-485](../agents/base_agent.py#L474-L485)) :
   `behavioral_severity_map.get(vtype_str) or .get(vuln_name, "Medium")`. **Testée** (map ASI02) :
   ToolOrchestrationAbuse+`tool_budget_exhaustion` → **Medium** (type bat classe Critical) ;
   `recursive_tool_calls` → High ; BFLA+`function_bypass` (type absent) → Critical (classe) ;

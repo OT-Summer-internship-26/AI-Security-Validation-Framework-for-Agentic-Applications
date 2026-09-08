@@ -128,10 +128,15 @@ Installation complète, profils LLM, options et intégration CI/CD :
 |---|---|
 | [docs/agentic_architecture_analysis.md](docs/agentic_architecture_analysis.md) | Les 13 composants d'une application agentique et leurs surfaces d'attaque |
 | [docs/security_best_practices.md](docs/security_best_practices.md) | Catalogue des contre-mesures par catégorie *(généré depuis la KB)* |
-| [docs/integration_guide.md](docs/integration_guide.md) | Utilisation, lecture du score, CI/CD, limites |
+| [docs/integration_guide.md](docs/integration_guide.md) | Utilisation, lecture du score, CI/CD, déploiement, limites |
+| [docs/architecture_technique.md](docs/architecture_technique.md) | Architecture, choix de conception, contraintes de déploiement |
+| [docs/ci_limites_connues.md](docs/ci_limites_connues.md) | **Ce que la chaîne CI/CD ne couvre pas** — registre tenu à jour, fermetures datées |
+| [docs/evaluation_qualite.md](docs/evaluation_qualite.md) | Mesures de qualité : couverture, mutation, maintenabilité |
+| [docs/etude_validation_dvap.md](docs/etude_validation_dvap.md) | Étude de validation contre les laboratoires DVAP |
+| [docs/garak_isolated_env.md](docs/garak_isolated_env.md) | Pourquoi garak vit dans un environnement isolé |
 | [config/owasp_knowledge_base.json](config/owasp_knowledge_base.json) | Base de connaissances OWASP ASI01→ASI10 |
 | [config/threat_mapping.json](config/threat_mapping.json) | Cartographie menaces ↔ contexte opérateur télécom |
-| [documentation technique](documentation technique) | Journal de conception : chaque décision technique et sa raison |
+| [docs/journal_decisions_techniques.md](docs/journal_decisions_techniques.md) | Journal de conception : chaque décision technique et sa raison |
 
 ## État
 
@@ -148,4 +153,4 @@ Installation complète, profils LLM, options et intégration CI/CD :
 **À lire avant d'interpréter un score.** L'audit est en boîte noire : le pipeline RAG,
 la mémoire persistante et l'observabilité de la cible sont hors d'atteinte, et les
 métriques d'usage d'outils sont dégradées si la cible n'expose pas ses appels. Le détail
-est dans [la section Limites du guide](docs/integration_guide.md#6-limites-assumées).
+est dans [la section Limites du guide](docs/integration_guide.md#7-limites-assumées).
