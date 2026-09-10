@@ -370,8 +370,20 @@ contenu de `cosign.key`) et `COSIGN_PASSWORD`. `cosign.pub` se versionne — c'e
 elle qui sert à vérifier. `cosign.key` est dans `.gitignore` et ne doit jamais
 être commitée.
 
-> Tant que `COSIGN_KEY` n'existe pas, l'étape de signature **sort en succès avec
-> un avis** : la chaîne ne casse pas, les images sont simplement non signées.
+> **Tant que `COSIGN_KEY` n'existe pas, le job `images.yml` ÉCHOUE** à l'étape
+> de signature (`::error::`, `exit 1`), pour l'image de l'API comme pour celle
+> du dashboard. C'est délibéré — D4, voir `ci_limites_connues.md` : une image
+> non signée qui part quand même circule en se faisant passer pour vérifiée,
+> alors qu'un job rouge se corrige en cinq minutes.
+>
+> Donc **le premier push vers un dépôt neuf rend `images.yml` rouge**, et c'est
+> le comportement attendu, pas une panne. *(Ce paragraphe annonçait l'inverse
+> — « sort en succès avec un avis » — ce qui était vrai avant la fermeture de
+> D4. Corrigé le 2026-09-10, après lecture du code du workflow.)*
+>
+> Les secrets se créent **au niveau du DÉPÔT**. Sur un plan GitHub où les
+> secrets d'organisation sont réservés aux dépôts publics, le niveau
+> organisation n'est pas une option pour un dépôt privé.
 
 `--no-build` n'est pas cosmétique : sans lui, compose reconstruirait si l'image
 manque, et on retomberait dans le défaut d'origine sans s'en apercevoir.
