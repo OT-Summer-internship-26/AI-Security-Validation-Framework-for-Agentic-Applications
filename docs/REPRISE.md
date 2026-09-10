@@ -149,8 +149,14 @@ sur le dépôt d'entreprise, et les trois branches le suivent.
    §D7) jusqu'au push du 2026-09-10, qui est donc leur toute première exécution.
    `images.yml` et `security_audit.yml` se déclenchent sur `push` ; `deploiement.yml`
    ne part qu'à la main et reste inerte sans les secrets du point 3 ;
-   `retention_images.yml` attend le lundi 4 h UTC. **Le résultat n'a pas encore
-   été regardé : onglet Actions du dépôt.** Prévoir que ça casse.
+   `retention_images.yml` attend le lundi 4 h UTC.
+
+   **Regardé le 2026-09-10, et ça a cassé** — sur l'action tierce `trivy-action`,
+   épinglée `@0.28.0` alors que ses tags portent un `v`. L'échec tombe à
+   `Set up job`, donc aucune étape n'a tourné : ni le scan, ni la signature.
+   Corrigé (six emplacements). **Le reste de la chaîne demeure donc inéprouvé** —
+   voir `ci_limites_connues.md` §D7, qui avait nommé cette inconnue avant qu'elle
+   ne se réalise.
 
 5. **`data/state.sqlite` est dans l'historique** (ajoutée par `73ae2a0`, retirée
    par `ffaeead`) et donc déjà en ligne. **Vérifié le 2026-09-08 : sans danger.**

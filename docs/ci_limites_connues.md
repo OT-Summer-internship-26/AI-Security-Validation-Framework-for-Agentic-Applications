@@ -306,6 +306,32 @@ GHCR réelles, et le déclenchement des filtres `paths`.
 
 **Ce qui fermerait** : le premier `push` sur `main`, et la lecture des journaux.
 
+#### Premier `push` réel — 2026-09-10, dépôt d'entreprise
+
+`images.yml` a tourné, et a échoué. **Sur l'inconnue exactement nommée ci-dessus :
+« le comportement des actions tierces sur un runner ».**
+
+```
+Error: Unable to resolve action `aquasecurity/trivy-action@0.28.0`,
+       unable to find version `0.28.0`
+```
+
+Les tags de cette action portent tous un `v` (`v0.28.0`) ; l'épingle n'en avait
+pas. Vérifié contre l'API GitHub : `0.28.0` rend 404, `v0.28.0` rend 200. Les
+huit autres actions épinglées du dépôt résolvent toutes — celle-ci était seule
+en cause, sur ses six emplacements.
+
+**Ce que ça dit du hors-ligne** : aucune des vérifications listées plus haut ne
+pouvait l'attraper. `bash -n` lit les scripts, pas les `uses:` ; le YAML est
+valide ; le cycle cosign rejoué en local n'utilise pas l'action. **Une épingle
+d'action ne s'éprouve que contre le registre**, et rien dans ce dépôt ne
+l'interrogeait.
+
+**Ce qui reste ouvert** : l'échec tombe à `Set up job`, donc AUCUNE étape n'a
+tourné. Le collage des secrets, les permissions GHCR et les filtres `paths`
+restent aussi inconnus qu'avant — D7 n'est pas fermée, elle a livré son premier
+défaut.
+
 ### D4. ~~La signature est INACTIVE tant que la clé n'existe pas~~ — **FERMÉ**
 Les secrets `COSIGN_KEY` et `COSIGN_PASSWORD` existent depuis le 2026-09-06 : la
 condition qui justifiait la tolérance est levée. L'étape **échoue** désormais si
