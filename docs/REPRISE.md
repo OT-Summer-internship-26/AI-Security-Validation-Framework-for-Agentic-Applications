@@ -119,12 +119,31 @@ sur le dépôt d'entreprise, et les trois branches le suivent.
    qu'ils exigent. Les deux sujets sont indépendants — ce point 2 ne concerne
    plus que la licence de VOTRE code.
 
-3. **Les secrets attendus par les workflows n'existent pas encore.**
-   `COSIGN_KEY`, `COSIGN_PASSWORD`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`,
-   `DEPLOY_SSH_KEY`, `DEPLOY_HOST_KEY`, `DEPLOY_HEALTH_URL`. La chaîne est écrite
-   pour rester **inerte** sans eux plutôt que d'échouer — donc leur absence ne se
-   verra pas, elle se lira comme un succès. `cosign.pub` est versionné, comme il
-   se doit ; `cosign.key` ne l'est pas et ne doit jamais l'être.
+3. **Les secrets attendus par les workflows n'existent pas encore**, et ils ne
+   se comportent PAS tous pareil sans eux. *(Cette entrée disait « la chaîne
+   reste inerte, son absence se lira comme un succès » — c'était vrai avant que
+   D4 ne soit fermée, et faux pour la moitié des secrets depuis. Vérifié dans le
+   code des workflows le 2026-09-10.)*
+
+   **`COSIGN_KEY` / `COSIGN_PASSWORD` → le job ÉCHOUE, bruyamment.**
+   `images.yml` teste le secret et sort en `exit 1` avec un `::error::`, à deux
+   endroits (image de l'API, image du dashboard). C'est délibéré : une image non
+   signée qui part quand même circule en se faisant passer pour vérifiée, alors
+   qu'un job rouge se corrige en cinq minutes. **Conséquence directe : tout push
+   vers un dépôt neuf fait rougir `images.yml` à l'étape de signature, tant que
+   ces deux secrets n'y sont pas créés.** Ce n'est pas une panne, c'est le
+   garde-fou qui fait son travail.
+
+   **`DEPLOY_*` → le job SORT EN 0 avec un `::notice::`.** Là, et là seulement,
+   l'absence se lit comme un succès : `deploiement.yml` vérifie la signature,
+   résout les condensés, écrit les commandes dans le résumé — puis s'arrête sans
+   rien déployer. Le risque est réel mais borné : ce workflow ne part qu'à la
+   main (`workflow_dispatch`), il ne peut pas se déclencher tout seul.
+
+   `cosign.pub` est versionné, comme il se doit ; `cosign.key` ne l'est pas et ne
+   doit jamais l'être. **La paire de clés n'est pas le secret GitHub** : le
+   secret se crée par dépôt ou par organisation, donc l'avoir configuré ailleurs
+   ne compte pas.
 
 4. **Ces quatre workflows n'avaient JAMAIS tourné** (`ci_limites_connues.md`
    §D7) jusqu'au push du 2026-09-10, qui est donc leur toute première exécution.
@@ -144,6 +163,20 @@ sur le dépôt d'entreprise, et les trois branches le suivent.
    sont retirés du suivi depuis — un clone ne les pose plus sur le disque — mais
    les retirer de l'historique demanderait une réécriture, à grouper avec le
    point 1 si on la fait.
+
+7. **`FRAMEWORK_API_KEY` — le point le plus urgent de cette liste, et il n'y
+   figurait pas.** Sans cette variable, ET tant qu'aucune clé n'existe dans le
+   magasin, `api/main.py` ne refuse pas les appels : il rend
+   `{"role": "admin"}` à un appelant **anonyme**. C'est le mode développement,
+   assumé et commenté dans le code — « le refuser empêcherait de démarrer un
+   service neuf, dont le magasin est forcément vide ».
+
+   En production, cela signifie que quiconque atteint le port peut lancer un
+   audit contre n'importe quelle cible et gérer les clés. `integration_guide.md`
+   liste bien la variable, mais ne dit nulle part ce qu'il advient quand elle
+   manque — et une variable qu'on croit facultative ne se met pas.
+
+   **À poser avant le premier démarrage**, pas après.
 
 ---
 

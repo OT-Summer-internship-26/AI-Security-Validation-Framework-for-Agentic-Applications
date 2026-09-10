@@ -408,9 +408,6 @@ jobs:
         # SIGNÉ PAR CONDENSÉ, JAMAIS PAR ÉTIQUETTE.
         #     Une étiquette peut être repoussée ; signer `:sha-abc` signerait
         #     « ce que cette étiquette désignera ». Le condensé désigne des octets.
-        #
-        # INACTIVE TANT QUE LE SECRET N'EXISTE PAS : l'étape sort en 0 avec un
-        # avis. La chaîne ne casse donc pas avant que la clé soit en place.
         if: github.event_name == 'push'
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
@@ -419,8 +416,12 @@ jobs:
           # D4 FERMÉE : L'ABSENCE DE SIGNATURE EST UN ÉCHEC, PLUS UN AVIS.
           #     Tant que la clé n'existait pas, cette étape sortait en 0 avec un
           #     `::notice::` — il aurait été absurde de bloquer la livraison pour
-          #     une clé que personne n'avait encore générée. Les secrets existent
-          #     désormais : la condition est levée.
+          #     une clé que personne n'avait encore générée. La PAIRE existe
+          #     désormais — `cosign.pub` est versionné — donc la condition est levée.
+          #
+          #     MAIS LA PAIRE N'EST PAS LE SECRET. `COSIGN_KEY` se crée PAR DÉPÔT
+          #     (ou par organisation) : sur un dépôt neuf, cette étape échoue tant
+          #     que le secret n'y a pas été recopié, même si la clé existe ailleurs.
           #
           #     Et un avis ne se lit pas. Une image NON SIGNÉE qui part quand même
           #     est pire qu'une construction qui échoue : la seconde se voit et se
@@ -690,9 +691,6 @@ jobs:
         # SIGNÉ PAR CONDENSÉ, JAMAIS PAR ÉTIQUETTE.
         #     Une étiquette peut être repoussée ; signer `:sha-abc` signerait
         #     « ce que cette étiquette désignera ». Le condensé désigne des octets.
-        #
-        # INACTIVE TANT QUE LE SECRET N'EXISTE PAS : l'étape sort en 0 avec un
-        # avis. La chaîne ne casse donc pas avant que la clé soit en place.
         if: github.event_name == 'push'
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
@@ -701,8 +699,12 @@ jobs:
           # D4 FERMÉE : L'ABSENCE DE SIGNATURE EST UN ÉCHEC, PLUS UN AVIS.
           #     Tant que la clé n'existait pas, cette étape sortait en 0 avec un
           #     `::notice::` — il aurait été absurde de bloquer la livraison pour
-          #     une clé que personne n'avait encore générée. Les secrets existent
-          #     désormais : la condition est levée.
+          #     une clé que personne n'avait encore générée. La PAIRE existe
+          #     désormais — `cosign.pub` est versionné — donc la condition est levée.
+          #
+          #     MAIS LA PAIRE N'EST PAS LE SECRET. `COSIGN_KEY` se crée PAR DÉPÔT
+          #     (ou par organisation) : sur un dépôt neuf, cette étape échoue tant
+          #     que le secret n'y a pas été recopié, même si la clé existe ailleurs.
           #
           #     Et un avis ne se lit pas. Une image NON SIGNÉE qui part quand même
           #     est pire qu'une construction qui échoue : la seconde se voit et se
