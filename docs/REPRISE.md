@@ -1,4 +1,4 @@
-# Point de reprise — mis à jour le 2026-09-08
+# Point de reprise — mis à jour le 2026-09-10
 
 Document de passation. Il dit **où on s'est arrêté**, **pourquoi**, et **par quoi
 reprendre**.
@@ -59,15 +59,34 @@ faux 10/10.
 1. **Étude de validation DVAP** — outillage et cartographie prêts et testés, mais
    **un seul laboratoire audité sur quinze**. C'est le chantier qui reste le plus
    long, et le seul qui dise quelque chose sur la *précision* de l'outil.
-2. **Push vers le dépôt d'entreprise** — voir la liste ci-dessous. Le dépôt
-   personnel `github.com/Asser-Belhassen/Ai-Security` existe déjà et porte
-   `main` et `durcissement-cicd`.
+2. **Les secrets GitHub de l'organisation** — voir la liste ci-dessous. C'est
+   le seul obstacle restant entre le dépôt et une exécution réelle de la chaîne :
+   sans eux elle reste **inerte**, et son silence se lit comme un succès.
 
 ---
 
-## Avant de pousser — ce qui reste à trancher
+## Le push vers l'entreprise est fait — 2026-09-10
 
-1. **L'identité des commits — et elle continue de se poser.** Les **67 commits**
+Dépôt : `github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications`
+(**privé**). Il porte les 71 commits, les trois branches (`main`,
+`durcissement-cicd`, `archive/travail-complet`) et le tag
+`v1.0-travail-complet`. `main` a été avancé sur `durcissement-cicd` : c'est
+désormais l'état complet qui s'affiche à qui ouvre le dépôt.
+
+**Vérifié depuis un clone vierge de ce dépôt** : 245 fichiers, **288 tests
+passent** (5 ignorés, Docker absent du poste), aucun secret versionné, aucun
+audit simulé, et tous les actifs nécessaires présents (logo, `.env.example`,
+`requirements.lock`, `Dockerfile`, `config/`, `cosign.pub`).
+
+Le dépôt personnel `github.com/Asser-Belhassen/Ai-Security` est destiné à la
+suppression et n'est plus le remote de ce dossier de travail : `origin` pointe
+sur le dépôt d'entreprise, et les trois branches le suivent.
+
+---
+
+## Avant la mise en production — ce qui reste à trancher
+
+1. **L'identité des commits — et elle continue de se poser.** Les **71 commits**
    sont signés `Ton Nom <ton.email@exemple.com>`. Aucun ne sera rattaché à un
    compte GitHub, et l'adresse de remplacement reste dans l'historique pour
    toujours.
@@ -82,11 +101,13 @@ faux 10/10.
    git config user.email "<votre adresse GitHub>"   # ou l'adresse noreply de GitHub
    ```
 
-   Reprendre les 67 commits existants est un autre geste, à faire **avant** que
+   Reprendre les 71 commits existants est un autre geste, à faire **avant** que
    quiconque branche du travail dessus. `git filter-repo` **n'est pas installé**
    (`pip install git-filter-repo`), et la réécriture change tous les condensés :
-   elle impose un `push --force` sur les deux branches déjà en ligne. C'est la
-   seule décision de cette liste qui devienne plus chère avec le temps.
+   elle impose un `push --force` sur les **trois** branches en ligne et sur le
+   tag. C'est la seule décision de cette liste qui devienne plus chère avec le
+   temps — et elle l'est devenue : le dépôt d'entreprise porte désormais
+   l'historique, et toute réécriture devra être annoncée à qui l'aura cloné.
 
 2. **Aucun fichier `LICENSE`.** Sans licence, le dépôt est « tous droits
    réservés » : personne ne peut légalement le réutiliser, y compris à
@@ -100,9 +121,12 @@ faux 10/10.
    verra pas, elle se lira comme un succès. `cosign.pub` est versionné, comme il
    se doit ; `cosign.key` ne l'est pas et ne doit jamais l'être.
 
-4. **Aucun de ces quatre workflows n'a jamais tourné** (`ci_limites_connues.md`
-   §D7). Le premier push qui les déclenche est aussi leur première exécution.
-   Prévoir que ça casse, et regarder.
+4. **Ces quatre workflows n'avaient JAMAIS tourné** (`ci_limites_connues.md`
+   §D7) jusqu'au push du 2026-09-10, qui est donc leur toute première exécution.
+   `images.yml` et `security_audit.yml` se déclenchent sur `push` ; `deploiement.yml`
+   ne part qu'à la main et reste inerte sans les secrets du point 3 ;
+   `retention_images.yml` attend le lundi 4 h UTC. **Le résultat n'a pas encore
+   été regardé : onglet Actions du dépôt.** Prévoir que ça casse.
 
 5. **`data/state.sqlite` est dans l'historique** (ajoutée par `73ae2a0`, retirée
    par `ffaeead`) et donc déjà en ligne. **Vérifié le 2026-09-08 : sans danger.**
@@ -111,9 +135,10 @@ faux 10/10.
    Rien à purger.
 
 6. **`presentation/`, `presentation.jsx` et `runs/` restent dans l'historique**
-   de `origin/durcissement-cicd`, où ils avaient été poussés. Ils sont retirés du
-   suivi depuis, mais les retirer de l'historique demanderait une réécriture — à
-   grouper avec le point 1 si on la fait.
+   des commits antérieurs, poussés avec le reste vers le dépôt d'entreprise. Ils
+   sont retirés du suivi depuis — un clone ne les pose plus sur le disque — mais
+   les retirer de l'historique demanderait une réécriture, à grouper avec le
+   point 1 si on la fait.
 
 ---
 
