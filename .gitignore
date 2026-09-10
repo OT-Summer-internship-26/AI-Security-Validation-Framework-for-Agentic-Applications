@@ -96,4 +96,6 @@ presentation/
 # Les audits `dry_run` sont des fumigenes locaux : reponses simulees, aucune
 # cible reelle. Ils n'alimentent pas la demo du dashboard et repoussent a chaque
 # execution. Ceux deja commites restent, on arrete juste d'en ajouter.
-data/audit_results/*_dry_run.json
+# `**` et non `*` : `*` ne traverse pas un `/`, les trois dry_run de
+# `_archive/` echappaient donc au motif et restaient suivis.
+data/audit_results/**/*_dry_run.json
