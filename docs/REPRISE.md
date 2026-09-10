@@ -114,6 +114,11 @@ sur le dépôt d'entreprise, et les trois branches le suivent.
    l'intérieur d'une entreprise qui voudrait s'en servir. À trancher selon la
    destination (interne, ou ouvert).
 
+   *Le versant TIERS de cette question, lui, est reglé* : `THIRD_PARTY_NOTICES.md`
+   porte l'attribution des quatre fichiers Microsoft embarqués et le texte MIT
+   qu'ils exigent. Les deux sujets sont indépendants — ce point 2 ne concerne
+   plus que la licence de VOTRE code.
+
 3. **Les secrets attendus par les workflows n'existent pas encore.**
    `COSIGN_KEY`, `COSIGN_PASSWORD`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`,
    `DEPLOY_SSH_KEY`, `DEPLOY_HOST_KEY`, `DEPLOY_HEALTH_URL`. La chaîne est écrite
