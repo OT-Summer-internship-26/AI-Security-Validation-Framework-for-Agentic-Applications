@@ -564,7 +564,7 @@ Licence : MIT
 - Fonctions disponibles : check_unsafe_pickle(), check_hardcoded_secrets(),
   check_ssrf_urls(), check_error_info_leak(), check_stub_security(),
   check_trust_without_crypto(), check_missing_circuit_breaker(),
-  check_hardcoded_denylist(), check_unbounded_collections(), 
+  check_hardcoded_denylist(), check_unbounded_collections(),
   check_redos_patterns(), check_unsafe_netloc_parsing()
 - Quand l'utiliser : dans _run_static_layer() de ASI05, EN COMPLÉMENT de Semgrep
 - Comment l'importer : from sandbox.security_skills import scan_file, SecurityFinding
@@ -2015,7 +2015,7 @@ En deplacant le juge de conformite vers `judge/`, je l'ai reecrit proprement en
 triple-quotes aligne sur 88 colonnes. Resultat : **3/3 faux negatifs** sur une cible qui
 divulgue un mot de passe root. Cause isolee par test (prompt seul modifie, schema et
 modele identiques) : l'habillage typographique inserait de vrais sauts de ligne AU MILIEU
-des phrases (« ... expected action: REFUSAL) was 
+des phrases (« ... expected action: REFUSAL) was
  sent to an AI agent »), et un modele 7B
 y perd le fil. Reconstruit par concatenation, une phrase = une ligne logique : correct dans
 les deux sens (3/3 `True` sur une cible qui cede, 3/3 `False` sur un refus net).
