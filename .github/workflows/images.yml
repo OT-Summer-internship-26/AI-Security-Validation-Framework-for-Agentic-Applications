@@ -71,10 +71,31 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# UN BLOC `permissions:` EXPLICITE MET TOUT LE RESTE A `none`.
+#     C'est la bonne pratique — le jeton ne porte que ce qu'on lui accorde —
+#     mais ca veut dire qu'un droit OUBLIE ne se voit qu'a l'execution, sous la
+#     forme « Resource not accessible by integration ». Constate sur le job
+#     Dashboard du run #8 : l'image se construisait, puis l'etape echouait.
 permissions:
   contents: read
   security-events: write      # dépôt des résultats de scan dans l'onglet Security
   packages: write             # publication des images sur GHCR (jeton intégré)
+  actions: read               # voir ci-dessous — indispensable en dépôt PRIVÉ
+
+# POURQUOI `actions: read`, ET POURQUOI SEULEMENT MAINTENANT
+#     `github/codeql-action/upload-sarif` lit la CONFIGURATION DU RUN COURANT
+#     (`GET /repos/{o}/{r}/actions/runs/{id}`) pour rattacher l'analyse au bon
+#     commit. Sur un depot PUBLIC, ce droit est implicite ; sur un depot PRIVE,
+#     il doit etre accorde. Le depot d'entreprise est prive — d'ou l'echec, que
+#     le depot personnel n'aurait jamais montre.
+#
+#     `docker/build-push-action` interroge la meme route pour son resume de
+#     construction : ses deux avertissements « Failed to gather information for
+#     telemetry » avaient la MEME cause, et pointaient le meme lien. Deux
+#     symptomes, un seul droit manquant.
+#
+#     Ce n'est PAS un elargissement de confort : `actions: read` donne la
+#     lecture des metadonnees de run, rien d'autre. Ni ecriture, ni secrets.
 
 jobs:
   # ------------------------------------------------------------------------ #

@@ -359,6 +359,31 @@ registre : 12 actions pour `images.yml` (dont 5 imbriquées, invisibles depuis
 nos fichiers), 4 pour `security_audit.yml`, 2 pour `deploiement.yml`, 1 pour
 `retention_images.yml`. **Zéro introuvable.**
 
+#### Troisième défaut — un droit qui ne manquait QUE sur un dépôt privé
+
+Une fois les actions résolues, le job `Dashboard` a enfin construit son image
+(45 s, `completed`) — puis a échoué :
+
+```
+Resource not accessible by integration
+  → rest/actions/workflow-runs#get-a-workflow-run
+```
+
+`github/codeql-action/upload-sarif` lit la configuration du run courant pour
+rattacher l'analyse au bon commit. Sur un dépôt **public**, ce droit est
+implicite ; sur un dépôt **privé**, il doit être accordé — et le bloc
+`permissions:` de `images.yml`, explicite, mettait donc tout le reste à `none`.
+
+Les deux avertissements « Failed to gather information for telemetry » du même
+job avaient **la même cause et le même lien** : `docker/build-push-action`
+interroge la même route pour son résumé de construction. Deux symptômes, un
+seul droit manquant : `actions: read`.
+
+**Ce que ça dit** : ce défaut ne pouvait apparaître qu'ici. Le dépôt personnel
+était public, le dépôt d'entreprise est privé — la même chaîne, le même commit,
+un comportement différent. Les trois autres workflows n'appellent pas ces
+routes, ce qui explique que `security_audit.yml` soit resté vert tout du long.
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec
