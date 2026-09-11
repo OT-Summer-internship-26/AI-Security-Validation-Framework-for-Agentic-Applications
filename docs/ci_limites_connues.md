@@ -476,6 +476,39 @@ la valeur du compose aurait réglé la CI en abîmant la production.
 dans `.env.example` ni en CI ». Une variable qui n'est documentée nulle part se
 comporte comme si elle n'existait pas.)*
 
+#### Septième défaut — le garde d'attente surveillait le mauvais service
+
+La pile se lève enfin (`Lever la pile`, 2 min 55). L'étape suivante échoue en
+**0 seconde** :
+
+```
+curl: (56) Recv failure: Connection reset by peer
+Error: le relais /api n'atteint pas l'API
+```
+
+Le relais n'y est pour rien. `dashboard/nginx.conf` est correct — le piège du
+`proxy_pass` par variable y est même explicitement traité par un `rewrite`.
+
+La boucle d'attente interrogeait `http://localhost:8080/healthz`, un endpoint
+**servi par nginx lui-même** (`return 200 "ok"`), qui ne touche jamais l'API.
+Elle sortait donc dès que le serveur web répondait — une seconde — alors que
+l'API met bien plus longtemps à démarrer : imports lourds, deux cœurs. Un défaut
+de **synchronisation**, qui s'affichait sous le message d'un relais cassé.
+
+**Deux corrections, et la seconde compte autant que la première** :
+
+1. La boucle attend désormais l'API **directement**, sur son port publié
+   (`localhost:8000/health`). L'étape de relais ne teste donc plus que le
+   relais : si elle échoue, c'est nginx et rien d'autre.
+2. Une assertion explicite après la boucle : si l'API n'a pas démarré,
+   l'étape le dit **elle-même** (« ce n'est PAS le relais ») et vide
+   `docker compose ps`. Sans elle, une API absente continuerait d'accuser nginx
+   — le diagnostic erroné qui a coûté cet aller-retour.
+
+**Ce que ça dit de la sonde** : `/healthz` et `/api/health` portent des noms
+voisins et ne prouvent pas la même chose. Attendre la mauvaise, c'est tester
+plus tôt qu'on ne croit.
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec

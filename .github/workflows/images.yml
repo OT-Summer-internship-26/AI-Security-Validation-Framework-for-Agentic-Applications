@@ -880,10 +880,36 @@ jobs:
             echo "::notice::pull request — rien n'est publié, la pile est reconstruite"
             docker compose up -d --build
           fi
-          for i in $(seq 1 45); do
-            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
+          # ON ATTEND LES DEUX SERVICES, PAS SEULEMENT LE SERVEUR WEB.
+          #     Cette boucle n'interrogeait que `/healthz` — servi par nginx
+          #     LUI-MÊME, en dur, sans toucher à l'API. Elle sortait donc dès que
+          #     le serveur web répondait, c'est-à-dire en une seconde, alors que
+          #     l'API met bien plus longtemps à démarrer (imports lourds, deux
+          #     cœurs). L'étape suivante partait sur une API pas encore là et
+          #     rendait « Recv failure: Connection reset by peer » : un défaut de
+          #     SYNCHRONISATION qui se lisait comme un relais cassé.
+          #
+          #     On attend donc l'API DIRECTEMENT, sur son propre port publié.
+          #     L'étape suivante ne teste alors plus que le relais : si elle
+          #     échoue, c'est nginx et rien d'autre.
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1 \
+               && curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              break
+            fi
             sleep 3
           done
+
+          # ET ON LE DIT ICI SI L'API N'EST PAS LÀ.
+          #     Sans cette assertion, une API qui ne démarre pas fait échouer
+          #     l'étape SUIVANTE, sous le message « le relais /api n'atteint pas
+          #     l'API » — qui accuse nginx d'une panne qui n'est pas la sienne.
+          #     C'est exactement le diagnostic erroné qui a coûté un aller-retour.
+          curl -fsS http://localhost:8000/health >/dev/null 2>&1 || {
+            echo "::error::l'API n'a pas démarré en 3 min — ce n'est PAS le relais"
+            docker compose ps
+            exit 1
+          }
 
       - name: Le relais atteint-il vraiment l'API ?
         # Le piège vérifié : avec un `proxy_pass` par variable, la barre oblique
