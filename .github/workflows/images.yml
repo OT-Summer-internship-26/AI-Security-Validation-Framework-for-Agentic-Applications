@@ -525,27 +525,14 @@ jobs:
           #     L'artefact du job est conservé malgré tout : il se lit sans
           #     accès au registre, ce qui compte le jour où une CVE tombe un
           #     dimanche et qu'on veut juste savoir si on embarque le paquet.
-          cosign attest --yes --predicate sbom-dashboard.cdx.json --type cyclonedx --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
-          echo "SBOM signé et attaché : $DEPOT@$DIGEST"
-
-          # D5 FERMÉE : LE SBOM VOYAGE AVEC L'IMAGE, ET IL EST SIGNÉ.
-          #     Il n'existait que comme artefact du job, conservé 90 jours :
-          #     qui tirait l'image depuis GHCR n'avait pas son inventaire, et
-          #     au bout de 90 jours plus personne ne l'avait.
-          #
-          #     `attest` ET NON `attach sbom` — éprouvé en local, et les deux
-          #     avertissements de cosign sont sans appel : `attach sbom` est
-          #     DÉPRÉCIÉ (retrait annoncé), et surtout il NE SIGNE PAS le SBOM.
-          #     Un inventaire non signé accroché à une image signée est une
-          #     demi-mesure : quiconque a l'écriture sur le registre peut le
-          #     remplacer sans que rien ne le détecte.
-          #
-          #     Vérification côté consommateur :
-          #       cosign verify-attestation --key cosign.pub --type cyclonedx \n          #         --insecure-ignore-tlog=true <image>@<condensé>
-          #
-          #     L'artefact du job est conservé malgré tout : il se lit sans
-          #     accès au registre, ce qui compte le jour où une CVE tombe un
-          #     dimanche et qu'on veut juste savoir si on embarque le paquet.
+          # LE SBOM ATTESTÉ ICI EST CELUI DE CETTE IMAGE.
+          #     Ce bloc portait `--predicate sbom-dashboard.cdx.json`, dans le
+          #     job de l'API : un fichier que ce job ne produit pas. `cosign`
+          #     échouait, et `set -euo pipefail` faisait tomber l'étape —
+          #     « Process completed with exit code 1 », APRÈS la publication de
+          #     l'image. L'image partait donc signée mais sans son inventaire.
+          #     Le commentaire D5 était dupliqué mot pour mot juste au-dessus :
+          #     c'est un copier-coller dont la ligne utile n'a pas suivi.
           cosign attest --yes --predicate sbom-api.cdx.json --type cyclonedx --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
           echo "SBOM signé et attaché : $DEPOT@$DIGEST"
 
@@ -814,6 +801,25 @@ jobs:
           DIGEST=$(cat digest-dashboard.txt)
           cosign sign --yes --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
           echo "signé : $DEPOT@$DIGEST"
+
+          # D5 N'ÉTAIT FERMÉE QUE POUR L'API — ET RIEN NE LE DISAIT.
+          #     Cette ligne manquait ici : l'image du dashboard était signée,
+          #     puis partait SANS son inventaire attesté. Le job était VERT.
+          #     L'attestation du dashboard vivait dans le job de l'API, où son
+          #     fichier n'existe pas — un copier-coller qui a déplacé l'étape
+          #     au lieu de la dupliquer. Deux symptômes opposés, une cause :
+          #     l'API rougissait, le dashboard se taisait.
+          #
+          #     `attest` ET NON `attach sbom` : ce dernier est DÉPRÉCIÉ et,
+          #     surtout, il NE SIGNE PAS le SBOM — un inventaire non signé
+          #     accroché à une image signée est une demi-mesure, remplaçable
+          #     par quiconque a l'écriture sur le registre.
+          #
+          #     Vérification côté consommateur :
+          #       cosign verify-attestation --key cosign.pub --type cyclonedx \
+          #         --insecure-ignore-tlog=true <image>@<condensé>
+          cosign attest --yes --predicate sbom-dashboard.cdx.json --type cyclonedx --key env://COSIGN_KEY --tlog-upload=false "$DEPOT@$DIGEST"
+          echo "SBOM signé et attaché : $DEPOT@$DIGEST"
 
       - name: Arrêter le conteneur
         if: always()

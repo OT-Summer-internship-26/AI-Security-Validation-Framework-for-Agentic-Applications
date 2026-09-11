@@ -411,6 +411,40 @@ se perd, c'est le confort de l'onglet *Security*.
 
 Réversible en une ligne le jour où GHAS est activé.
 
+#### Cinquième défaut — D5 n'était fermée QUE pour l'API, et rien ne le disait
+
+Publication non bloquante en place, les deux jobs sont allés jusqu'au bout.
+**Le dashboard est passé vert. L'API a publié son image sur GHCR** — la chaîne
+livre enfin — puis a échoué : `Process completed with exit code 1`.
+
+Cause, lue dans le fichier et non devinée : le job de l'API exécutait
+
+```
+cosign attest --predicate sbom-dashboard.cdx.json …
+```
+
+Le SBOM **du dashboard**, dans le job **de l'API**, qui ne le produit pas.
+`cosign` échouait, `set -euo pipefail` faisait tomber l'étape — *après* la
+publication de l'image. Le bloc de commentaire D5 était dupliqué mot pour mot
+juste au-dessus : un copier-coller dont la ligne utile n'a pas suivi.
+
+**Et le symptôme opposé, plus grave parce que silencieux** : le job du dashboard
+n'avait **aucun** `cosign attest`. Son image était signée, puis partait **sans
+son inventaire attesté** — et le job était VERT. D5 (« le SBOM voyage avec
+l'image, et il est signé ») était donc annoncée fermée alors qu'elle ne l'était
+que pour une des deux images.
+
+Une seule cause, deux symptômes opposés : l'API rougissait, le dashboard se
+taisait. Et c'est le silencieux qui coûtait le plus cher — un job vert affirme
+que la garantie tient.
+
+**Vérifié après correctif** : chaque job produit ET atteste son propre fichier.
+
+```
+API        produit sbom-api.cdx.json        atteste sbom-api.cdx.json
+DASHBOARD  produit sbom-dashboard.cdx.json  atteste sbom-dashboard.cdx.json
+```
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec
