@@ -300,9 +300,29 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true          # une faille sans correctif ne se corrige pas
 
+      # NON BLOQUANT — ET LA DIFFERENCE AVEC LA SIGNATURE EST TOUT LE SUJET.
+      #     `code scanning` exige GitHub Advanced Security, option PAYANTE sur
+      #     un depot prive. Le depot d'entreprise est prive et l'organisation
+      #     n'a pas GHAS : l'etape rend « Advanced Security must be enabled ».
+      #
+      #     Pourquoi on tolere CET echec alors qu'on refuse celui de Cosign :
+      #     une image NON SIGNEE qui part quand meme circule en se faisant
+      #     passer pour verifiee — c'est un trou. Un SARIF non publie ne change
+      #     AUCUNE decision : l'etape suivante, « Le scan BLOQUE-T-IL la
+      #     publication ? », lit le meme scan et sort en 1 sur toute faille
+      #     HIGH/CRITICAL corrigeable. Le garde-fou est la, entier, et il est
+      #     bloquant. Ce qui se perd ici, c'est le CONFORT de l'onglet Security.
+      #
+      #     ET LE RAPPORT N'EST PAS PERDU : le `.sarif` part dans l'artefact du
+      #     job, a cote du SBOM. Sans ca, neutraliser cette etape supprimerait
+      #     le rapport au lieu de le deplacer.
+      #
+      #     Si l'organisation active GHAS un jour : retirer `continue-on-error`,
+      #     et l'onglet Security se remplit a nouveau. Une ligne.
       - name: Publier le rapport de scan
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true
         with:
           sarif_file: trivy-api.sarif
           category: image-api
@@ -357,7 +377,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom-api
-          path: sbom-api.cdx.json
+          # Le rapport de scan voyage avec l'inventaire : sans GHAS, c'est le
+          # SEUL endroit ou il reste lisible. Nom de l'artefact inchange —
+          # `integration_guide.md` le cite.
+          path: |
+            sbom-api.cdx.json
+            trivy-api.sarif
           retention-days: 90
 
       - name: Publier l'image ÉPROUVÉE (API)
@@ -583,9 +608,29 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
+      # NON BLOQUANT — ET LA DIFFERENCE AVEC LA SIGNATURE EST TOUT LE SUJET.
+      #     `code scanning` exige GitHub Advanced Security, option PAYANTE sur
+      #     un depot prive. Le depot d'entreprise est prive et l'organisation
+      #     n'a pas GHAS : l'etape rend « Advanced Security must be enabled ».
+      #
+      #     Pourquoi on tolere CET echec alors qu'on refuse celui de Cosign :
+      #     une image NON SIGNEE qui part quand meme circule en se faisant
+      #     passer pour verifiee — c'est un trou. Un SARIF non publie ne change
+      #     AUCUNE decision : l'etape suivante, « Le scan BLOQUE-T-IL la
+      #     publication ? », lit le meme scan et sort en 1 sur toute faille
+      #     HIGH/CRITICAL corrigeable. Le garde-fou est la, entier, et il est
+      #     bloquant. Ce qui se perd ici, c'est le CONFORT de l'onglet Security.
+      #
+      #     ET LE RAPPORT N'EST PAS PERDU : le `.sarif` part dans l'artefact du
+      #     job, a cote du SBOM. Sans ca, neutraliser cette etape supprimerait
+      #     le rapport au lieu de le deplacer.
+      #
+      #     Si l'organisation active GHAS un jour : retirer `continue-on-error`,
+      #     et l'onglet Security se remplit a nouveau. Une ligne.
       - name: Publier le rapport de scan
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true
         with:
           sarif_file: trivy-dashboard.sarif
           category: image-dashboard
@@ -640,7 +685,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom-dashboard
-          path: sbom-dashboard.cdx.json
+          # Le rapport de scan voyage avec l'inventaire : sans GHAS, c'est le
+          # SEUL endroit ou il reste lisible. Nom de l'artefact inchange —
+          # `integration_guide.md` le cite.
+          path: |
+            sbom-dashboard.cdx.json
+            trivy-dashboard.sarif
           retention-days: 90
 
       - name: Publier l'image ÉPROUVÉE (Dashboard)

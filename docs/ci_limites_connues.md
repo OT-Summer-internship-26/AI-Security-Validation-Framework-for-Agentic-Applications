@@ -384,6 +384,33 @@ seul droit manquant : `actions: read`.
 un comportement différent. Les trois autres workflows n'appellent pas ces
 routes, ce qui explique que `security_audit.yml` soit resté vert tout du long.
 
+#### Quatrième défaut — une fonctionnalité payante, pas un bug
+
+`actions: read` accordé, l'erreur de permission a disparu. La suivante n'est
+plus technique :
+
+```
+Advanced Security must be enabled for this repository to use code scanning.
+```
+
+Le dépôt d'entreprise est **privé**, et le `code scanning` exige **GitHub
+Advanced Security**, option payante. L'organisation est sur un plan qui ne la
+comprend pas — le même plan qui réserve déjà les secrets d'organisation aux
+dépôts publics.
+
+**Arbitrage retenu : publication non bloquante, rapport conservé.**
+`continue-on-error: true` sur les deux étapes `upload-sarif`, et le `.sarif`
+rejoint l'artefact du job à côté du SBOM.
+
+**Pourquoi on tolère CET échec alors qu'on refuse celui de Cosign** (D4) : une
+image non signée qui part quand même circule en se faisant passer pour vérifiée
+— c'est un trou. Un SARIF non publié ne change **aucune** décision : l'étape
+« Le scan BLOQUE-T-IL la publication ? » lit le même scan et sort en 1 sur toute
+faille HIGH/CRITICAL corrigeable. Le garde-fou est entier et bloquant ; ce qui
+se perd, c'est le confort de l'onglet *Security*.
+
+Réversible en une ligne le jour où GHAS est activé.
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec

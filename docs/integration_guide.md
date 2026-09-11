@@ -330,6 +330,15 @@ jours dans les artefacts du job (`sbom-api`, `sbom-dashboard`). Quand une CVE
 tombe, la question « est-ce qu'on l'embarque, et dans quelle version ? » se
 répond en lisant ce fichier — sans redéployer ni fouiller l'image.
 
+**Le rapport de scan Trivy (`.sarif`) est dans le même artefact.** Il devrait
+s'afficher dans l'onglet *Security*, mais le `code scanning` exige **GitHub
+Advanced Security**, payant sur un dépôt privé — l'organisation ne l'a pas. La
+publication est donc non bloquante, et l'artefact est le seul endroit où le
+rapport reste lisible. **Le garde-fou, lui, n'est pas affecté** : l'étape « Le
+scan BLOQUE-T-IL la publication ? » lit le même scan et échoue sur toute faille
+HIGH/CRITICAL corrigeable. Si GHAS est activé un jour, retirer
+`continue-on-error` de l'étape de publication suffit.
+
 #### Vérifier la signature
 
 Les images sont signées **par clé**, pas en mode « keyless » : le mode par défaut
