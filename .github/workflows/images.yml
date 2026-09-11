@@ -249,17 +249,29 @@ jobs:
           test "$code" = "404" \
             || { echo "::error::endpoints de laboratoire ouverts (reçu $code)"; exit 1; }
 
-      # LE `v` DU TAG N'EST PAS COSMETIQUE — il a fait echouer les six etapes.
-      #     `aquasecurity/trivy-action` etait epinglee `@0.28.0`, sans prefixe.
-      #     Ses tags portent tous un `v` (`v0.28.0`), et l'action ne se resout
-      #     donc pas : « Unable to resolve action, unable to find version ».
-      #     L'echec tombe a `Set up job`, AVANT toute etape — donc aucun log
-      #     utile, et rejouer le job n'y change rien.
+      # POURQUOI PAS `v0.28.0` — ET POURQUOI UNE EPINGLE VALIDE NE SUFFIT PAS.
       #
-      #     Verifie contre l'API GitHub le 2026-09-10 : `0.28.0` rend 404,
-      #     `v0.28.0` rend 200. Les huit autres actions epinglees resolvent.
+      #     Deux pannes successives, a `Set up job`, avant toute etape :
+      #
+      #     1. L'epingle etait `@0.28.0`, sans prefixe, alors que TOUS les tags
+      #        de cette action portent un `v`. Corrige en `v0.28.0` — et le
+      #        journal montre que ca marchait : l'action se telechargeait.
+      #
+      #     2. `v0.28.0` appelle ELLE-MEME `aquasecurity/setup-trivy@v0.2.1`,
+      #        un tag SUPPRIME depuis en amont. Il ne reste que v0.2.6, v0.3.0
+      #        et v0.3.1. Notre epingle resolvait donc parfaitement, et le job
+      #        mourait quand meme — sur la dependance de la dependance, que
+      #        rien dans ce depot ne nomme.
+      #
+      #     `v0.32.0` et au-dela epinglent `setup-trivy` PAR SHA, qui ne peut
+      #     ni disparaitre ni bouger. C'est la vraie raison de monter, pas la
+      #     fraicheur : la version, ici, achete de la STABILITE en amont.
+      #
+      #     Compatibilite verifiee avant de monter : les six entrees utilisees
+      #     (image-ref, format, output, severity, ignore-unfixed, exit-code)
+      #     existent toutes en v0.36.0.
       - name: Scanner l'image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-framework:ci
           format: sarif
@@ -294,7 +306,7 @@ jobs:
         #
         # `ignore-unfixed` : une faille sans correctif publie ne se corrige pas.
         # Bloquer dessus n'apprendrait rien et apprendrait a ignorer le rouge.
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-framework:ci
           format: table
@@ -314,7 +326,7 @@ jobs:
         # À quoi ça sert concrètement : quand une CVE tombe sur un paquet, la
         # question « est-ce qu'on l'embarque, et dans quelle version ? » se répond
         # en lisant ce fichier, sans redéployer ni fouiller l'image.
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-framework:ci
           format: cyclonedx
@@ -542,7 +554,7 @@ jobs:
             || { echo "::error::nginx ne tourne pas en utilisateur non privilégié"; exit 1; }
 
       - name: Scanner l'image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-dashboard:ci
           format: sarif
@@ -577,7 +589,7 @@ jobs:
         #
         # `ignore-unfixed` : une faille sans correctif publie ne se corrige pas.
         # Bloquer dessus n'apprendrait rien et apprendrait a ignorer le rouge.
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-dashboard:ci
           format: table
@@ -597,7 +609,7 @@ jobs:
         # À quoi ça sert concrètement : quand une CVE tombe sur un paquet, la
         # question « est-ce qu'on l'embarque, et dans quelle version ? » se répond
         # en lisant ce fichier, sans redéployer ni fouiller l'image.
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ai-security-dashboard:ci
           format: cyclonedx

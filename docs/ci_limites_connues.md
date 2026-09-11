@@ -332,6 +332,41 @@ tourné. Le collage des secrets, les permissions GHCR et les filtres `paths`
 restent aussi inconnus qu'avant — D7 n'est pas fermée, elle a livré son premier
 défaut.
 
+#### Deuxième défaut — une épingle VALIDE qui échoue quand même
+
+Le correctif du `v` a été poussé. Le run suivant a échoué **au même endroit, en
+9 secondes**, et son journal dit pourquoi :
+
+```
+ligne 31 : Download action repository 'aquasecurity/trivy-action@v0.28.0'  ✓
+ligne 36 : Error: Unable to resolve action `aquasecurity/setup-trivy@v0.2.1`
+```
+
+Notre épingle résolvait parfaitement. **C'est la dépendance de la dépendance qui
+manquait** : `trivy-action@v0.28.0` appelle elle-même `setup-trivy@v0.2.1`, un
+tag **supprimé depuis en amont** — il ne reste que `v0.2.6`, `v0.3.0`, `v0.3.1`.
+Aucun fichier de ce dépôt ne nomme `setup-trivy`. On ne pouvait donc pas le
+chercher : il fallait le lire dans le journal.
+
+**Correctif : `v0.36.0`.** Pas pour la fraîcheur — parce qu'à partir de
+`v0.32.0`, `trivy-action` épingle `setup-trivy` **par SHA**, qui ne peut ni
+disparaître ni être redéplacé. La montée de version achète ici de la *stabilité
+en amont*, pas des fonctionnalités. Compatibilité vérifiée avant : les six
+entrées utilisées existent toutes en `v0.36.0`.
+
+**Vérifié après correctif**, en résolvant l'arbre COMPLET des `uses:` contre le
+registre : 12 actions pour `images.yml` (dont 5 imbriquées, invisibles depuis
+nos fichiers), 4 pour `security_audit.yml`, 2 pour `deploiement.yml`, 1 pour
+`retention_images.yml`. **Zéro introuvable.**
+
+**La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
+validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
+pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec
+précision — aucun contrôle maison ne dirait mieux. Le défaut n'était pas dans
+l'outillage : il était d'avoir lu « trivy-action » dans le message et corrigé
+la seule ligne qui portait ce nom, sans se demander ce que cette action appelle
+à son tour.
+
 ### D4. ~~La signature est INACTIVE tant que la clé n'existe pas~~ — **FERMÉ**
 Les secrets `COSIGN_KEY` et `COSIGN_PASSWORD` existent depuis le 2026-09-06 : la
 condition qui justifiait la tolérance est levée. L'étape **échoue** désormais si
