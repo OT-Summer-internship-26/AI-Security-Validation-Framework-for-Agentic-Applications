@@ -445,6 +445,37 @@ API        produit sbom-api.cdx.json        atteste sbom-api.cdx.json
 DASHBOARD  produit sbom-dashboard.cdx.json  atteste sbom-dashboard.cdx.json
 ```
 
+#### Sixième défaut — la pile de production ne pouvait se lever sur aucun runner
+
+**Les deux jobs d'image sont passés VERTS.** Le job « Pile complète » s'est donc
+exécuté **pour la première fois de son existence** — et a échoué :
+
+```
+Container …-worker-1  Error response from daemon:
+  range of CPUs is from 0.01 to 2.00, as there are only 2 CPUs available
+```
+
+`docker-compose.yml` déclarait `cpus: 4.0` en dur sur le service `worker`. Un
+runner GitHub a **deux** cœurs. `cpus` est la **seule** limite que Docker refuse
+à la *création* quand la machine ne suit pas — `mem_limit` est accepté au-delà
+de la RAM disponible et ne mord qu'à l'usage, ce qui explique que seul le CPU
+ait parlé.
+
+**Ce que ça dit du compose de production** : la pile ne pouvait se lever sur
+**aucune** machine à moins de quatre cœurs. Ce n'est pas un défaut de CI — le
+job de pile tire les images publiées et lance la procédure de déploiement
+documentée. Il venait de découvrir que cette procédure exigeait un matériel que
+rien ne mentionnait.
+
+**Correctif : `cpus: ${AUDIT_WORKER_CPUS:-4.0}`.** La valeur de production ne
+bouge pas — 4.0 est un choix assumé, c'est l'ouvrier qui porte les modèles. La
+CI la ramène à 2.0 via `.env`, et `.env.example` documente le réglage. Baisser
+la valeur du compose aurait réglé la CI en abîmant la production.
+
+*(Le dépôt avait déjà payé ce mode de panne : `AUDIT_VERSION` « n'existait ni
+dans `.env.example` ni en CI ». Une variable qui n'est documentée nulle part se
+comporte comme si elle n'existait pas.)*
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec

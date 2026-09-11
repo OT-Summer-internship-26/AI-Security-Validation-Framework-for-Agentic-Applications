@@ -857,6 +857,14 @@ jobs:
           # `env_file: .env` est obligatoire dans le compose ; en CI le fichier
           # n'existe pas et aucun secret n'est nécessaire pour ce contrôle.
           cp .env.example .env
+
+          # UN RUNNER GITHUB A DEUX CŒURS, L'OUVRIER EN DEMANDE QUATRE.
+          #     `cpus` est la seule limite que Docker REFUSE à la création quand
+          #     la machine ne suit pas. La pile ne pouvait donc pas se lever ici,
+          #     et ce job n'ayant jamais tourné, personne ne l'avait vu.
+          #     On abaisse le plafond POUR LA CI SEULEMENT : la valeur de
+          #     production (4.0) reste celle du compose.
+          echo "AUDIT_WORKER_CPUS=2.0" >> .env
           if [ "${{ github.event_name }}" = "push" ]; then
             DEPOT="ghcr.io/${{ github.repository_owner }}"
             DEPOT=$(echo "$DEPOT" | tr '[:upper:]' '[:lower:]')

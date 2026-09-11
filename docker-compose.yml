@@ -169,7 +169,22 @@ services:
     # sous-processus d'audit.
     mem_limit: 6g
     memswap_limit: 6g
-    cpus: 4.0
+
+    # POURQUOI CE PLAFOND EST RÉGLABLE, ALORS QUE LES AUTRES NE LE SONT PAS
+    #     `cpus` est la SEULE limite que Docker refuse à la création si la
+    #     machine n'a pas autant de cœurs : « range of CPUs is from 0.01 to
+    #     2.00, as there are only 2 CPUs available ». Un runner GitHub en a
+    #     deux ; ce service en demandait quatre, en dur. Le job « Pile complète »
+    #     ne pouvait donc PAS lever la pile — sur aucune machine à moins de
+    #     quatre cœurs, CI comprise.
+    #
+    #     Baisser la valeur aurait réglé la CI en abîmant la production : 4.0
+    #     est un choix, c'est l'ouvrier qui porte les modèles. La valeur par
+    #     défaut reste donc 4.0 — seule la CI la ramène à 2.0, via `.env`.
+    #
+    #     `mem_limit` n'a pas besoin du même traitement : Docker accepte un
+    #     plafond mémoire supérieur à la RAM disponible, il ne mord qu'à l'usage.
+    cpus: ${AUDIT_WORKER_CPUS:-4.0}
     pids_limit: 2048
 
     healthcheck:
