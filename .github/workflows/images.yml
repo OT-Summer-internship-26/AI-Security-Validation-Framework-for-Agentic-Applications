@@ -838,6 +838,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # IPv4 EXPLICITE, ET C'EST LA CAUSE DE TROIS ECHECS D'AFFILEE.
+      #     `docker compose` publie sur les DEUX familles :
+      #         0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+      #     `docker run -p` (jobs API et Dashboard) ne publie qu'en IPv4.
+      #
+      #     `curl http://localhost` resout `::1` EN PREMIER. Dans les deux autres
+      #     jobs rien n'ecoute en IPv6 : la connexion est REFUSEE et curl
+      #     rebascule sur 127.0.0.1 — d'ou leur succes, qui masquait le probleme.
+      #     Ici `docker-proxy` ecoute bien en IPv6 : la connexion S'ETABLIT, le
+      #     relais vers le conteneur echoue, et le pair coupe —
+      #     « curl: (56) Recv failure: Connection reset by peer ». Apres une
+      #     connexion reussie, curl ne retente PAS en IPv4.
+      #
+      #     Preuve, lue dans `docker compose logs` : en trois minutes l'API n'a
+      #     recu QUE les requetes de sa propre sonde (`127.0.0.1`, toutes les
+      #     30 s, toutes en 200). Pas une seule du runner. Ni delai, ni
+      #     authentification, ni relais : les paquets n'arrivaient pas.
+      #
+      #     On ecrit donc `127.0.0.1` ici. Les jobs API et Dashboard ne sont pas
+      #     touches : ils ne passent pas par compose et leur repli fonctionne.
       - name: Lever la pile
         # SUR UN PUSH, ON TIRE LES IMAGES PUBLIÉES — ON NE RECONSTRUIT PAS.
         #     Ce job faisait `up --build`. Il ne testait donc NI l'image que le
@@ -893,8 +913,8 @@ jobs:
           #     L'étape suivante ne teste alors plus que le relais : si elle
           #     échoue, c'est nginx et rien d'autre.
           for i in $(seq 1 60); do
-            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1 \
-               && curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
+               && curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
               break
             fi
             sleep 3
@@ -905,7 +925,7 @@ jobs:
           #     l'étape SUIVANTE, sous le message « le relais /api n'atteint pas
           #     l'API » — qui accuse nginx d'une panne qui n'est pas la sienne.
           #     C'est exactement le diagnostic erroné qui a coûté un aller-retour.
-          curl -fsS http://localhost:8000/health >/dev/null 2>&1 || {
+          curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 || {
             echo "::error::l'API n'a pas démarré en 3 min — ce n'est PAS le relais"
             docker compose ps
             exit 1
@@ -916,10 +936,10 @@ jobs:
         # finale ne retire plus le préfixe et l'API répond 404. Le relais
         # « fonctionne » alors sans rien servir.
         run: |
-          curl -fsS http://localhost:8080/api/health | tee /tmp/h.json
+          curl -fsS http://127.0.0.1:8080/api/health | tee /tmp/h.json
           grep -q '"status":"ok"' /tmp/h.json \
             || { echo "::error::le relais /api n'atteint pas l'API"; exit 1; }
-          curl -fsS http://localhost:8080/api/agents >/dev/null \
+          curl -fsS http://127.0.0.1:8080/api/agents >/dev/null \
             || { echo "::error::/api/agents inaccessible via le relais"; exit 1; }
 
       - name: Un audit passe-t-il vraiment par la FILE et l'OUVRIER ?
@@ -943,15 +963,15 @@ jobs:
         # `dry_run` : aucun appel LLM, aucun réseau, résultat déterministe.
         # La clé est celle de `.env.example`, copié en `.env` à l'étape de levée.
         run: |
-          RUN=$(curl -fsS -X POST http://localhost:8000/audits \
+          RUN=$(curl -fsS -X POST http://127.0.0.1:8000/audits \
                   -H "Content-Type: application/json" \
                   -H "X-API-Key: your-secret-key" \
-                  -d '{"mode":"targeted","category":"ASI_01","profile":"dry_run","target_url":"http://127.0.0.1:9"}')
+                  -d '{"mode":"targeted","category":"ASI_01","profile":"dry_run","target_url":"http://localhost:9"}')
           echo "$RUN"
           ID=$(echo "$RUN" | python3 -c "import sys,json;print(json.load(sys.stdin)['run_id'])")
           STATUT=""; OUVRIER=""
           for i in $(seq 1 60); do
-            ETAT=$(curl -fsS "http://localhost:8000/runs/$ID" -H "X-API-Key: your-secret-key")
+            ETAT=$(curl -fsS "http://127.0.0.1:8000/runs/$ID" -H "X-API-Key: your-secret-key")
             STATUT=$(echo "$ETAT" | python3 -c "import sys,json;print(json.load(sys.stdin).get('status') or '')")
             OUVRIER=$(echo "$ETAT" | python3 -c "import sys,json;print(json.load(sys.stdin).get('worker') or '')")
             echo "  $i : $STATUT (ouvrier : ${OUVRIER:-aucun})"

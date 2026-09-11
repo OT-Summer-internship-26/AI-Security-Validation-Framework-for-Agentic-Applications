@@ -509,6 +509,51 @@ de **synchronisation**, qui s'affichait sous le message d'un relais cassé.
 voisins et ne prouvent pas la même chose. Attendre la mauvaise, c'est tester
 plus tôt qu'on ne croit.
 
+#### Huitième défaut — `localhost` ne désigne pas la même chose selon le job
+
+Trois échecs d'affilée sur le job de pile, chacun avec une cause plausible et
+fausse : « relais cassé », puis « défaut de synchronisation ». Ce sont les
+**journaux des conteneurs** qui ont tranché, et ils étaient capturés depuis le
+début par l'étape `Journaux en cas d'échec` :
+
+```
+Uvicorn running on http://0.0.0.0:8000
+127.0.0.1:47144 - "GET /health HTTP/1.1" 200      ← 16:07:02
+127.0.0.1:59596 - "GET /health HTTP/1.1" 200      ← 16:07:32
+127.0.0.1:35486 - "GET /health HTTP/1.1" 200      ← 16:08:02
+```
+
+En trois minutes, l'API n'a reçu **que** les requêtes de sa propre sonde Docker
+— espacées de 30 s, toutes en `200`. **Pas une seule des ~60 requêtes du
+runner.** Ni délai, ni authentification, ni relais : les paquets n'arrivaient
+pas jusqu'au conteneur.
+
+La cause tient à une différence entre les jobs, visible dans `docker compose ps` :
+
+```
+ai_security_api   0.0.0.0:8000->8000/tcp,  [::]:8000->8000/tcp
+```
+
+`docker compose` publie sur **IPv4 et IPv6** ; `docker run -p` (jobs API et
+Dashboard) ne publie qu'en IPv4. Or `curl http://localhost` résout `::1`
+**en premier** :
+
+- **Jobs API et Dashboard** : rien n'écoute en IPv6 → connexion *refusée* →
+  curl rebascule sur `127.0.0.1` → **ça marche**. Leur succès masquait le piège.
+- **Job pile** : `docker-proxy` écoute en IPv6 → la connexion **s'établit**,
+  le relais vers le conteneur échoue, le pair coupe → `curl: (56) Recv failure:
+  Connection reset by peer`. **Après une connexion réussie, curl ne retente
+  pas en IPv4.**
+
+**Correctif : `127.0.0.1` explicite** dans les sept URL du job de pile. Les deux
+autres jobs ne sont pas touchés — ils ne passent pas par compose.
+
+**La leçon de méthode, et elle est la plus chère de cette série** : trois
+correctifs ont été poussés sur des hypothèses tirées des *annotations*, alors
+que les journaux complets étaient collectés à chaque exécution. Une annotation
+dit *où* ça casse ; seul le journal dit *ce qui est arrivé*. Lire les journaux
+au deuxième échec aurait économisé trois allers-retours.
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec
