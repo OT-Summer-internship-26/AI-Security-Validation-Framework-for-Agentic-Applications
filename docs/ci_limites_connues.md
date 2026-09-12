@@ -554,6 +554,31 @@ que les journaux complets étaient collectés à chaque exécution. Une annotati
 dit *où* ça casse ; seul le journal dit *ce qui est arrivé*. Lire les journaux
 au deuxième échec aurait économisé trois allers-retours.
 
+#### Neuvième défaut — un `401` qui accusait encore le relais
+
+Le passage en IPv4 a réglé le transport : `GET /api/health` rend `200`. Le
+journal nginx le montre relayant correctement les deux requêtes :
+
+```
+172.18.0.1 - "GET /api/health HTTP/1.1" 200 191
+172.18.0.1 - "GET /api/agents HTTP/1.1" 401  43
+```
+
+`/health` est **volontairement ouvert** — c'est la sonde de vivacité, Docker et
+un orchestrateur doivent l'interroger sans clé. `/agents` ne l'est pas, et ne
+doit pas l'être. L'appel partait sans en-tête, recevait `401`, et le message
+d'erreur accusait « le relais » d'une panne qui n'était pas la sienne.
+
+`.env` vient de `.env.example`, qui pose `FRAMEWORK_API_KEY=your-secret-key` :
+l'authentification est donc bien active en CI, ce qui est le comportement voulu.
+L'étape d'audit qui suit envoyait déjà la clé sur ses deux appels — seule cette
+ligne-là l'oubliait.
+
+**Inventaire des sept appels du job, vérifié plutôt que supposé** : trois portent
+la clé (`POST /audits`, `GET /runs/{id}`, `GET /api/agents`), quatre visent des
+points d'entrée délibérément ouverts (`/healthz` nginx, `/health` ×2, et
+`/api/health`).
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec

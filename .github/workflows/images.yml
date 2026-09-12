@@ -936,10 +936,21 @@ jobs:
         # finale ne retire plus le préfixe et l'API répond 404. Le relais
         # « fonctionne » alors sans rien servir.
         run: |
+          # `/health` est VOLONTAIREMENT ouvert : c'est la sonde de vivacité, et
+          # Docker comme un orchestrateur doivent pouvoir l'interroger sans clé.
           curl -fsS http://127.0.0.1:8080/api/health | tee /tmp/h.json
           grep -q '"status":"ok"' /tmp/h.json \
             || { echo "::error::le relais /api n'atteint pas l'API"; exit 1; }
-          curl -fsS http://127.0.0.1:8080/api/agents >/dev/null \
+
+          # `/agents` NE L'EST PAS — et il ne doit pas l'être. L'appel partait
+          # sans en-tête et recevait `401` ; le message accusait alors le relais
+          # d'une panne qui n'était pas la sienne, alors que nginx avait
+          # parfaitement transmis (journal nginx : « GET /api/agents 401 »).
+          #
+          # La clé est celle de `.env.example`, copié en `.env` à l'étape de
+          # levée — la même que l'étape d'audit ci-dessous utilise déjà.
+          curl -fsS http://127.0.0.1:8080/api/agents \
+               -H "X-API-Key: your-secret-key" >/dev/null \
             || { echo "::error::/api/agents inaccessible via le relais"; exit 1; }
 
       - name: Un audit passe-t-il vraiment par la FILE et l'OUVRIER ?
