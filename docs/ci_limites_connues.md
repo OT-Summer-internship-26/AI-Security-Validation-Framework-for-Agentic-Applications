@@ -292,7 +292,8 @@ genre d'écart qu'on veut voir AVANT.
 Vérifié sur le dépôt réel : `sha-c346fb5` → commit résolu, compose de 270 lignes
 extrait.
 
-### D7. AUCUN de ces quatre workflows n'a jamais tourné
+### D7. AUCUN de ces quatre workflows n'avait jamais tourné
+*(Deux le font désormais, et sont verts — voir le résultat en fin d'entrée.)*
 C'est la limite la plus honnête de tout ce document. Tout ce qui pouvait être
 éprouvé hors ligne l'a été — 34 scripts shell passés à `bash -n`, cycle complet
 signature + attestation + vérification rejoué sur un registre local, images
@@ -578,6 +579,45 @@ ligne-là l'oubliait.
 la clé (`POST /audits`, `GET /runs/{id}`, `GET /api/agents`), quatre visent des
 points d'entrée délibérément ouverts (`/healthz` nginx, `/health` ×2, et
 `/api/health`).
+
+#### Résultat — la chaîne d'images est VERTE, et ce qu'elle prouve
+
+`Images de conteneur #15` : **Success**, 8 min 44.
+
+```
+✓ API — construction, exécution, scan          7 min 41
+✓ Dashboard — construction, exécution, scan    2 min 26
+✓ Pile complète — le dashboard joint-il l'API ?     56 s
+⊘ Promouvoir la version (tag git)         sauté (tags only)
+```
+
+**Ce qui est désormais éprouvé, et ne l'avait jamais été** : les deux images se
+construisent, DÉMARRENT, exécutent un audit réel à l'intérieur, passent la suite
+hors-ligne, sont scannées sans faille corrigeable, inventoriées (SBOM), publiées
+sur GHCR, **signées et attestées** ; puis la pile complète est levée **depuis les
+images publiées** — la procédure de déploiement documentée — le relais nginx est
+vérifié, et un audit traverse la FILE et l'OUVRIER jusqu'à `completed` avec un
+ouvrier nommé. C'est la topologie de production, pas le mode développement.
+
+**Ce qui reste non éprouvé, et il faut le dire** :
+
+| Workflow / job | État | Pourquoi |
+|---|---|---|
+| `security_audit.yml` | ✅ vert depuis le premier push | — |
+| `images.yml` | ✅ vert | — |
+| job `promouvoir` | ⊘ jamais exécuté | `if: github.ref_type == 'tag'` — attend un tag `v*` |
+| `deploiement.yml` | ⊘ jamais exécuté | `workflow_dispatch` seul, et inerte sans les secrets `DEPLOY_*` |
+| `retention_images.yml` | ⊘ jamais exécuté | cron du lundi 04 h UTC — partira seul |
+
+**D7 est donc à moitié fermée.** Deux workflows sur quatre ont fait leurs
+preuves ; les deux autres n'ont toujours jamais tourné une seule fois, et le
+premier qui les déclenchera sera aussi leur première exécution. La même prudence
+s'applique : prévoir que ça casse, et lire les JOURNAUX, pas les annotations.
+
+**Coût réel de cette fermeture : neuf défauts, neuf allers-retours.** Aucun
+n'était détectable hors ligne. C'est la mesure de ce que vaut une chaîne
+« écrite et jamais exécutée » — elle était fausse en neuf endroits, et chacun
+aurait été découvert par l'entreprise au lieu de l'être ici.
 
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit

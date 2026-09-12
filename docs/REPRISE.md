@@ -151,7 +151,17 @@ sur le dépôt d'entreprise, et les trois branches le suivent.
    ne part qu'à la main et reste inerte sans les secrets du point 3 ;
    `retention_images.yml` attend le lundi 4 h UTC.
 
-   **Regardé, et ça a cassé DEUX FOIS**, à `Set up job` les deux fois, sur la
+   **RÉSULTAT : `images.yml` et `security_audit.yml` sont VERTS** (run #15,
+   8 min 44). Les images se construisent, s'éprouvent, se scannent, se publient
+   sur GHCR, se signent et s'attestent ; la pile se lève depuis les images
+   publiées et un audit traverse la file et l'ouvrier. Neuf défauts ont dû être
+   corrigés pour y arriver, tous consignés dans `ci_limites_connues.md` §D7.
+
+   **Restent inexécutés** : le job `promouvoir` (attend un tag `v*`),
+   `deploiement.yml` (manuel, et inerte sans les secrets `DEPLOY_*`) et
+   `retention_images.yml` (cron du lundi). Leur première exécution reste à venir.
+
+   *Historique de la mise au point* — **ça a cassé NEUF FOIS**, à `Set up job` les deux fois, sur la
    même action tierce et pour deux causes différentes : d'abord une épingle
    `@0.28.0` alors que les tags portent un `v` ; puis, une fois corrigée, la
    *dépendance de la dépendance* (`setup-trivy@v0.2.1`, tag supprimé en amont).
