@@ -619,6 +619,43 @@ n'était détectable hors ligne. C'est la mesure de ce que vaut une chaîne
 « écrite et jamais exécutée » — elle était fausse en neuf endroits, et chacun
 aurait été découvert par l'entreprise au lieu de l'être ici.
 
+#### Et la première VRAIE trouvaille de la chaîne — 12 failles, pas un défaut de CI
+
+Le run suivant a été bloqué par la barrière Trivy :
+
+```
+ai-security-framework:ci (debian 13.6)
+Total: 12 (HIGH: 9, CRITICAL: 3)
+```
+
+**Ce n'est pas un défaut du workflow — c'est le garde-fou qui fait son travail,
+et c'est la première chose utile que cette chaîne produit.** Toutes portent
+`Status: fixed` et une `Fixed Version` ; `ignore-unfixed: true` garantit qu'aucune
+faille sans correctif n'est comptée. Elles sont donc réelles et corrigeables :
+`gzip`, `libpcre2-8-0`, `libsqlite3-0`, `perl`.
+
+**Pourquoi elles étaient là** : le `Dockerfile` portait déjà l'avertissement —
+« ⚠️ MÊME PIÈGE QUE DANS dashboard/Dockerfile, **ET IL N'A PAS ENCORE MORDU
+ICI** ». Il vient de mordre, exactement où son propre commentaire l'annonçait.
+
+Le mécanisme anti-cache fonctionnait pourtant : `ARG AUDIT_BUILD` reçoit le SHA
+du commit, donc la couche `apt-get` se rejoue à chaque push. Mais **`apt-get
+install` n'installe que les paquets NOMMÉS**, et aucun des quatre coupables n'est
+dans la liste : ils viennent de l'image de base, épinglée **par condensé** donc
+figée à jamais. Rien ne les mettait à jour.
+
+`dashboard/Dockerfile`, lui, portait `apk upgrade --no-cache` depuis qu'il avait
+payé la leçon (7 HIGH accumulés). Son scan est vert. L'image de l'API avait hérité
+de l'avertissement, pas du correctif.
+
+**Correctif : `apt-get upgrade -y`**, plus `DEBIAN_FRONTEND=noninteractive` —
+sans quoi la mise à jour de `perl` ou `libc` peut attendre une réponse debconf
+que personne ne donnera, jusqu'au `timeout-minutes: 30` du job. Posée en ligne
+et non en `ENV` : elle ne doit valoir que pendant cette couche.
+
+La combinaison reste cohérente : **condensé épinglé pour la reproductibilité,
+`upgrade` pour les correctifs**. L'un n'excluait pas l'autre ; il fallait les deux.
+
 **La leçon, et pourquoi elle n'appelle PAS un nouvel outil** : `bash -n` et la
 validation YAML ne voient rien de tout ça, et une épingle correcte ne garantit
 pas qu'elle se charge. Mais le runner nomme déjà l'action fautive avec

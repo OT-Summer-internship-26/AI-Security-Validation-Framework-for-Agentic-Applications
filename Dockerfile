@@ -154,7 +154,32 @@ FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569
 #     chaque `push`. L'étage de compilation, lui, reste en cache.
 ARG AUDIT_BUILD=inconnu
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `upgrade` ET PAS SEULEMENT `install` — LE PIÈGE A MORDU, ET VOICI OÙ.
+#     Le cache-busting ci-dessus fonctionnait : la couche se rejouait bien à
+#     chaque push. Mais `apt-get install` n'installe que les paquets NOMMÉS. Or
+#     l'image de base est épinglée PAR CONDENSÉ — c'est voulu, c'est ce qui rend
+#     la construction reproductible — donc elle est FIGÉE : ses paquets ne
+#     reçoivent jamais les correctifs Debian publiés depuis.
+#
+#     Résultat, mesuré par la barrière Trivy de `images.yml` : 12 failles
+#     corrigeables (9 HIGH, 3 CRITICAL) sur `gzip`, `libpcre2-8-0`,
+#     `libsqlite3-0` et `perl` — aucun de ces quatre paquets n'est dans la liste
+#     ci-dessous. Ils viennent tous de la base, et rien ne les touchait.
+#
+#     `upgrade` les remonte toutes. La combinaison reste cohérente : condensé
+#     épinglé pour la REPRODUCTIBILITÉ, `upgrade` pour les CORRECTIFS. L'un
+#     n'exclut pas l'autre, il fallait les deux.
+#
+#     `DEBIAN_FRONTEND=noninteractive` EST OBLIGATOIRE DÈS QU'ON `upgrade`.
+#     `install` sur des paquets choisis ne posait aucune question ; `upgrade`
+#     touche `perl`, `libc` et consorts, dont les mainteneurs peuvent demander
+#     quoi faire d'un fichier de configuration modifié. Sans cette variable, la
+#     construction ATTENDRAIT une réponse que personne ne peut donner — jusqu'au
+#     `timeout-minutes: 30` du job. Posée en ligne et non en `ENV` : elle ne doit
+#     valoir que pendant cette couche, pas à l'exécution du conteneur.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     tini \
     libcairo2 \
     libpango-1.0-0 \
