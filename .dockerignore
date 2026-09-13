@@ -19,7 +19,6 @@ dashboard/.env.local
 .git
 .github
 .gitignore
-.outils
 .deepeval
 .pytest_cache
 .ruff_cache

@@ -85,7 +85,6 @@ cosign.key
 # Ces trois-la etaient SUIVIS : `.gitignore` n'agit pas sur ce qui l'est deja,
 # il a fallu un `git rm --cached`. Ils restent sur le disque, hors du depot.
 # liste d'autorisations locale, avec les chemins absolus de CE poste
-.outils/
 # telemetrie de deepeval
 .deepeval/
 # doublon racine de presentation/src/App.jsx (886 vs 868 lignes)
