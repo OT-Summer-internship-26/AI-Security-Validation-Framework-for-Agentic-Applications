@@ -1,28 +1,17 @@
-<div align="center">
+# AI-Security Validation Framework for Agentic Applications
 
-<h1>AI Security Audit Framework</h1>
+> Framework automatisé d'audit de sécurité pour applications IA agentiques,
+> basé sur **OWASP Top 10 for Agentic Applications 2026 (ASI01 → ASI10)**.
 
-<p>
-  <b>Framework automatisé d'audit de sécurité pour applications IA agentiques</b><br>
-  basé sur <b>OWASP Top 10 for Agentic Applications 2026</b> — ASI01 → ASI10
-</p>
+Stage — Ooredoo Tunisie, Département Intelligence Artificielle.
 
-<p>
-  <a href="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml"><img alt="Audit de sécurité IA" src="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml/badge.svg"></a>
-  <a href="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml"><img alt="Images de conteneur" src="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg"></a>
-</p>
-
-<p>
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-291%20passants-2ea44f">
-  <img alt="Mutation" src="https://img.shields.io/badge/mutation-23%2F23-2ea44f">
-  <img alt="Couverture OWASP" src="https://img.shields.io/badge/OWASP%20ASI-10%2F10-2ea44f">
-  <img alt="Images" src="https://img.shields.io/badge/images-signées%20%2B%20SBOM-8957e5?logo=docker&logoColor=white">
-</p>
-
-<sub><b>Stage</b> — Ooredoo Tunisie, Département Intelligence Artificielle</sub>
-
-</div>
+[![Audit de sécurité IA](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml)
+[![Images de conteneur](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-291%20passants-2ea44f)
+![Mutation](https://img.shields.io/badge/mutation-23%2F23-2ea44f)
+![OWASP ASI](https://img.shields.io/badge/OWASP%20ASI-10%2F10-2ea44f)
+![Images](https://img.shields.io/badge/images-sign%C3%A9es%20%2B%20SBOM-8957e5?logo=docker&logoColor=white)
 
 ---
 
