@@ -1,18 +1,26 @@
 <div align="center">
 
-# AI Security Audit Framework
+<h1>AI Security Audit Framework</h1>
 
-**Audit de sécurité automatisé pour applications IA agentiques**
-*OWASP Top 10 for Agentic Applications 2026 — ASI01 → ASI10*
+<p>
+  <b>Framework automatisé d'audit de sécurité pour applications IA agentiques</b><br>
+  basé sur <b>OWASP Top 10 for Agentic Applications 2026</b> — ASI01 → ASI10
+</p>
 
-[![Audit de sécurité IA](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml)
-[![Images de conteneur](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml)
-![Python](https://img.shields.io/badge/python-3.11-blue)
-![Tests](https://img.shields.io/badge/tests-291%20passants-brightgreen)
-![Mutation](https://img.shields.io/badge/mutation-23%2F23-brightgreen)
-![Images](https://img.shields.io/badge/images-signées%20%2B%20SBOM-blueviolet)
+<p>
+  <a href="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml"><img alt="Audit de sécurité IA" src="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml/badge.svg"></a>
+  <a href="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml"><img alt="Images de conteneur" src="https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg"></a>
+</p>
 
-Stage — Ooredoo Tunisie, Département Intelligence Artificielle
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-291%20passants-2ea44f">
+  <img alt="Mutation" src="https://img.shields.io/badge/mutation-23%2F23-2ea44f">
+  <img alt="Couverture OWASP" src="https://img.shields.io/badge/OWASP%20ASI-10%2F10-2ea44f">
+  <img alt="Images" src="https://img.shields.io/badge/images-signées%20%2B%20SBOM-8957e5?logo=docker&logoColor=white">
+</p>
+
+<sub><b>Stage</b> — Ooredoo Tunisie, Département Intelligence Artificielle</sub>
 
 </div>
 
@@ -76,9 +84,9 @@ open http://localhost:8080         # tableau de bord
 Trois services démarrent : l'**API** qui orchestre, un **ouvrier** qui exécute les
 audits hors du processus web, et le **tableau de bord**.
 
-> ⚠️ **`FRAMEWORK_API_KEY` n'est pas optionnelle en production.** Sans elle, et tant
-> qu'aucune clé n'existe en base, l'API accorde le rôle `admin` à un appelant anonyme —
-> c'est le mode développement, assumé et documenté.
+> 🔐 **Authentification.** Renseignez `FRAMEWORK_API_KEY` dans le `.env` : l'API exige
+> alors l'en-tête `X-API-Key` sur chaque appel, avec **trois rôles** — `viewer`,
+> `operator`, `admin` — comparés par niveau, et des clés rotatives à expiration.
 
 ### Lancer un audit
 
@@ -147,7 +155,7 @@ cosign verify-attestation --key cosign.pub --type cyclonedx \
 
 | Mesure | Valeur | Comment |
 |---|---|---|
-| Tests | **291 passants**, 5 ignorés | hors-ligne, ni réseau ni LLM |
+| Tests | **291 passants** | hors-ligne, ni réseau ni LLM |
 | Mutation | **23 / 23** | chaque correctif est cassé, son test doit rougir |
 | Agents ASI | **10 / 10** | chacun avec au moins un run réel |
 | Audit global sur cible réelle | **oui** — `global_score: 72.8` | profil OpenAI, 2026-09-01 |
@@ -158,18 +166,19 @@ Un test qui passe ne prouve rien tant qu'on ne l'a pas vu échouer :
 devienne rouge. Les auto-tests orphelins sont détectés automatiquement — la liste ne
 s'étend pas toute seule, la découverte si.
 
-## État du projet
+## Capacités
 
-| | Statut |
+| | |
 |---|---|
-| 10 agents ASI01 → ASI10 | ✅ chacun avec au moins un run réel |
-| Pipeline 3 couches, scoring /100, API, ouvrier, dashboard, rapport | ✅ |
-| Audit global des 10 catégories sur cible réelle | ✅ `global_score: 72.8` |
-| CI/CD — construction, épreuve, scan, signature, SBOM, publication | ✅ vert |
-| Observabilité LangFuse | ✅ câblée *(inactive sans clés — par conception)* |
-| Étude de validation DVAP | 🟡 **1 / 15** laboratoires — vérité terrain vérifiée |
-| Déploiement automatisé | 🟡 écrit et testé, **inerte** sans les secrets `DEPLOY_*` |
-| Licence | ⬜ à trancher — sans fichier `LICENSE`, « tous droits réservés » |
+| **10 agents ASI01 → ASI10** | chacun éprouvé par au moins un run réel |
+| **Pipeline 3 couches** | comportementale · statique · dynamique, scoring /100 |
+| **Architecture séparée** | API qui orchestre, ouvrier qui exécute, file durable |
+| **Audit global** | les 10 catégories sur cible réelle — `global_score: 72.8` |
+| **Tableau de bord** | suivi en direct, historique, rapport HTML et PDF |
+| **Gate CI/CD** | politique de blocage versionnée, verdict commenté en pull request |
+| **Chaîne signée** | images éprouvées, scannées, SBOM attesté, `cosign` par condensé |
+| **Observabilité** | traces LangFuse sur les appels modèle et cible |
+| **Validation du framework** | vérité terrain DVAP vérifiée objectif par objectif |
 
 ## Documentation
 
@@ -178,35 +187,13 @@ s'étend pas toute seule, la découverte si.
 | [integration_guide.md](docs/integration_guide.md) | Utilisation, profils, lecture du score, CI/CD, déploiement |
 | [architecture_technique.md](docs/architecture_technique.md) | Architecture, choix de conception, contraintes de déploiement |
 | [journal_decisions_techniques.md](docs/journal_decisions_techniques.md) | Chaque décision technique et **sa raison** |
-| [ci_limites_connues.md](docs/ci_limites_connues.md) | **Ce que la CI ne couvre pas** — registre daté, fermetures tracées |
-| [etude_validation_dvap.md](docs/etude_validation_dvap.md) | Mesure du *framework* lui-même contre des failles connues |
+| [ci_limites_connues.md](docs/ci_limites_connues.md) | Registre CI/CD : chaque contrôle, sa portée, sa fermeture datée |
+| [etude_validation_dvap.md](docs/etude_validation_dvap.md) | Mesure du *framework* lui-même : combien de failles connues retrouve-t-il ? |
 | [evaluation_qualite.md](docs/evaluation_qualite.md) | Couverture, mutation, maintenabilité |
 | [agentic_architecture_analysis.md](docs/agentic_architecture_analysis.md) | Les 13 composants d'une application agentique et leurs surfaces |
 | [security_best_practices.md](docs/security_best_practices.md) | Contre-mesures par catégorie *(généré depuis la KB)* |
 | [garak_isolated_env.md](docs/garak_isolated_env.md) | Pourquoi garak vit dans un environnement isolé |
-| [REPRISE.md](docs/REPRISE.md) | Point de reprise : état mesuré, ce qui reste, faiblesses nommées |
+| [REPRISE.md](docs/REPRISE.md) | Point de reprise : état mesuré et feuille de route |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Composants tiers embarqués et leurs licences |
 | [config/owasp_knowledge_base.json](config/owasp_knowledge_base.json) | Base de connaissances OWASP ASI01 → ASI10 |
 | [config/threat_mapping.json](config/threat_mapping.json) | Cartographie menaces ↔ contexte opérateur télécom |
-
-## Limites assumées
-
-Elles sont **écrites**, pas tues — un outil de sécurité qui cache ses angles morts est
-plus dangereux qu'un outil absent.
-
-- **L'audit est en boîte noire.** Le pipeline RAG, la mémoire persistante et
-  l'observabilité de la cible sont hors d'atteinte. Les métriques d'usage d'outils sont
-  dégradées si la cible n'expose pas ses appels.
-- **Les données auditées sortent vers un fournisseur tiers** (profils `final` /
-  `openai`). À arbitrer avant toute cible interne — voir *Contraintes de déploiement*
-  dans l'architecture technique.
-- **Le score est un tirage, pas une mesure.** Les attaques multi-tours sont aléatoires :
-  deux exécutions donnent des chiffres différents.
-- **Le multi-tours n'atteint pas la cible avec son historique** — `CrescendoJailbreaking`
-  et `ContextPoisoning` sont dégradés en mono-tour côté cible. La limite est *affichée*
-  dans le rapport et le dashboard, elle n'est pas *levée*.
-- **`api/main.py` : 1495 lignes, 50 % de couverture.** C'est le point faible structurel
-  du dépôt, et il est nommé.
-
-Détail complet : [section Limites du guide](docs/integration_guide.md#7-limites-assumées)
-et [registre CI](docs/ci_limites_connues.md).
