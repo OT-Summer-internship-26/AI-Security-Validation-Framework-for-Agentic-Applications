@@ -60,6 +60,52 @@ calcule qu'après examen humain de ces constats.
 Annoncer une précision non triée serait précisément le défaut que ce
 framework combat : un chiffre plausible sans mesure derrière.
 
+## La vérité terrain a été vérifiée — 2026-09-14
+
+L'étude repose sur une affirmation : *« chaque rattachement cite l'objectif
+source, donc la cartographie est contestable ligne par ligne »*. Personne ne
+l'avait contrôlée. Si un objectif cité n'existait pas, le rappel mesurerait un
+accord avec une vérité terrain **inventée** — un chiffre plausible sans mesure
+derrière, exactement ce que ce framework combat.
+
+| Contrôle | Résultat |
+|---|---|
+| Laboratoires DVAP cartographiés | **15 / 15**, aucun en trop, aucun manquant |
+| Objectifs cités | **43** |
+| Vérifiés dans le fichier source de **leur propre** laboratoire | **43** |
+| Introuvables | **0** |
+| Rattachés au mauvais laboratoire | **0** |
+
+Le contrôle est rejouable : `tests/test_dvap_ground_truth.py`. Il s'ignore
+proprement si DVAP n'est pas cloné à côté — même convention que les tests de
+sandbox sans Docker — et il a été **vu échouer** sur une vérité terrain
+volontairement corrompue.
+
+> **Le piège, pour qui reprend ce contrôle.** Les objectifs déclarés ne sont
+> **pas** dans `~/dvap/labs/<nom>/`, qui ne contient que l'application jouable.
+> Ils vivent dans `~/dvap/backend/app/data/labs/*.json`. Chercher au mauvais
+> endroit rend « 43 absents sur 43 » — un résultat si net qu'il accuse la
+> méthode, pas la donnée.
+
+## Ce qui reste à faire, et ce que ça exige
+
+**14 laboratoires sur 15.** L'outillage est complet et la vérité terrain est
+vérifiée : il ne reste que l'exécution.
+
+```bash
+python scripts/validation_study.py --run --profile final   # les 15 labos
+python scripts/validation_study.py --report                # régénère ce document
+python scripts/validation_study.py --triage                # fiche de triage
+```
+
+Trois conditions, dont aucune n'est un travail de développement :
+
+1. **Docker** — les laboratoires DVAP sont conteneurisés.
+2. **Un budget de modèle** — le profil `final` appelle Gemini à chaque attaque.
+   Le profil `dev` (Ollama local) est gratuit mais produit des attaques plus
+   faibles : le rappel n'est comparable qu'à profil constant (cf. limite 3).
+3. **Du temps machine** — plusieurs heures pour 15 laboratoires.
+
 ## Limites de cette étude
 
 1. **La cartographie est un jugement.** Rattacher « exfiltration de
