@@ -5,7 +5,7 @@ licence de ces fichiers exige que leur avis de copyright et leur texte de
 permission accompagnent toute copie : c'est l'objet de ce document.
 
 Il ne dit rien de la licence du reste du dépôt — les deux sujets sont
-indépendants, et le second reste à trancher (voir `docs/REPRISE.md`).
+indépendants, et le second reste à trancher.
 
 ## Ce que ce document couvre, et ce qu'il ne couvre pas
 

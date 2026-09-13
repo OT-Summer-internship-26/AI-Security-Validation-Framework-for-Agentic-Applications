@@ -182,7 +182,6 @@ s'étend pas toute seule, la découverte si.
 | [agentic_architecture_analysis.md](docs/agentic_architecture_analysis.md) | Les 13 composants d'une application agentique et leurs surfaces |
 | [security_best_practices.md](docs/security_best_practices.md) | Contre-mesures par catégorie *(généré depuis la KB)* |
 | [garak_isolated_env.md](docs/garak_isolated_env.md) | Pourquoi garak vit dans un environnement isolé |
-| [REPRISE.md](docs/REPRISE.md) | Point de reprise : état mesuré et feuille de route |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | Composants tiers embarqués et leurs licences |
 | [config/owasp_knowledge_base.json](config/owasp_knowledge_base.json) | Base de connaissances OWASP ASI01 → ASI10 |
 | [config/threat_mapping.json](config/threat_mapping.json) | Cartographie menaces ↔ contexte opérateur télécom |
