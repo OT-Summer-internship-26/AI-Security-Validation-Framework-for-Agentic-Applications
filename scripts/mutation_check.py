@@ -202,6 +202,14 @@ MUTATIONS = [
      "        if not docker_ok:",
      "        if False:",
      "tests/test_sandbox.py::test_sans_docker_le_code_de_la_cible_n_est_JAMAIS_execute"),
+
+    # Le jeton de la cible repassait par la ligne de commande, donc par le journal.
+    ("Le jeton de la cible est journalise en clair",
+     "api/main.py",
+     '    if req.extra_payload:\n        cmd += ["--extra-payload"',
+     '    if req.headers:\n        cmd += ["--headers", json.dumps(req.headers)]\n'
+     '    if req.extra_payload:\n        cmd += ["--extra-payload"',
+     "tests/test_runners.py::test_le_jeton_de_la_cible_atteint_le_runner_SANS_passer_par_le_journal"),
 ]
 
 

@@ -441,8 +441,10 @@ def _build_cmd(req: AuditRequest, category: str) -> list[str]:
         "--pyrit-max-turns", str(req.pyrit_max_turns),
         "--timeout", str(req.timeout),
     ]
-    if req.headers:
-        cmd += ["--headers", json.dumps(req.headers)]
+    # PAS D'EN-TETES ICI : ils partent par `_env_runner`. Cette ligne est
+    # journalisee (`run.log("$ …")`, lisible par tout `viewer`) et visible dans
+    # `ps` : un jeton de la cible y etait ecrit en clair, a cote de
+    # `masquer_secrets` qui le masquait partout ailleurs.
     if req.extra_payload:
         cmd += ["--extra-payload", json.dumps(req.extra_payload)]
     if req.source_path:
@@ -508,16 +510,7 @@ def _execute(run: Run) -> None:
         return
 
     cmd = _build_cmd(req, cats[0])
-
-    # `TERM=dumb` + `NO_COLOR` désactivent le spinner et les couleurs de rich/tqdm
-    # utilisés par DeepTeam — c'est la correction À LA SOURCE du flot de lignes
-    # qui bloquait l'API. Le filtre côté lecteur reste en ceinture-bretelles.
-    env = dict(
-        os.environ,
-        PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
-        TERM="dumb", NO_COLOR="1", FORCE_COLOR="0",
-        TQDM_DISABLE="1", DEEPEVAL_DISABLE_PROGRESS_BAR="1",
-    )
+    env = _env_runner(req)
     before = {p.name for p in RESULTS_DIR.glob("*.json")} if RESULTS_DIR.exists() else set()
 
     run.status = "running"
@@ -569,11 +562,29 @@ def _execute(run: Run) -> None:
         run.finished_at = datetime.now(timezone.utc).isoformat()
 
 
+# `TERM=dumb` + `NO_COLOR` désactivent le spinner et les couleurs de rich/tqdm
+# utilisés par DeepTeam — c'est la correction À LA SOURCE du flot de lignes
+# qui bloquait l'API. Le filtre côté lecteur reste en ceinture-bretelles.
 ENV_QUIET = dict(
     PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
     TERM="dumb", NO_COLOR="1", FORCE_COLOR="0",
     TQDM_DISABLE="1", DEEPEVAL_DISABLE_PROGRESS_BAR="1",
 )
+
+
+def _env_runner(req: AuditRequest) -> dict[str, str]:
+    """Environnement du runner. Porte les en-tetes de la cible HORS de la ligne
+    de commande, lue par `scripts/run_agent.py` (`AUDIT_TARGET_HEADERS`).
+
+    La variable est RETIREE quand la requete n'a pas d'en-tetes : sinon une
+    valeur heritee de l'environnement du service partirait vers une cible qui
+    ne l'a pas demandee.
+    """
+    env = dict(os.environ, **ENV_QUIET)
+    env.pop("AUDIT_TARGET_HEADERS", None)
+    if req.headers:
+        env["AUDIT_TARGET_HEADERS"] = json.dumps(req.headers)
+    return env
 
 
 def _execute_many(run: Run, cats: list[str]) -> None:
@@ -582,7 +593,7 @@ def _execute_many(run: Run, cats: list[str]) -> None:
     FAIL-SAFE : l'échec d'un agent n'interrompt pas les suivants — c'est la règle
     du workflow (doc. technique : orchestration LangGraph). Chaque agent produit son propre fichier de résultat.
     """
-    env = dict(os.environ, **ENV_QUIET)
+    env = _env_runner(run.request)
     run.status = "running"
     run.log("info", f"Mode {run.request.mode} — {len(cats)} agent(s) : {', '.join(cats)}")
 
