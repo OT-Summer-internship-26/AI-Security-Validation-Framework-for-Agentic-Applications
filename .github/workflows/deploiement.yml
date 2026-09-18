@@ -290,23 +290,39 @@ jobs:
           done
           cat /tmp/sante.json
           BUILD=$(python3 -c "import json;print(json.load(open('/tmp/sante.json')).get('build',''))")
-          if [ "$BUILD" != "${{ inputs.version }}" ]; then
-            echo "::error::l'API répond en build « $BUILD » alors que ${{ inputs.version }} a été déployée"
+          # ON COMPARE AU COMMIT, PAS A L'ETIQUETTE.
+          #     L'image embarque `AUDIT_BUILD=sha-<SHA COMPLET>` (images.yml),
+          #     l'etiquette publiee est `sha-<7>` ou `1.2.3`. Comparer `build` a
+          #     `inputs.version` echouait donc A CHAQUE deploiement reussi, et
+          #     reclamait un retour arriere. Le commit, lui, est deja resolu par
+          #     l'etape `topologie`, pour les deux formes d'etiquette.
+          ATTENDU="sha-${{ steps.topologie.outputs.commit }}"
+          if [ "$BUILD" != "$ATTENDU" ]; then
+            echo "::error::l'API répond en build « $BUILD » alors que ${{ inputs.version }} ($ATTENDU) a été déployée"
             # UN ECHEC QUI NE DIT PAS COMMENT REVENIR N'EST QU'UNE MAUVAISE NOUVELLE.
             #     La production est peut-etre cassee a cet instant. Chercher le
             #     condense precedent dans l'historique des executions, sous
             #     pression, est exactement ce qu'on ne veut pas avoir a faire.
-            if [ -n "${BUILD_PRECEDENT:-}" ]; then
-              {
-                echo "### ⚠ Retour arrière"
-                echo ""
-                echo "La version en service avant ce déploiement était **\`$BUILD_PRECEDENT\`**."
-                echo "Relancez ce workflow avec \`version = $BUILD_PRECEDENT\`."
-              } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error::revenir en arrière : relancer ce workflow avec version = $BUILD_PRECEDENT"
-            else
-              echo "::error::version précédente inconnue — l'API ne répondait pas avant le déploiement."
-            fi
+            #
+            #     `/health` rend le SHA COMPLET, mais ce workflow attend une
+            #     ETIQUETTE PUBLIEE : `sha-<7>`. Proposer le SHA complet envoyait
+            #     l'operateur vers une image qui n'existe pas. `inconnu` (image
+            #     construite hors chaine) n'a aucune etiquette a proposer.
+            case "${BUILD_PRECEDENT:-}" in
+              sha-*)
+                RETOUR="sha-$(printf '%s' "${BUILD_PRECEDENT#sha-}" | cut -c1-7)"
+                {
+                  echo "### ⚠ Retour arrière"
+                  echo ""
+                  echo "La version en service avant ce déploiement était **\`$BUILD_PRECEDENT\`**."
+                  echo "Relancez ce workflow avec \`version = $RETOUR\`."
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::revenir en arrière : relancer ce workflow avec version = $RETOUR" ;;
+              "")
+                echo "::error::version précédente inconnue — l'API ne répondait pas avant le déploiement." ;;
+              *)
+                echo "::error::version précédente « $BUILD_PRECEDENT » construite hors chaîne : aucune étiquette publiée vers laquelle revenir." ;;
+            esac
             exit 1
           fi
-          echo "confirmé : la version en service est bien ${{ inputs.version }}"
+          echo "confirmé : la version en service est bien ${{ inputs.version }} ($BUILD)"
