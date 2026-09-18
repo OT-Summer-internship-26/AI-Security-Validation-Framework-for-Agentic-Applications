@@ -725,7 +725,7 @@ wcmatch==8.5.2
     # via semgrep
 wcwidth==0.8.3
     # via prompt-toolkit
-weasyprint==69.0
+weasyprint==70.0
     # via -r requirements.txt
 webencodings==0.6.1
     # via
