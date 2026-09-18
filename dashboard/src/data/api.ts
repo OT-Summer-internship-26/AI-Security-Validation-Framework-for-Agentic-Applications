@@ -188,6 +188,18 @@ export const launchDvapLab = (slug: string) =>
 export const getHealth = () => req<HealthInfo>('/health')
 export const getAgents = () => req<{ agents: AgentInfo[] }>('/agents')
 export const fetchAudits = () => req<{ audits: RawAudit[] }>('/audits')
+
+/** La politique de `config/gate_policy.json`, telle que la CI l'applique. */
+export interface GatePolicyServie {
+  block_all_critical?: boolean
+  max_high_findings?: number
+  min_score?: number
+  enforce_min_score?: boolean
+  per_category?: Record<string, { action: 'block' | 'warn' | 'ignore'; justification?: string }>
+  derogations?: { finding_title: string; reason: string; approver: string; expires_at: string }[]
+}
+
+export const fetchGatePolicy = () => req<GatePolicyServie>('/gate/policy')
 export const fetchRuns = () => req<{ runs: Omit<RunState, 'logs'>[] }>('/runs')
 
 export const startAudit = (body: Partial<RunRequest>) =>

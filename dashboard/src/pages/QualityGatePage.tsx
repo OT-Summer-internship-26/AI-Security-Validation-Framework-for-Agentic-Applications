@@ -165,6 +165,22 @@ export function QualityGatePage() {
             />
           </div>
 
+          <div className="flex items-center justify-between py-2.5">
+            <div>
+              <div className="text-sm text-text-primary">Imposer le seuil de score</div>
+              <div className="text-xs text-text-muted mt-0.5">
+                Désactivé, le score s'affiche sans décider — un audit partiel n'est pas comparable
+              </div>
+            </div>
+            <button
+              onClick={() => patch({ enforce_min_score: !policy.enforce_min_score })}
+              className={policy.enforce_min_score ? 'text-brand' : 'text-text-muted'}
+              aria-label="Basculer le seuil de score"
+            >
+              {policy.enforce_min_score ? <ToggleRight size={34} /> : <ToggleLeft size={34} />}
+            </button>
+          </div>
+
           <div className="py-2.5">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-text-primary">Seuil de score minimum</span>
@@ -173,8 +189,9 @@ export function QualityGatePage() {
             <input
               type="range" min={0} max={100} value={policy.min_score}
               onChange={e => patch({ min_score: Number(e.target.value) })}
-              className={`w-full accent-brand ${policy.mode === 'regression' ? 'opacity-40' : ''}`}
-              disabled={policy.mode === 'regression'}
+              className={`w-full accent-brand ${
+                policy.mode === 'regression' || !policy.enforce_min_score ? 'opacity-40' : ''}`}
+              disabled={policy.mode === 'regression' || !policy.enforce_min_score}
             />
             {policy.mode === 'regression' && (
               <p className="text-[11px] text-text-muted mt-1">

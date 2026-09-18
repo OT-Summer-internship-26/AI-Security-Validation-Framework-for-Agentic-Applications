@@ -5,7 +5,7 @@
  * Aucune page n'appelle `fetch` ni ne connaît le format brut : tout passe ici.
  */
 import { DEFAULT_POLICY as RAW_POLICY } from './audits'
-import { currentAudits, currentSource } from './store'
+import { currentAudits, currentPolicy, currentSource } from './store'
 import type { Audit, QualityGatePolicy, ScoreHistoryPoint, Vulnerability } from '@/types'
 
 export { useAudits, reloadAudits } from './store'
@@ -63,7 +63,22 @@ export function getBaselineFor(audit: Audit): Audit | undefined {
   )
 }
 
-/** Politique de Quality Gate par défaut. */
+/**
+ * Politique de Quality Gate EN VIGUEUR : celle que l'API sert (`GET /gate/policy`),
+ * c'est-à-dire celle que `scripts/ci_gate.py` applique. Repli local sinon.
+ *
+ * `mode` et `baseline_audit_id` n'existent que dans le simulateur du dashboard :
+ * la CI juge toujours en mode absolu, sans baseline.
+ */
 export function getDefaultPolicy(): QualityGatePolicy {
-  return RAW_POLICY
+  const servie = currentPolicy()
+  if (!servie) return RAW_POLICY
+  return {
+    ...RAW_POLICY,
+    ...servie,
+    mode: 'absolute',
+    baseline_audit_id: null,
+    per_category: servie.per_category ?? {},
+    derogations: (servie.derogations ?? []).map((d, i) => ({ id: `der-${i + 1}`, ...d })),
+  }
 }

@@ -250,6 +250,13 @@ MUTATIONS = [
      '"headers": {"Content-Type": "application/json", **(headers or {})},',
      '"headers": headers or {"Content-Type": "application/json"},',
      "tests/test_axes_runners.py::test_garak_garde_le_Content_Type_QUAND_la_cible_exige_des_en_tetes"),
+
+    # Le dashboard jugeait avec SA copie de la politique, qui avait diverge.
+    ("Le dashboard recoit une autre politique que celle de la CI",
+     "api/main.py",
+     "    from scripts.ci_gate import load_policy\n\n    return load_policy()",
+     "    return {\"per_category\": {}}",
+     "tests/test_api.py::test_la_politique_servie_EST_celle_du_gate_CI"),
 ]
 
 

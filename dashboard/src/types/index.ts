@@ -252,6 +252,8 @@ export interface QualityGatePolicy {
   block_all_critical: boolean
   max_high_findings: number
   min_score: number
+  /** `false` : le score est affiché, jamais bloquant — la règle de `ci_gate.py`. */
+  enforce_min_score: boolean
   mode: 'absolute' | 'regression'
   baseline_audit_id: string | null
   per_category: Record<string, { action: 'block' | 'warn' | 'ignore'; justification?: string }>

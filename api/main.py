@@ -970,6 +970,21 @@ NAMES_FALLBACK = {
 }
 
 
+@app.get("/gate/policy")
+def gate_policy(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """La politique de blocage EN VIGUEUR — celle que `scripts/ci_gate.py` applique.
+
+    Le dashboard en gardait une copie codée en dur, qui avait divergé (ASI_07 et
+    ASI_08 « warn » au lieu de « ignore », une dérogation fictive) : sa page
+    Quality Gate rendait un verdict que la CI ne rendait pas. Servie d'ici, par
+    la même fonction que la CI, il n'y en a plus qu'une.
+    """
+    _identifier(x_api_key, minimum="viewer")
+    from scripts.ci_gate import load_policy
+
+    return load_policy()
+
+
 @app.get("/audits")
 def list_audits(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Tous les résultats d'audit enregistrés."""

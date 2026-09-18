@@ -379,6 +379,22 @@ def test_un_role_inconnu_est_refuse_avec_400(client_admin):
     assert r.status_code == 400
 
 
+def test_la_politique_servie_EST_celle_du_gate_CI(client_admin):
+    """Le dashboard juge avec la politique que la CI applique — pas une copie.
+
+    Sa copie codee en dur avait diverge (ASI_07/ASI_08 « warn » contre
+    « ignore », une derogation fictive) : meme audit, deux verdicts.
+    """
+    sys.path.insert(0, str(RACINE / "scripts"))
+    from ci_gate import load_policy
+
+    assert client_admin.get("/gate/policy").status_code == 401, "politique lisible sans cle"
+    r = client_admin.get("/gate/policy", headers={"X-API-Key": "amorce-admin"})
+    assert r.status_code == 200
+    assert r.json() == load_policy()
+    assert not [k for k in r.json() if k.startswith("_")], "la documentation n'est pas une regle"
+
+
 def test_le_suivi_d_execution_survit_a_un_nouvel_objet_api(client_admin):
     """La preuve de la persistance vue de l'API : l'execution se relit dans le
     magasin, sans qu'aucun objet Python ne la detienne."""
