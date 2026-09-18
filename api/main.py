@@ -495,7 +495,51 @@ def _requested_categories(req: AuditRequest) -> list[str]:
     return [req.category] if req.category in available else []
 
 
+#: Rythme auquel l'executant relit son statut pour voir une annulation.
+ANNULATION_S = 2.0
+
+
+def _veiller_annulation(run: Run, fin: threading.Event) -> None:
+    """Relit le statut dans le magasin ; s'il vaut `cancelled`, tue le runner.
+
+    POURQUOI UN GUETTEUR
+        `POST /runs/{id}/cancel` ecrit `cancelled` dans le magasin — c'est tout
+        ce qu'il peut faire, l'audit tourne dans un AUTRE processus (l'ouvrier,
+        ou un fil de l'API). Personne ne relisait ce statut : l'API repondait
+        « annule », l'audit continuait, puis ecrivait `completed` par-dessus.
+
+    Poser `run.status` suffit pour `_execute_many`, qui le teste entre deux
+    categories ; `terminate()` arrete la categorie en cours. Rejoue a chaque
+    tour : un runner lance juste apres une verification est tue au suivant.
+    """
+    while not fin.wait(ANNULATION_S):
+        try:
+            if store.statut(run.id) != "cancelled":
+                continue
+        except Exception as exc:              # magasin indisponible : on reessaie
+            logger.debug("statut illisible (%s) : %s", run.id, exc)
+            continue
+        run.status = "cancelled"
+        proc = run.proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
+
 def _execute(run: Run) -> None:
+    """Exécute un audit en surveillant son annulation. Voir `_executer`.
+
+    Le guetteur est posé ICI parce que c'est le seul point commun à l'ouvrier
+    (`scripts/worker.py`) et au mode mono-processus de l'API.
+    """
+    fin = threading.Event()
+    threading.Thread(target=_veiller_annulation, args=(run, fin), daemon=True).start()
+    try:
+        _executer(run)
+    finally:
+        fin.set()
+
+
+def _executer(run: Run) -> None:
     """Lance le runner en sous-processus et suit son exécution.
 
     En mode `full` ou `targeted` multi-catégories, les agents sont enchaînés
@@ -1489,19 +1533,24 @@ def get_run(run_id: str, since: int = 0, since_ex: int = 0, x_api_key: str | Non
 
 @app.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: str, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-    """Annule une exécution en cours."""
+    """Annule une exécution en file ou en cours."""
     _check_api_key(x_api_key)
     run = _REJEUX.get(run_id)
     etat = run.snapshot() if run is not None else masquer_secrets(store.lire_run(run_id))
     if etat is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
-    if etat["status"] != "running":
+    # `queued` AUSSI : un audit en file n'est pas « deja termine » — il etait
+    # refuse avec ce motif, puis pris par l'ouvrier et execute quand meme.
+    if etat["status"] not in ("queued", "running"):
         return {"run_id": run_id, "status": etat["status"], "detail": "déjà terminée"}
     if run is None:
-        # L'execution tourne peut-etre dans un AUTRE processus : on marque
-        # l'intention dans le magasin, l'ouvrier la verra a son prochain
-        # battement. Tuer un sous-processus qu'on ne detient pas est impossible.
-        store.maj_run(run_id, status="cancelled", stage="Annulation demandée")
+        # L'execution tourne dans un AUTRE processus, ou pas encore : on marque
+        # l'annulation dans le magasin. En file, `prendre_run` ne la prendra
+        # plus ; en cours, le guetteur de `_execute` tue le runner sous
+        # ANNULATION_S secondes. `cancelled` est terminal (store.maj_run).
+        fin = ({"finished_at": datetime.now(timezone.utc).isoformat()}
+               if etat["status"] == "queued" else {})
+        store.maj_run(run_id, status="cancelled", stage="Annulation demandée", **fin)
         return {"run_id": run_id, "status": "cancelled"}
     run.status = "cancelled"
     if run.proc and run.proc.poll() is None:

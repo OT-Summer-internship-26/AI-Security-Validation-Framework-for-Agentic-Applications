@@ -430,6 +430,102 @@ def test_un_rejeu_n_est_JAMAIS_pris_par_l_ouvrier(client_admin, monkeypatch):
     assert store.lire_run(rejeu)["status"] == "running"
 
 
+@pytest.fixture()
+def magasin_neuf(monkeypatch, tmp_path):
+    """Magasin temporaire, API ouverte (aucune cle) : `cancel_run` s'appelle direct."""
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "annul.sqlite"))
+    import api.main as main
+    from api import store
+
+    # APRES l'import : `api.main` charge `.env` a l'import, qui reposerait la cle.
+    monkeypatch.delenv("FRAMEWORK_API_KEY", raising=False)
+
+    store.fermer()
+    store.init()
+    monkeypatch.setattr(main, "ANNULATION_S", 0.05)
+    yield main, store
+    store.fermer()
+
+
+def test_annuler_un_audit_en_cours_ARRETE_vraiment_le_runner(magasin_neuf, monkeypatch):
+    """L'annulation traverse les processus : l'API ecrit, l'executant s'arrete.
+
+    LE BUG
+        `cancel_run` ecrivait `cancelled` dans le magasin et repondait « annule ».
+        Personne ne relisait ce statut : l'ouvrier poursuivait l'audit (attaques,
+        quota) puis ecrivait `completed` par-dessus. En mode mono-processus,
+        meme chose — l'audit n'etait pas dans `_REJEUX`, donc jamais tue.
+    """
+    import io
+    import subprocess
+    import threading
+
+    main, store = magasin_neuf
+
+    class RunnerSansFin:
+        """Un runner qui ne s'arrete QUE si on le tue."""
+        vivants: list = []
+
+        def __init__(self, cmd, **_):
+            self.stdout, self.fini, self.tue = io.StringIO(""), threading.Event(), False
+            RunnerSansFin.vivants.append(self)
+
+        def poll(self):
+            return -15 if self.fini.is_set() else None
+
+        def terminate(self):
+            self.tue = True
+            self.fini.set()
+
+        def wait(self):
+            self.fini.wait(20)
+            return -15
+
+    monkeypatch.setattr(subprocess, "Popen", RunnerSansFin)
+    req = main.AuditRequest(category="ASI_01", target_url="http://cible/chat")
+    main.Run("run-long", req)
+    execution = main.Run.depuis_magasin(store.prendre_run("ouvrier"))   # comme l'ouvrier
+    fil = threading.Thread(target=main._execute, args=(execution,), daemon=True)
+    fil.start()
+    for _ in range(100):
+        if RunnerSansFin.vivants:
+            break
+        threading.Event().wait(0.02)
+
+    # Depuis l'API — un AUTRE objet, comme un autre processus : `_REJEUX` l'ignore.
+    assert main.cancel_run("run-long", None)["status"] == "cancelled"
+    fil.join(timeout=5)
+
+    assert not fil.is_alive(), "l'audit annule tourne toujours"
+    assert RunnerSansFin.vivants[0].tue, "le runner n'a jamais recu terminate()"
+    fin = store.lire_run("run-long")
+    assert fin["status"] == "cancelled", f"l'executant a ecrase l'annulation : {fin['status']}"
+    assert fin["finished_at"], "une execution arretee doit porter sa date de fin"
+
+
+def test_un_audit_EN_FILE_s_annule_et_n_est_plus_pris(magasin_neuf):
+    """« deja terminee » etait la reponse pour un audit en file — puis l'ouvrier
+    le prenait et l'executait quand meme."""
+    main, store = magasin_neuf
+    main.Run("run-attente", main.AuditRequest(category="ASI_01",
+                                              target_url="http://cible/chat"))
+    assert main.cancel_run("run-attente", None)["status"] == "cancelled"
+    assert store.prendre_run("ouvrier") is None, "un audit annule a ete pris"
+    assert store.lire_run("run-attente")["finished_at"]
+
+
+def test_cancelled_est_TERMINAL_mais_les_autres_champs_s_ecrivent(magasin_neuf):
+    """L'executant ecrit `completed` en fin d'audit : il ne doit pas effacer une
+    annulation arrivee entre-temps — mais sa date de fin, si."""
+    _, store = magasin_neuf
+    store.creer_run("run-t", {"mode": "targeted"})
+    store.maj_run("run-t", status="cancelled")
+    store.maj_run("run-t", status="completed", finished_at="2026-09-18T12:00:00+00:00")
+    r = store.lire_run("run-t")
+    assert r["status"] == "cancelled"
+    assert r["finished_at"] == "2026-09-18T12:00:00+00:00"
+
+
 def test_la_migration_reconnait_les_rejeux_DEJA_en_base(monkeypatch, tmp_path):
     """Un volume de production porte des rejeux d'avant la colonne `kind`."""
     import sqlite3

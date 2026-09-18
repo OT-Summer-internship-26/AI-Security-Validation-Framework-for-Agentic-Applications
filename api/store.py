@@ -414,9 +414,23 @@ def maj_run(run_id: str, **champs: Any) -> None:
     for cle in ("result_files", "categories"):
         if cle in champs and champs[cle] is not None:
             champs[cle] = json.dumps(champs[cle])
-    sets = ", ".join(f"{k}=?" for k in champs)
+    # `cancelled` EST TERMINAL. L'annulation arrive d'un AUTRE processus (l'API)
+    # pendant que l'executant ecrit son propre statut : `running` au demarrage,
+    # `completed` a la fin. Sans cette garde, il effacait l'annulation — et le
+    # guetteur de `_execute`, qui relit ce statut, ne la voyait jamais.
+    # Les AUTRES champs passent : `finished_at` doit s'ecrire apres annulation.
+    sets = ", ".join(
+        "status = CASE WHEN status = 'cancelled' THEN status ELSE ? END"
+        if k == "status" else f"{k}=?" for k in champs)
     _conn().execute(f"UPDATE runs SET {sets} WHERE id=?",
                     (*champs.values(), run_id))
+
+
+def statut(run_id: str) -> str | None:
+    """Statut seul d'une exécution — la lecture du guetteur d'annulation, qui
+    interroge toutes les deux secondes : `lire_run` y ajouterait les journaux."""
+    r = _conn().execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+    return r["status"] if r else None
 
 
 def ajouter_log(run_id: str, level: str, text: str) -> None:

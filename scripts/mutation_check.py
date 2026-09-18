@@ -224,6 +224,19 @@ MUTATIONS = [
      "etait fourni.\n        from judge.llm_config import DEFAULT_PROFILE, get_judge_models",
      "etait fourni.\n        from judge.llm_config import get_judge_models",
      "tests/test_agentic.py::test_le_mode_agentique_tourne_SANS_llm_profile_dans_la_config"),
+
+    # L'annulation etait ecrite en base et jamais relue : l'audit continuait.
+    ("L'executant ne voit pas l'annulation",
+     "api/main.py",
+     '            if store.statut(run.id) != "cancelled":',
+     '            if True:',
+     "tests/test_api.py::test_annuler_un_audit_en_cours_ARRETE_vraiment_le_runner"),
+
+    ("L'executant ecrase l'annulation par son propre statut",
+     "api/store.py",
+     "\"status = CASE WHEN status = 'cancelled' THEN status ELSE ? END\"",
+     "\"status = ?\"",
+     "tests/test_api.py::test_cancelled_est_TERMINAL_mais_les_autres_champs_s_ecrivent"),
 ]
 
 
