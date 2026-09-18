@@ -344,13 +344,14 @@ class BaseSecurityAgent(ABC):
         des passages. Voir `agents/agentic_loop.py` pour la démonstration.
         """
         from agents.agentic_loop import run_agentic as _boucle
+        # Importe ICI comme dans les trois autres methodes : absent, le `or`
+        # masquait un `NameError` tant que `llm_profile` etait fourni.
+        from judge.llm_config import DEFAULT_PROFILE, get_judge_models
 
         profile = (self.config.get("llm_profile") or DEFAULT_PROFILE or "dev").lower()
         model = None
         if profile not in ("dry_run", "ci"):
             try:
-                from judge.llm_config import get_judge_models
-
                 _simulator, model = get_judge_models(profile)
             except Exception as exc:
                 # Sans modèle la boucle dégrade en `run()` + perception, et le DIT.

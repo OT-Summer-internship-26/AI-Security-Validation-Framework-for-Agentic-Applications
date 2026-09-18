@@ -217,6 +217,13 @@ MUTATIONS = [
      "WHERE status='queued' AND kind='audit' ",
      "WHERE status='queued' ",
      "tests/test_api.py::test_un_rejeu_n_est_JAMAIS_pris_par_l_ouvrier"),
+
+    # `run_agentic` sans `llm_profile` : NameError, masque par le `or`.
+    ("Le mode agentique lit un profil jamais importe",
+     "agents/base_agent.py",
+     "etait fourni.\n        from judge.llm_config import DEFAULT_PROFILE, get_judge_models",
+     "etait fourni.\n        from judge.llm_config import get_judge_models",
+     "tests/test_agentic.py::test_le_mode_agentique_tourne_SANS_llm_profile_dans_la_config"),
 ]
 
 
