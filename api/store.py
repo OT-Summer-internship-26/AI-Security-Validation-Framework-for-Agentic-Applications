@@ -131,7 +131,7 @@ def _conn() -> sqlite3.Connection:
 #        l'ont déjà appliquée, la réécrire ne les rattraperait pas.
 #     Chaque migration s'exécute dans UNE transaction avec son estampillage :
 #     une coupure de courant laisse la base soit avant, soit après, jamais entre.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _MIGRATIONS: list[tuple[int, str]] = [
     # 1 — socle. Volontairement en `IF NOT EXISTS` : les volumes antérieurs à ce
@@ -177,6 +177,14 @@ _MIGRATIONS: list[tuple[int, str]] = [
             revoked_at  TEXT,
             last_used   TEXT
         );
+    """),
+    # 2 — la NATURE du travail. Les rejeux sont persistes pour etre suivis, mais
+    #     s'executent dans le processus de l'API : sans ce champ, l'ouvrier les
+    #     prenait dans la file et lancait un AUDIT COMPLET de la cible. Les rejeux
+    #     deja en base se reconnaissent a leur prefixe d'identifiant.
+    (2, """
+        ALTER TABLE runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'audit';
+        UPDATE runs SET kind = 'replay' WHERE id LIKE 'replay-%';
     """),
 ]
 
@@ -325,13 +333,18 @@ def purger(jours: int | None = None) -> dict[str, int]:
     return {"jours": jours, "runs": n, "logs": logs, "echanges": ech}
 
 
-def creer_run(run_id: str, requete: dict[str, Any], cree_par: str = "") -> None:
-    """Dépose une exécution en file. Elle survit désormais au processus."""
+def creer_run(run_id: str, requete: dict[str, Any], cree_par: str = "",
+              kind: str = "audit") -> None:
+    """Dépose une exécution en file. Elle survit désormais au processus.
+
+    `kind` : seul `audit` est pris par un ouvrier. Un `replay` est persisté
+    pour être suivi, mais exécuté par le processus qui l'a créé.
+    """
     _conn().execute(
-        "INSERT INTO runs (id, status, request, created_by, started_at, stage) "
-        "VALUES (?, 'queued', ?, ?, ?, ?)",
+        "INSERT INTO runs (id, status, request, created_by, started_at, stage, kind) "
+        "VALUES (?, 'queued', ?, ?, ?, ?, ?)",
         (run_id, json.dumps(requete, default=str), cree_par,
-         datetime.now(timezone.utc).isoformat(), "En file d'attente"))
+         datetime.now(timezone.utc).isoformat(), "En file d'attente", kind))
 
 
 def prendre_run(worker: str) -> dict[str, Any] | None:
@@ -348,7 +361,8 @@ def prendre_run(worker: str) -> dict[str, Any] | None:
     c.execute("BEGIN IMMEDIATE")
     try:
         ligne = c.execute(
-            "SELECT id FROM runs WHERE status='queued' ORDER BY started_at LIMIT 1"
+            "SELECT id FROM runs WHERE status='queued' AND kind='audit' "
+            "ORDER BY started_at LIMIT 1"
         ).fetchone()
         if ligne is None:
             c.execute("COMMIT")
@@ -380,11 +394,16 @@ def reprendre_abandonnes(limite_s: int = BATTEMENT_MAX_S) -> int:
     # `<=` et non `<` : la resolution d'horloge de Windows (~15 ms) rend
     # frequemment `heartbeat == seuil`, et un battement exactement au seuil EST
     # perime. Avec `<`, une execution abandonnee restait bloquee.
+    #
+    # `kind='audit'` : un rejeu ne bat JAMAIS (aucun ouvrier ne le porte), donc
+    # `heartbeat IS NULL` le designait comme abandonne des le premier balayage —
+    # remis en file, puis execute comme un audit complet.
     seuil = time.time() - limite_s
     cur = _conn().execute(
         "UPDATE runs SET status='queued', worker=NULL, claimed_at=NULL, "
         "heartbeat=NULL, stage='Repris après abandon' "
-        "WHERE status='running' AND (heartbeat IS NULL OR heartbeat <= ?)", (seuil,))
+        "WHERE status='running' AND kind='audit' "
+        "AND (heartbeat IS NULL OR heartbeat <= ?)", (seuil,))
     return cur.rowcount
 
 

@@ -394,6 +394,71 @@ def test_le_suivi_d_execution_survit_a_un_nouvel_objet_api(client_admin):
     assert r.status_code == 200 and r.json()["run_id"] == run_id
 
 
+def test_un_rejeu_n_est_JAMAIS_pris_par_l_ouvrier(client_admin, monkeypatch):
+    """Un rejeu tourne dans l'API ; la file ne doit JAMAIS le rendre a un ouvrier.
+
+    LE BUG
+        `POST /replay` persistait son execution en `queued`, sans rien qui la
+        distingue d'un audit. L'ouvrier la prenait et lancait un AUDIT COMPLET de
+        la cible — attaques reelles, quota LLM, fichier de resultat que personne
+        n'avait demande. Et un rejeu ne bat jamais : `reprendre_abandonnes` le
+        voyait abandonne des le premier balayage et le remettait en file.
+    """
+    import api.main as main
+    from api import store
+
+    source = {"_file": "source.json", "target_url": "http://c/chat",
+              "agents": {"ASI_01": {"attacks": [{"prompt": "x", "verdict": "compromised"}]}}}
+    monkeypatch.setattr(main, "_read_results", lambda: [source])
+    # Le rejeu ne demarre pas : sa ligne reste `queued`, le pire cas pour la file.
+    monkeypatch.setattr(main, "_execute_replay", lambda *a, **k: None)
+
+    r = client_admin.post("/replay", headers={"X-API-Key": "amorce-admin"},
+                          json={"audit_id": "source.json"})
+    assert r.status_code == 200
+    rejeu = r.json()["run_id"]
+    store.creer_run("audit-apres", {"mode": "targeted", "category": "ASI_01"})
+
+    pris = store.prendre_run("ouvrier")
+    assert pris is not None and pris["run_id"] == "audit-apres", (
+        f"l'ouvrier a pris {pris and pris['run_id']} : un rejeu lance comme un audit")
+    assert store.prendre_run("ouvrier") is None
+
+    # Un rejeu en cours n'a pas de battement : il ne doit pas etre « repris ».
+    store.maj_run(rejeu, status="running")
+    assert store.reprendre_abandonnes(limite_s=0) == 1, "seul l'audit est repris"
+    assert store.lire_run(rejeu)["status"] == "running"
+
+
+def test_la_migration_reconnait_les_rejeux_DEJA_en_base(monkeypatch, tmp_path):
+    """Un volume de production porte des rejeux d'avant la colonne `kind`."""
+    import sqlite3
+
+    from api import store
+
+    base = tmp_path / "v1.sqlite"
+    monkeypatch.setenv("AUDIT_STATE_DB", str(base))
+    monkeypatch.setattr(store, "SCHEMA_VERSION", 1)
+    monkeypatch.setattr(store, "_MIGRATIONS", store._MIGRATIONS[:1])
+    store.fermer()
+    store.init()
+    for ident in ("replay-20260901-abc", "run-20260901-def"):
+        store._conn().execute(
+            "INSERT INTO runs (id, status, request, started_at) "
+            "VALUES (?, 'queued', '{}', '2026-09-01')", (ident,))
+    store.fermer()
+    monkeypatch.undo()
+    monkeypatch.setenv("AUDIT_STATE_DB", str(base))
+    try:
+        store.init()
+        assert store.prendre_run("ouvrier")["run_id"] == "run-20260901-def"
+        assert store.prendre_run("ouvrier") is None, "un ancien rejeu repart comme audit"
+    finally:
+        store.fermer()
+    assert (sqlite3.connect(base).execute("PRAGMA user_version").fetchone()[0]
+            == store.SCHEMA_VERSION)
+
+
 # --------------------------------------------------------------------------- #
 # La cible d'un audit : cet outil ATTAQUE ce qu'on lui designe.
 # --------------------------------------------------------------------------- #

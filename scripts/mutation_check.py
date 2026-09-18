@@ -210,6 +210,13 @@ MUTATIONS = [
      '    if req.headers:\n        cmd += ["--headers", json.dumps(req.headers)]\n'
      '    if req.extra_payload:\n        cmd += ["--extra-payload"',
      "tests/test_runners.py::test_le_jeton_de_la_cible_atteint_le_runner_SANS_passer_par_le_journal"),
+
+    # Un rejeu pris dans la file devenait un audit complet de la cible.
+    ("L'ouvrier prend un rejeu et lance un audit complet",
+     "api/store.py",
+     "WHERE status='queued' AND kind='audit' ",
+     "WHERE status='queued' ",
+     "tests/test_api.py::test_un_rejeu_n_est_JAMAIS_pris_par_l_ouvrier"),
 ]
 
 

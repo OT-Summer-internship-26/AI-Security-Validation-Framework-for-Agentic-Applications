@@ -181,7 +181,7 @@ class Run:
     """
 
     def __init__(self, run_id: str, req: AuditRequest, *, cree_par: str = "",
-                 persister: bool = True) -> None:
+                 persister: bool = True, kind: str = "audit") -> None:
         # Posé AVANT tout le reste : `__setattr__` le consulte à chaque
         # affectation, et les lignes qui suivent en déclenchent.
         object.__setattr__(self, "_persiste", False)
@@ -198,9 +198,10 @@ class Run:
         self.categories: list[str] | None = None
         self.result_files: list[str] | None = None
         self.created_by = cree_par
+        self.kind = kind
         self._lock = threading.Lock()
         if persister:
-            store.creer_run(run_id, req.model_dump(), cree_par)
+            store.creer_run(run_id, req.model_dump(), cree_par, kind=kind)
         object.__setattr__(self, "_persiste", True)
 
     @classmethod
@@ -1079,14 +1080,16 @@ def create_replay(req: ReplayRequest, x_api_key: str | None = Header(default=Non
     ]
 
     run_id = f"replay-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
+    # `kind="replay"` DES LA CREATION, pas apres : la ligne est visible dans la
+    # file a l'instant ou elle est ecrite. Posee apres coup (et jamais persistee),
+    # l'etiquette laissait l'ouvrier prendre le rejeu et lancer un AUDIT COMPLET.
     run = Run(run_id, AuditRequest(
         category=next(iter(source.get("agents") or {"ASI_?": {}})),
         target_url=target, profile=req.profile, timeout=req.timeout,
-    ))
-    run.kind = "replay"                       # type: ignore[attr-defined]
+    ), kind="replay")
     run.source_audit = source.get("_file")    # type: ignore[attr-defined]
     # Le rejeu dure quelques minutes, pas une heure : il reste en processus.
-    # Le sortir n'apporterait rien et ajouterait un type de travail a la file.
+    # Il est persiste pour etre SUIVI ; `kind` le tient hors de la file.
     _REJEUX[run_id] = run
 
     threading.Thread(
