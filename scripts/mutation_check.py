@@ -195,6 +195,13 @@ MUTATIONS = [
      "\"SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?\"",
      "\"SELECT id FROM runs WHERE finished_at IS NULL OR finished_at < ?\"",
      "tests/test_store.py::test_la_purge_retire_le_VOLUME_et_garde_la_TRACE"),
+
+    # Le code de la cible s'executait sur l'hote, avec ses cles, faute de Docker.
+    ("Le code de la cible s'execute sans Docker",
+     "agents/asi05_code_execution.py",
+     "        if not docker_ok:",
+     "        if False:",
+     "tests/test_sandbox.py::test_sans_docker_le_code_de_la_cible_n_est_JAMAIS_execute"),
 ]
 
 

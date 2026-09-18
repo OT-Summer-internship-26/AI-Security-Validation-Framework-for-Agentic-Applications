@@ -9,7 +9,7 @@ Stage — Ooredoo Tunisie, Département Intelligence Artificielle.
 [![Images de conteneur](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-291%20passants-2ea44f)
-![Mutation](https://img.shields.io/badge/mutation-23%2F23-2ea44f)
+![Mutation](https://img.shields.io/badge/mutation-24%2F24-2ea44f)
 ![OWASP ASI](https://img.shields.io/badge/OWASP%20ASI-10%2F10-2ea44f)
 ![Images](https://img.shields.io/badge/images-sign%C3%A9es%20%2B%20SBOM-8957e5?logo=docker&logoColor=white)
 
@@ -145,7 +145,7 @@ cosign verify-attestation --key cosign.pub --type cyclonedx \
 | Mesure | Valeur | Comment |
 |---|---|---|
 | Tests | **291 passants** | hors-ligne, ni réseau ni LLM |
-| Mutation | **23 / 23** | chaque correctif est cassé, son test doit rougir |
+| Mutation | **24 / 24** | chaque correctif est cassé, son test doit rougir |
 | Agents ASI | **10 / 10** | chacun avec au moins un run réel |
 | Audit global sur cible réelle | **oui** — `global_score: 72.8` | profil OpenAI, 2026-09-01 |
 | Vérité terrain DVAP | **43 / 43** objectifs vérifiés | chaque citation confrontée à sa source |

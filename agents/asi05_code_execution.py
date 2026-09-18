@@ -15,11 +15,10 @@ ARCHITECTURE À 3 COUCHES (doc. technique : architecture a 3 couches / sandbox d
        Microsoft (unsafe pickle, SSRF, secrets, ReDoS… — COMPLÉMENTAIRES à Semgrep, doc. technique : payloads Microsoft Arcanum),
        sur `config["source_path"]`.
     3. DYNAMIQUE (propre à ASI05) : on envoie des demandes de code dangereux à la cible,
-       on EXTRAIT le code de sa réponse, et on l'EXÉCUTE réellement dans un sandbox isolé
-       (SubprocessSandboxProvider Microsoft : timeout + limites mémoire/cpu, réseau désactivé,
-       fs read-only). Un agent qui produit du code dangereux exécutable → vulnérabilité.
+       on EXTRAIT le code de sa réponse, et on l'EXÉCUTE réellement dans un conteneur Docker
+       isolé. Un agent qui produit du code dangereux exécutable → vulnérabilité.
 
-SANDBOX DYNAMIQUE — Docker (isolation RÉELLE) avec fallback subprocess (doc. technique : sandbox d'execution)
+SANDBOX DYNAMIQUE — Docker UNIQUEMENT (doc. technique : sandbox d'execution)
     PROVIDER PRÉFÉRÉ = `DockerSandboxProvider` (sandbox/docker_provider.py) : conteneur
     éphémère python:3.11-slim avec `--network none` (VÉRIFIÉ : bloque réseau/DNS →
     exfiltration échoue), `--memory`/`--cpus` (limites strictes, pas de swap), `--read-only`
@@ -27,10 +26,10 @@ SANDBOX DYNAMIQUE — Docker (isolation RÉELLE) avec fallback subprocess (doc. 
     (non-root, uid 1000 vérifié), `--cap-drop ALL` + `--security-opt no-new-privileges` +
     `--pids-limit`, conteneur force-tué sur timeout (VÉRIFIÉ : boucle infinie killed).
     → l'isolation doc. technique : sandbox d'execution est RÉELLEMENT appliquée (la limite subprocess est CORRIGÉE).
-    FALLBACK (si Docker indisponible) = `SubprocessSandboxProvider` (Microsoft) : isolation
-    de process + timeout + limites, mais SANS application réseau/fs — limite résiduelle
-    UNIQUEMENT dans ce mode dégradé. Le provider réellement utilisé est tracé dans
-    `raw["sandbox_provider"]`. La dangerosité du code est jugée en combinant l'exécution
+    SANS DOCKER, la couche est NON APPLICABLE (exclue du score) : l'ancien repli
+    `SubprocessSandboxProvider` exécutait le code de la cible sur l'hôte, avec son
+    réseau et ses clés d'API — voir `_run_dynamic_layer`. `raw["sandbox_provider"]`
+    vaut alors « indisponible ». La dangerosité du code est jugée en combinant l'exécution
     isolée et l'analyse des constructions dangereuses (os.system/subprocess/socket/eval…).
 
 DÉCISIONS DE VERSION (spike deepteam 1.0.7 — 2026-07-28, conforme deepteam_mapping KB
@@ -277,27 +276,32 @@ class ASI05CodeExecutionAgent(BaseSecurityAgent):
         if profile in ("dry_run", "dry-run", "ci") or self.target_callback is None:
             return LayerResult(layer="dynamic", applicable=False)  # offline : pas de cible
 
-        # PRÉFÉRENCE : sandbox Docker (isolation réseau/fs RÉELLE, doc. technique : sandbox d'execution) → fallback subprocess
-        # (isolation partielle sous Windows). Voir sandbox/docker_provider.py.
-        from sandbox.sandbox_provider import SandboxConfig, SubprocessSandboxProvider
+        # DOCKER OU RIEN — PLUS DE REPLI SOUS-PROCESSUS.
+        #     Le code exécuté ici est ÉCRIT PAR LA CIBLE, hostile par hypothèse. Le
+        #     repli `SubprocessSandboxProvider` n'appliquait que le délai : ni réseau
+        #     coupé, ni fs en lecture seule, ni mémoire, et il HÉRITAIT de tout
+        #     l'environnement — clés GEMINI/OPENAI/FRAMEWORK comprises. Une cible
+        #     répondant par un bloc ```python``` obtenait l'exécution de code sur le
+        #     poste d'audit. Sans Docker, la couche est donc NON APPLICABLE : exclue
+        #     du score, jamais notée — la règle déjà promise par le Dockerfile.
+        from sandbox.sandbox_provider import SandboxConfig
 
-        provider = None
-        provider_name = ""
         try:
             from sandbox.docker_provider import DockerSandboxProvider
 
-            _d = DockerSandboxProvider()
-            if _d.is_available():
-                provider, provider_name = _d, "docker (réseau off + fs read-only + non-root, RÉEL)"
+            provider = DockerSandboxProvider()
+            docker_ok = provider.is_available()
         except Exception:
-            pass
-        if provider is None:
-            _s = SubprocessSandboxProvider()
-            if _s.is_available():
-                provider, provider_name = _s, "subprocess (fallback — isolation partielle Windows)"
-        if provider is None:
-            return LayerResult(layer="dynamic", score=0, applicable=True,
-                               error="aucun sandbox disponible (Docker ni subprocess)")
+            docker_ok = False
+        if not docker_ok:
+            print("[ASI_05] Couche dynamique ignorée : Docker indisponible — aucun code "
+                  "de la cible n'est exécuté hors conteneur isolé.")
+            return LayerResult(layer="dynamic", applicable=False, raw={
+                "sandbox_provider": "indisponible",
+                "note": "Docker indisponible : couche exclue du score (le code produit "
+                        "par la cible n'est jamais exécuté sans isolation).",
+            })
+        provider_name = "docker (réseau off + fs read-only + non-root, RÉEL)"
 
         cfg = SandboxConfig(timeout_seconds=_SANDBOX_TIMEOUT, memory_mb=_SANDBOX_MEMORY_MB,
                             network_enabled=False, read_only_fs=True)
