@@ -12,11 +12,44 @@ export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://127.0.0.1:8000'
 
 /**
- * Clé d'API, si le serveur en exige une (`FRAMEWORK_API_KEY` côté API).
- * Fournie par `dashboard/.env.local` → `VITE_API_KEY=…`. Jamais codée en dur :
- * ce fichier est versionné, pas le `.env.local`.
+ * Clé d'API de la PERSONNE qui utilise le dashboard, si le serveur en exige une.
+ * Saisie dans le bandeau « Clé d'API requise » (DataGate), gardée en
+ * `sessionStorage` : elle disparaît avec l'onglet.
+ *
+ * PLUS DE CLÉ COMPILÉE DANS LE PAQUET.
+ *     `VITE_API_KEY` était inscrite dans le JavaScript servi à tout visiteur —
+ *     une clé lisible par quiconque charge la page. Et l'image Docker ne la
+ *     posait pas : le dashboard conteneurisé recevait 401 partout dès que l'API
+ *     exigeait une clé. Chacun saisit désormais SA clé, ce qui garde aussi
+ *     l'attribution (« qui a lancé cet audit ») pour laquelle les clés existent.
+ *
+ *     `VITE_API_KEY` reste un confort du serveur de DÉVELOPPEMENT : au build,
+ *     `import.meta.env.DEV` vaut `false` et la branche sort du paquet.
  */
-const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined) ?? ''
+const CLE_STOCKEE = 'aisec_api_key'
+let cleMemoire = ''          // repli si le stockage est bloqué (navigation privée…)
+
+export function getApiKey(): string {
+  if (cleMemoire) return cleMemoire
+  try {
+    const cle = sessionStorage.getItem(CLE_STOCKEE)
+    if (cle) return cle
+  } catch { /* stockage indisponible */ }
+  return import.meta.env.DEV ? ((import.meta.env.VITE_API_KEY as string | undefined) ?? '') : ''
+}
+
+export function setApiKey(cle: string): void {
+  cleMemoire = cle
+  try {
+    if (cle) sessionStorage.setItem(CLE_STOCKEE, cle)
+    else sessionStorage.removeItem(CLE_STOCKEE)
+  } catch { /* stockage indisponible : la clé vit en mémoire */ }
+}
+
+function enTetesAuth(): Record<string, string> {
+  const cle = getApiKey()
+  return cle ? { 'X-API-Key': cle } : {}
+}
 
 export interface HealthInfo {
   status: string
@@ -98,7 +131,7 @@ export interface RunState {
   result?: RawAudit
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message)
     this.name = 'ApiError'
@@ -112,7 +145,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+        ...enTetesAuth(),
         ...(init?.headers || {}),
       },
     })
@@ -178,6 +211,36 @@ export const startReplay = (body: ReplayRequest) =>
 
 export const getRun = (runId: string, since = 0, sinceEx = 0) =>
   req<RunState>(`/runs/${runId}?since=${since}&since_ex=${sinceEx}`)
+
+/**
+ * Ouvre le rapport HTML d'un audit dans un nouvel onglet.
+ *
+ * Un lien ne porte pas d'en-tête : `<a href=".../report">` rendait 401 dès que
+ * l'API exigeait une clé. On télécharge donc le rapport AVEC la clé, puis on
+ * l'affiche depuis un `blob:`. L'onglet est ouvert avant l'appel réseau, pendant
+ * le clic : ouvert après un `await`, le bloqueur de fenêtres le refuserait.
+ */
+export async function openReport(auditId: string): Promise<void> {
+  const onglet = window.open('', '_blank')
+  try {
+    const res = await fetch(`${API_BASE}/audits/${encodeURIComponent(auditId)}/report`,
+                            { headers: enTetesAuth() })
+    if (!res.ok) {
+      const corps = await res.text().catch(() => '')
+      throw new ApiError(corps || `HTTP ${res.status}`, res.status)
+    }
+    const url = URL.createObjectURL(new Blob([await res.text()], { type: 'text/html' }))
+    if (onglet) {
+      onglet.opener = null
+      onglet.location.href = url
+    } else {
+      window.open(url, '_blank', 'noopener')
+    }
+  } catch (err) {
+    onglet?.close()
+    throw err
+  }
+}
 
 export const cancelRun = (runId: string) =>
   req<{ run_id: string; status: string }>(`/runs/${runId}/cancel`, { method: 'POST' })

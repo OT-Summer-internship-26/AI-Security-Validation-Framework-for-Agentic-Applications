@@ -76,6 +76,8 @@ audits hors du processus web, et le **tableau de bord**.
 > 🔐 **Authentification.** Renseignez `FRAMEWORK_API_KEY` dans le `.env` : l'API exige
 > alors l'en-tête `X-API-Key` sur chaque appel, avec **trois rôles** — `viewer`,
 > `operator`, `admin` — comparés par niveau, et des clés rotatives à expiration.
+> Le tableau de bord demande alors **sa** clé à chaque personne, et la garde le
+> temps de l'onglet : aucune clé n'est compilée dans le paquet servi.
 
 ### Lancer un audit
 
