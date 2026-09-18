@@ -317,3 +317,93 @@ def test_le_gate_REFUSE_de_choisir_lui_meme_son_sujet(monkeypatch, capsys):
         "il a rendu un VERDICT alors qu'on ne lui a designe aucun audit")
     assert "--dernier" in sortie, (
         "un refus qui n'explique pas comment proceder se contourne au hasard")
+
+
+# --------------------------------------------------------------------------- #
+# Codes de sortie : une REVUE requise arrete la CI.
+# --------------------------------------------------------------------------- #
+
+def test_REVIEW_REQUIRED_ne_sort_PLUS_en_zero(monkeypatch, tmp_path):
+    """« Validation humaine requise » sortait en 0 : le pipeline passait.
+
+    Une derogation EXPIREE — censee « redevenir bloquante » — escaladait donc a
+    un verdict qui ne bloquait rien. Code 3 : distinct du blocage (1) et de
+    l'usage (2), et non nul.
+    """
+    import json as _json
+
+    import ci_gate
+
+    fichier = tmp_path / "audit.json"
+    fichier.write_text(_json.dumps(audit({"ASI_09": [vuln("Critical")]})), encoding="utf-8")
+    monkeypatch.setattr(ci_gate, "load_policy", lambda: policy())
+    monkeypatch.setattr(sys, "argv", ["ci_gate.py", str(fichier)])
+
+    assert evaluate(audit({"ASI_09": [vuln("Critical")]}), policy())[0] == "REVIEW_REQUIRED"
+    assert ci_gate.main() == 3
+
+
+# --------------------------------------------------------------------------- #
+# CVE des dependances livrees : bloquantes, sauf derogation DATEE.
+# --------------------------------------------------------------------------- #
+
+def _rapport(*vulns):
+    """Rapport pip-audit minimal : (paquet, version, id, alias)."""
+    deps = [{"name": "sain", "version": "1.0", "vulns": []}]
+    for nom, version, ident, alias in vulns:
+        deps.append({"name": nom, "version": version,
+                     "vulns": [{"id": ident, "aliases": [alias], "fix_versions": ["9.9"]}]})
+    return {"dependencies": deps}
+
+
+def _derog(ident, jours):
+    return {"id": ident, "reason": "test", "approver": "test",
+            "expires_at": str(date.today() + timedelta(days=jours))}
+
+
+def test_une_CVE_sans_derogation_BLOQUE():
+    from check_cve import verifier
+
+    bloquants, _ = verifier(_rapport(("weasyprint", "69.0", "PYSEC-1", "CVE-2026-1")), [])
+    assert len(bloquants) == 1 and "weasyprint" in bloquants[0]
+
+
+def test_une_derogation_ACTIVE_couvre_la_CVE_par_son_ALIAS():
+    """pip-audit donne un PYSEC ; la derogation cite le CVE : l'alias doit suffire."""
+    from check_cve import verifier
+
+    bloquants, infos = verifier(_rapport(("click", "8.1.8", "PYSEC-2", "CVE-2026-7246")),
+                                [_derog("CVE-2026-7246", 30)])
+    assert not bloquants
+    assert any("sous dérogation" in i for i in infos)
+
+
+@pytest.mark.parametrize("expiration", [-1, "bientot"])
+def test_une_derogation_EXPIREE_ou_ILLISIBLE_ne_couvre_plus_rien(expiration):
+    from check_cve import verifier
+
+    d = _derog("CVE-2026-7246", 0)
+    d["expires_at"] = (str(date.today() + timedelta(days=expiration))
+                       if isinstance(expiration, int) else expiration)
+    bloquants, _ = verifier(_rapport(("click", "8.1.8", "PYSEC-2", "CVE-2026-7246")), [d])
+    assert len(bloquants) == 1 and "EXPIRÉE" in bloquants[0]
+
+
+def test_une_derogation_sans_objet_est_signalee_a_retirer():
+    """Laissee en place, elle couvrirait en silence la REAPPARITION de la faille."""
+    from check_cve import verifier
+
+    bloquants, infos = verifier(_rapport(), [_derog("CVE-2026-9999", 30)])
+    assert not bloquants and any("à retirer" in i for i in infos)
+
+
+def test_un_scan_ABSENT_ou_VIDE_ne_vaut_pas_aucune_CVE(tmp_path):
+    """pip-audit en echec (reseau) ne laisse pas de rapport : ce n'est pas un succes."""
+    import json as _json
+
+    from check_cve import main
+
+    assert main([str(tmp_path / "absent.json")]) == 1
+    vide = tmp_path / "vide.json"
+    vide.write_text(_json.dumps({"dependencies": []}), encoding="utf-8")
+    assert main([str(vide)]) == 1

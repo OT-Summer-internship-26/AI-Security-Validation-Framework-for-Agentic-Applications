@@ -1,0 +1,12 @@
+{
+  "_comment": "CVE des dependances LIVREES (requirements.lock) toleres par scripts/check_cve.py. Chaque entree expire : a echeance, la CVE redevient bloquante. Meme regle de dates que les derogations de gate_policy.json.",
+  "derogations": [
+    {
+      "id": "CVE-2026-7246",
+      "package": "click 8.1.8",
+      "reason": "Compromis documente dans requirements.txt : click >= 8.4 casse deepeval et semgrep (deux axes de mesure), la correction 8.3.3 est hors de portee du pin. Impact faible : click ne traite que des arguments de ligne de commande fournis par l'operateur.",
+      "approver": "Asser Belhassen",
+      "expires_at": "2026-12-17"
+    }
+  ]
+}

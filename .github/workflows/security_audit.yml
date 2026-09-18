@@ -75,6 +75,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Historique COMPLET : Semgrep compare au commit de base
+          # (`--baseline-commit`), qu'un clone superficiel ne contient pas.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -87,6 +91,47 @@ jobs:
           pip install semgrep pip-audit
           # Le framework complet n'est pas nécessaire : la CI n'exécute que
           # les axes déterministes.
+
+      # SEMGREP BLOQUE SUR CE QUE LE CHANGEMENT INTRODUIT — et seulement ça.
+      #
+      #     Il tournait en `continue-on-error` + `|| true` : il ne POUVAIT pas
+      #     échouer. Bloquant sur tout, il rougirait dès le premier run : mesuré
+      #     le 2026-09-18, 15 ERROR et 46 WARNING déjà présents. `--baseline-commit`
+      #     (natif) ne rapporte que ce qui est ABSENT du commit de base. Éprouvé
+      #     sur un dépôt jetable : faille ancienne seule → 0 finding, code 0 ;
+      #     faille ajoutée → elle seule, code 1. Les 15 existants restent à
+      #     traiter — ils ne peuvent simplement plus en cacher un seizième.
+      #
+      #     AVANT les tests, sur l'arbre tel que récupéré : le mode baseline
+      #     compare des états git, que la suite et la mutation touchent.
+      #     `BASE` passe par `env:` et non par `${{ }}` dans le script : c'est
+      #     précisément l'injection que Semgrep signale ailleurs dans ces workflows.
+      - name: Analyse statique — Semgrep (bloque les NOUVEAUX ERROR)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          code=0
+          if [ -z "${BASE:-}" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "::notice::aucun commit de base (déclenchement manuel) — Semgrep en rapport seul"
+            semgrep --config p/default --config p/security-audit                     --json --quiet --output semgrep.json . || true
+          else
+            semgrep --config p/default --config p/security-audit                     --severity ERROR --baseline-commit "$BASE" --error                     --json --quiet --output semgrep.json . || code=$?
+          fi
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("semgrep.json")
+          d = json.loads(p.read_text() or "{}") if p.exists() else {}
+          res = d.get("results", [])
+          print(f"Semgrep : {len(res)} finding(s) introduit(s) par ce changement"
+                if res or p.exists() else "Semgrep : aucun rapport produit")
+          for r in res[:15]:
+              print(f"  {(r.get('extra') or {}).get('severity', '?'):<8} "
+                    f"{r.get('path')}:{(r.get('start') or {}).get('line')} "
+                    f"{str(r.get('check_id', '')).split('.')[-1]}")
+          PY
+          # 1 = findings ERROR nouveaux ; 2 et plus = Semgrep en échec (règles
+          # injoignables…) — dans les deux cas, pas de verdict vert.
+          exit "$code"
 
       # Suite hors-ligne : aucun LLM, aucun reseau. Elle doit tourner a CHAQUE
       # PR, sinon les garde-fous des juges ne valent que par la memoire de qui
@@ -167,27 +212,8 @@ jobs:
         env:
           PYTHONUTF8: "1"
         run: python scripts/mutation_check.py
-      - name: Analyse statique — Semgrep
-        id: semgrep
-        continue-on-error: true
-        run: |
-          semgrep --config p/default --config p/security-audit \
-                  --json --quiet --output semgrep.json . || true
-          python - <<'PY'
-          import json, pathlib
-          d = json.loads(pathlib.Path("semgrep.json").read_text() or "{}")
-          res = d.get("results", [])
-          sev = lambda r: (r.get("extra") or {}).get("severity", "WARNING")
-          print(f"Semgrep : {len(res)} finding(s) — "
-                f"{sum(1 for r in res if sev(r)=='ERROR')} ERROR")
-          for r in res[:10]:
-              print(f"  {sev(r):<8} {r.get('path')}:{(r.get('start') or {}).get('line')} "
-                    f"{str(r.get('check_id','')).split('.')[-1]}")
-          PY
-
-      - name: Dépendances — pip-audit
+      - name: Dépendances — pip-audit (bloque hors dérogation datée)
         id: pipaudit
-        continue-on-error: true
         run: |
           # Code de sortie 1 = CVE trouvées, pas une erreur : on lit toujours le JSON.
           #
@@ -202,20 +228,15 @@ jobs:
           #     plus aucune compilation, donc le contrôle tourne aussi sous Windows
           #     (où `uvloop` faisait échouer l'ancienne forme).
           #
-          #     Résultat attendu aujourd'hui : 1 CVE — `click 8.1.8`
-          #     (PYSEC-2026-2132, corrigée en 8.3.3). C'est le compromis DÉLIBÉRÉ
-          #     documenté dans requirements.txt, pas une surprise.
+          #     IL NE POUVAIT PAS ÉCHOUER (`continue-on-error`), ET ÇA A COÛTÉ.
+          #     Mesuré le 2026-09-18 : DEUX CVE, pas l'unique `click` attendue —
+          #     `weasyprint 69.0` (CVE-2026-55073, corrigée en 70.0, montée depuis)
+          #     était passée inaperçue. `check_cve.py` décide désormais : toute
+          #     CVE non couverte par une dérogation DATÉE de
+          #     `config/cve_derogations.json` échoue ; un rapport absent aussi
+          #     (pip-audit sans réseau ne vaut pas « aucune CVE »).
           pip-audit -r requirements.lock --no-deps --disable-pip                     --format json --output pipaudit.json || true
-          python - <<'PY'
-          import json, pathlib
-          p = pathlib.Path("pipaudit.json")
-          d = json.loads(p.read_text()) if p.exists() else {}
-          cves = [(x["name"], v["id"]) for x in d.get("dependencies", [])
-                  for v in (x.get("vulns") or [])]
-          print(f"pip-audit : {len(cves)} CVE")
-          for name, cid in cves[:15]:
-              print(f"  {name:<24} {cid}")
-          PY
+          python scripts/check_cve.py pipaudit.json
 
       - name: Audit de la cible — axes déterministes
         if: inputs.target_url != ''
@@ -263,7 +284,7 @@ jobs:
           # precedente vient d'ecrire l'audit de CETTE execution, c'est donc
           # bien le plus recent. Sans cible auditee, cette etape ne tourne pas.
           python scripts/ci_gate.py --dernier --summary gate_summary.md
-          # exit 1 => le job échoue => la PR est bloquée.
+          # exit 1 (BLOCKED) ou 3 (REVIEW_REQUIRED) => le job échoue.
 
       - name: Rapport dans la pull request
         if: always() && github.event_name == 'pull_request'

@@ -257,6 +257,25 @@ MUTATIONS = [
      "    from scripts.ci_gate import load_policy\n\n    return load_policy()",
      "    return {\"per_category\": {}}",
      "tests/test_api.py::test_la_politique_servie_EST_celle_du_gate_CI"),
+
+    # « Revue requise » sortait en 0 : une derogation expiree ne bloquait rien.
+    ("REVIEW_REQUIRED laisse passer la CI",
+     "scripts/ci_gate.py",
+     '    return {"BLOCKED": 1, "REVIEW_REQUIRED": 3}.get(verdict, 0)',
+     '    return 1 if verdict == "BLOCKED" else 0',
+     "tests/test_ci_gate.py::test_REVIEW_REQUIRED_ne_sort_PLUS_en_zero"),
+
+    ("Une derogation de CVE expiree couvre encore la faille",
+     "scripts/check_cve.py",
+     "    actives, expirees = partager_derogations(derogations)",
+     "    actives, expirees = list(derogations), []",
+     "tests/test_ci_gate.py::test_une_derogation_EXPIREE_ou_ILLISIBLE_ne_couvre_plus_rien"),
+
+    ("Un scan pip-audit vide passe pour « aucune CVE »",
+     "scripts/check_cve.py",
+     '    if not rapport.get("dependencies"):',
+     "    if False:",
+     "tests/test_ci_gate.py::test_un_scan_ABSENT_ou_VIDE_ne_vaut_pas_aucune_CVE"),
 ]
 
 
