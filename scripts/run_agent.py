@@ -145,6 +145,10 @@ def main() -> int:
         "target_url": args.target,
         "prompt_field": args.prompt_field, "response_field": args.response_field,
         "extra_payload": extra_payload,
+        # Garak ne passe pas par `raw_cb` : il lit ses en-tetes dans la CONFIG
+        # (`_run_garak_layer`). Absents d'ici, une cible authentifiee lui
+        # repondait 401 et le seul axe independant du LLM sortait « exclu ».
+        "headers": headers,
         "llm_profile": args.profile, "attacks_per_type": args.attacks_per_type,
         "max_concurrent": args.max_concurrent, "pyrit_max_turns": args.pyrit_max_turns,
         "garak_probes": args.garak_probes,

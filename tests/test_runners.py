@@ -240,8 +240,11 @@ def test_les_en_tetes_atteignent_la_cible_depuis_la_CLI(monkeypatch):
 
     monkeypatch.setattr(socle, "build_http_callback", espion)
 
+    config_agent: dict = {}
+
     class AgentEspion:
         def __init__(self, target_callback=None, config=None):
+            config_agent.update(config or {})
             raise SystemExit(0)
 
     from workflow import audit_graph
@@ -254,6 +257,9 @@ def test_les_en_tetes_atteignent_la_cible_depuis_la_CLI(monkeypatch):
 
     assert vus.get("headers") == {"Authorization": "Bearer jeton"}, (
         "les en-tetes se perdent entre la ligne de commande et la cible")
+    # Garak ne passe pas par le callback : il lit la CONFIG de l'agent.
+    assert config_agent.get("headers") == {"Authorization": "Bearer jeton"}, (
+        "garak attaque la cible sans ses en-tetes : 401, axe exclu")
 
 
 def test_des_en_tetes_mal_formes_sont_refuses_AVANT_l_audit(monkeypatch):

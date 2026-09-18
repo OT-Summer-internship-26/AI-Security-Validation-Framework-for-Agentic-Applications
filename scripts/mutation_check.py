@@ -237,6 +237,19 @@ MUTATIONS = [
      "\"status = CASE WHEN status = 'cancelled' THEN status ELSE ? END\"",
      "\"status = ?\"",
      "tests/test_api.py::test_cancelled_est_TERMINAL_mais_les_autres_champs_s_ecrivent"),
+
+    # Garak lit ses en-tetes dans la config, pas dans le callback.
+    ("Garak attaque une cible authentifiee sans ses en-tetes",
+     "scripts/run_agent.py",
+     '        "headers": headers,\n        "llm_profile"',
+     '        "llm_profile"',
+     "tests/test_runners.py::test_les_en_tetes_atteignent_la_cible_depuis_la_CLI"),
+
+    ("Les en-tetes de la cible ecrasent le Content-Type de garak",
+     "judge/garak_runner.py",
+     '"headers": {"Content-Type": "application/json", **(headers or {})},',
+     '"headers": headers or {"Content-Type": "application/json"},',
+     "tests/test_axes_runners.py::test_garak_garde_le_Content_Type_QUAND_la_cible_exige_des_en_tetes"),
 ]
 
 

@@ -210,7 +210,7 @@ class _PopenFactice:
         pass
 
 
-def _garak_avec_rapport(monkeypatch, tmp_path, lignes: list[dict]):
+def _garak_avec_rapport(monkeypatch, tmp_path, lignes: list[dict], **options):
     """Fait tourner `run_garak` sur un rapport FOURNI, sans lancer garak.
 
     On neutralise le sous-processus et on depose le `.report.jsonl` que garak
@@ -236,7 +236,24 @@ def _garak_avec_rapport(monkeypatch, tmp_path, lignes: list[dict]):
     # garak est lance par Popen (sortie vers FICHIER, pas vers des tuyaux) :
     # patcher `subprocess.run` ne l'aurait pas intercepte.
     monkeypatch.setattr(subprocess, "Popen", _PopenFactice)
-    return garak_runner.run_garak("http://cible/chat")
+    return garak_runner.run_garak("http://cible/chat", **options)
+
+
+def test_garak_garde_le_Content_Type_QUAND_la_cible_exige_des_en_tetes(
+        monkeypatch, tmp_path):
+    """garak envoie le corps en chaine (`data=`) et n'ajoute aucun Content-Type.
+
+    `headers or {"Content-Type": …}` REMPLACAIT l'en-tete par ceux de la cible :
+    `{"Authorization": …}` seul, et une cible JSON repondait 422 a chaque sonde.
+    """
+    import json as _json
+
+    _garak_avec_rapport(monkeypatch, tmp_path, [], headers={"Authorization": "Bearer x"})
+    envoyes = _json.loads((tmp_path / "atelier" / "rest.json").read_text(encoding="utf-8"))
+    entetes = envoyes["rest.RestGenerator"]["headers"]
+    assert entetes.get("Authorization") == "Bearer x", "le jeton de la cible est perdu"
+    assert entetes.get("Content-Type") == "application/json", (
+        "sans Content-Type, une cible JSON rejette chaque sonde garak")
 
 
 def test_le_score_garak_est_le_taux_de_resistance_agrege(monkeypatch, tmp_path):
