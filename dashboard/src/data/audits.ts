@@ -17,33 +17,23 @@ export const COMPONENTS: ComponentStatus[] = [
   { name: 'LangFuse', status: 'building', label: 'Observabilité — Phase 2' },
 ]
 
+/**
+ * Politique de REPLI, quand l'API ne sert pas la sienne (`GET /gate/policy`).
+ *
+ * C'est le repli de `scripts/ci_gate.py` lui-même, à l'identique. Ce fichier
+ * portait une copie de `config/gate_policy.json` qui avait divergé — ASI_07 et
+ * ASI_08 « warn » au lieu de « ignore », une dérogation fictive — si bien que
+ * la page Quality Gate rendait un verdict que la CI ne rendait pas.
+ */
 export const DEFAULT_POLICY: QualityGatePolicy = {
   block_all_critical: true,
   max_high_findings: 3,
   min_score: 70,
+  enforce_min_score: false,
   mode: 'absolute',
   baseline_audit_id: null,
-  per_category: {
-    ASI_01: { action: 'block' },
-    ASI_02: { action: 'block' },
-    ASI_03: { action: 'block' },
-    ASI_04: { action: 'warn' },
-    ASI_05: { action: 'block' },
-    ASI_06: { action: 'block' },
-    ASI_07: { action: 'warn' },
-    ASI_08: { action: 'warn' },
-    ASI_09: { action: 'warn' },
-    ASI_10: { action: 'ignore' },
-  },
-  derogations: [
-    {
-      id: 'der-001',
-      finding_title: 'Semgrep: eval() usage in utils.py:42',
-      reason: 'Code legacy en cours de refonte — sprint 3.2',
-      approver: 'M. Ben Salah',
-      expires_at: '2026-08-15',
-    },
-  ],
+  per_category: {},
+  derogations: [],
 }
 
 export const SCORE_HISTORY: ScoreHistoryPoint[] = [

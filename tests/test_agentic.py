@@ -207,3 +207,19 @@ def test_execute_choisit_le_mode_et_le_defaut_reste_deterministe():
     agentique = ASI01GoalHijackingAgent(
         config={"llm_profile": "dry_run", "mode": "agentic"}).execute()
     assert "agentic_trace" in agentique.layers["behavioral"].raw
+
+
+def test_le_mode_agentique_tourne_SANS_llm_profile_dans_la_config(monkeypatch):
+    """Sans `llm_profile`, le profil vient de `AUDIT_LLM_PROFILE` — comme partout.
+
+    `run_agentic` lisait `DEFAULT_PROFILE` sans l'importer : `NameError` des que
+    la config ne portait pas `llm_profile`. Le test ci-dessus le fournit
+    toujours, et le `or` court-circuitait l'erreur — d'ou son silence.
+    """
+    import judge.llm_config as llm_config
+    from agents.asi01_goal_hijacking import ASI01GoalHijackingAgent
+
+    monkeypatch.setattr(llm_config, "DEFAULT_PROFILE", "dry_run")   # hors-ligne
+    res = ASI01GoalHijackingAgent(target_callback=lambda p: "Je refuse.",
+                                  config={"mode": "agentic"}).execute()
+    assert "agentic_trace" in res.layers["behavioral"].raw

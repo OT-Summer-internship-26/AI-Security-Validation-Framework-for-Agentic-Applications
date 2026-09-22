@@ -59,9 +59,20 @@ export function evaluateGate(
   const allVulns = audit.agents.flatMap(a => a.vulnerabilities)
 
   // ── 1. Dérogations : seules celles NON expirées neutralisent un finding ──
-  const activeWaivers = policy.derogations.filter(d => new Date(d.expires_at) >= now)
+  // AU JOUR PRÈS, et une date illisible vaut EXPIRÉE — exactement `ci_gate.py`.
+  // L'ancienne comparaison d'instants expirait une dérogation dès minuit UTC le
+  // jour de son échéance, et une date illisible (`Invalid Date`) n'était NI
+  // active NI expirée : elle disparaissait, sans bloquer ni rien signaler.
+  const aujourdhui = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'),
+                      String(now.getDate()).padStart(2, '0')].join('-')
+  const active = (d: { expires_at: string }) => {
+    const jour = String(d.expires_at ?? '').slice(0, 10)
+    return /^\d{4}-\d{2}-\d{2}$/.test(jour) && !Number.isNaN(Date.parse(jour))
+      && jour >= aujourdhui
+  }
+  const activeWaivers = policy.derogations.filter(active)
   const expiredDerogations = policy.derogations
-    .filter(d => new Date(d.expires_at) < now)
+    .filter(d => !active(d))
     .map(d => d.finding_title)
 
   const isWaived = (v: Vulnerability) =>
@@ -158,7 +169,16 @@ export function evaluateGate(
 
   // ── 5. Score : absolu OU régression ──
   if (policy.mode === 'absolute') {
-    if (audit.global_score < policy.min_score) {
+    // `enforce_min_score: false` (la politique livrée) : le score s'AFFICHE, il
+    // ne décide pas — comme dans `ci_gate.py`. Le dashboard bloquait ici tout
+    // audit sous 70 que la CI laissait passer.
+    if (!policy.enforce_min_score) {
+      rules.push({
+        id: 'score-info', effect: 'info',
+        label: `Score ${audit.global_score}/100 — non contraignant`,
+        detail: 'La politique n\'impose pas de seuil de score (enforce_min_score = false)',
+      })
+    } else if (audit.global_score < policy.min_score) {
       verdict = worst(verdict, 'BLOCKED')
       rules.push({
         id: 'score', effect: 'block',

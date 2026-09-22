@@ -8,8 +8,8 @@ Stage — Ooredoo Tunisie, Département Intelligence Artificielle.
 [![Audit de sécurité IA](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/security_audit.yml)
 [![Images de conteneur](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml/badge.svg)](https://github.com/OT-Summer-internship-26/AI-Security-Validation-Framework-for-Agentic-Applications/actions/workflows/images.yml)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-291%20passants-2ea44f)
-![Mutation](https://img.shields.io/badge/mutation-23%2F23-2ea44f)
+![Tests](https://img.shields.io/badge/tests-307%20passants-2ea44f)
+![Mutation](https://img.shields.io/badge/mutation-35%2F35-2ea44f)
 ![OWASP ASI](https://img.shields.io/badge/OWASP%20ASI-10%2F10-2ea44f)
 ![Images](https://img.shields.io/badge/images-sign%C3%A9es%20%2B%20SBOM-8957e5?logo=docker&logoColor=white)
 
@@ -76,6 +76,8 @@ audits hors du processus web, et le **tableau de bord**.
 > 🔐 **Authentification.** Renseignez `FRAMEWORK_API_KEY` dans le `.env` : l'API exige
 > alors l'en-tête `X-API-Key` sur chaque appel, avec **trois rôles** — `viewer`,
 > `operator`, `admin` — comparés par niveau, et des clés rotatives à expiration.
+> Le tableau de bord demande alors **sa** clé à chaque personne, et la garde le
+> temps de l'onglet : aucune clé n'est compilée dans le paquet servi.
 
 ### Lancer un audit
 
@@ -98,7 +100,7 @@ curl http://localhost:8000/runs/$RUN_ID -H "X-API-Key: $CLE"
 
 ```bash
 pip install -r requirements.txt
-pytest tests/ -q                                       # 291 tests, sans réseau ni LLM
+pytest tests/ -q                                       # 307 tests, sans réseau ni LLM
 python scripts/run_agent.py ASI_01 --profile dry_run   # doit rendre 5.57
 
 python scripts/run_audit_global.py --target http://localhost:8090/api/chat --profile final
@@ -144,8 +146,8 @@ cosign verify-attestation --key cosign.pub --type cyclonedx \
 
 | Mesure | Valeur | Comment |
 |---|---|---|
-| Tests | **291 passants** | hors-ligne, ni réseau ni LLM |
-| Mutation | **23 / 23** | chaque correctif est cassé, son test doit rougir |
+| Tests | **307 passants** | hors-ligne, ni réseau ni LLM |
+| Mutation | **35 / 35** | chaque correctif est cassé, son test doit rougir |
 | Agents ASI | **10 / 10** | chacun avec au moins un run réel |
 | Audit global sur cible réelle | **oui** — `global_score: 72.8` | profil OpenAI, 2026-09-01 |
 | Vérité terrain DVAP | **43 / 43** objectifs vérifiés | chaque citation confrontée à sa source |

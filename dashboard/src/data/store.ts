@@ -22,7 +22,7 @@
  *     persistant en tête de page. Si vous déplacez ce repli, déplacez-le aussi.
  */
 import { useSyncExternalStore } from 'react'
-import { fetchAudits } from './api'
+import { ApiError, fetchAudits, fetchGatePolicy, type GatePolicyServie } from './api'
 import { adaptAudit } from './adapter'
 import { AUDITS as DEMO_AUDITS } from './audits'
 import type { Audit } from '@/types'
@@ -33,10 +33,16 @@ interface State {
   audits: Audit[]
   source: DataSource
   error: string | null
+  /** L'API répond, mais exige une clé : il faut la DEMANDER, pas la démarrer. */
+  unauthorized: boolean
+  /** Politique servie par l'API (celle de la CI) ; `null` = repli local. */
+  policy: GatePolicyServie | null
   loadedAt: number
 }
 
-let state: State = { audits: [], source: 'loading', error: null, loadedAt: 0 }
+let state: State = {
+  audits: [], source: 'loading', error: null, unauthorized: false, policy: null, loadedAt: 0,
+}
 const listeners = new Set<() => void>()
 
 function emit(next: Partial<State>): void {
@@ -53,8 +59,11 @@ let inFlight: Promise<void> | null = null
 /** Recharge les audits depuis l'API. Concurrent-safe : un seul appel à la fois. */
 export function reloadAudits(): Promise<void> {
   if (inFlight) return inFlight
-  inFlight = fetchAudits()
-    .then(({ audits }) => {
+  // La politique voyage AVEC les audits : un verdict affiché sans elle serait
+  // celui d'une politique que la CI n'applique pas. Son échec seul (API plus
+  // ancienne, sans l'endpoint) retombe sur le repli, sans masquer les audits.
+  inFlight = Promise.all([fetchAudits(), fetchGatePolicy().catch(() => null)])
+    .then(([{ audits }, policy]) => {
       const adapted = audits
         .map((raw, i) => adaptAudit(raw, (raw as { _file?: string })._file || `audit-${i}`))
         .sort(byDateDesc)
@@ -62,6 +71,8 @@ export function reloadAudits(): Promise<void> {
         audits: adapted.length ? adapted : [...DEMO_AUDITS].sort(byDateDesc),
         source: adapted.length ? 'api' : 'demo',
         error: adapted.length ? null : 'Aucun audit enregistré — jeu de démonstration affiché.',
+        unauthorized: false,
+        policy,
         loadedAt: Date.now(),
       })
     })
@@ -70,6 +81,7 @@ export function reloadAudits(): Promise<void> {
         audits: [...DEMO_AUDITS].sort(byDateDesc),
         source: 'demo',
         error: err.message,
+        unauthorized: err instanceof ApiError && err.status === 401,
         loadedAt: Date.now(),
       })
     })
@@ -93,3 +105,4 @@ export function useAudits(): State {
 /** Accès direct hors composant (rarement utile — préférer `useAudits`). */
 export const currentAudits = (): Audit[] => state.audits
 export const currentSource = (): DataSource => state.source
+export const currentPolicy = (): GatePolicyServie | null => state.policy

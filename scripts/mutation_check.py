@@ -195,6 +195,87 @@ MUTATIONS = [
      "\"SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?\"",
      "\"SELECT id FROM runs WHERE finished_at IS NULL OR finished_at < ?\"",
      "tests/test_store.py::test_la_purge_retire_le_VOLUME_et_garde_la_TRACE"),
+
+    # Le code de la cible s'executait sur l'hote, avec ses cles, faute de Docker.
+    ("Le code de la cible s'execute sans Docker",
+     "agents/asi05_code_execution.py",
+     "        if not docker_ok:",
+     "        if False:",
+     "tests/test_sandbox.py::test_sans_docker_le_code_de_la_cible_n_est_JAMAIS_execute"),
+
+    # Le jeton de la cible repassait par la ligne de commande, donc par le journal.
+    ("Le jeton de la cible est journalise en clair",
+     "api/main.py",
+     '    if req.extra_payload:\n        cmd += ["--extra-payload"',
+     '    if req.headers:\n        cmd += ["--headers", json.dumps(req.headers)]\n'
+     '    if req.extra_payload:\n        cmd += ["--extra-payload"',
+     "tests/test_runners.py::test_le_jeton_de_la_cible_atteint_le_runner_SANS_passer_par_le_journal"),
+
+    # Un rejeu pris dans la file devenait un audit complet de la cible.
+    ("L'ouvrier prend un rejeu et lance un audit complet",
+     "api/store.py",
+     "WHERE status='queued' AND kind='audit' ",
+     "WHERE status='queued' ",
+     "tests/test_api.py::test_un_rejeu_n_est_JAMAIS_pris_par_l_ouvrier"),
+
+    # `run_agentic` sans `llm_profile` : NameError, masque par le `or`.
+    ("Le mode agentique lit un profil jamais importe",
+     "agents/base_agent.py",
+     "etait fourni.\n        from judge.llm_config import DEFAULT_PROFILE, get_judge_models",
+     "etait fourni.\n        from judge.llm_config import get_judge_models",
+     "tests/test_agentic.py::test_le_mode_agentique_tourne_SANS_llm_profile_dans_la_config"),
+
+    # L'annulation etait ecrite en base et jamais relue : l'audit continuait.
+    ("L'executant ne voit pas l'annulation",
+     "api/main.py",
+     '            if store.statut(run.id) != "cancelled":',
+     '            if True:',
+     "tests/test_api.py::test_annuler_un_audit_en_cours_ARRETE_vraiment_le_runner"),
+
+    ("L'executant ecrase l'annulation par son propre statut",
+     "api/store.py",
+     "\"status = CASE WHEN status = 'cancelled' THEN status ELSE ? END\"",
+     "\"status = ?\"",
+     "tests/test_api.py::test_cancelled_est_TERMINAL_mais_les_autres_champs_s_ecrivent"),
+
+    # Garak lit ses en-tetes dans la config, pas dans le callback.
+    ("Garak attaque une cible authentifiee sans ses en-tetes",
+     "scripts/run_agent.py",
+     '        "headers": headers,\n        "llm_profile"',
+     '        "llm_profile"',
+     "tests/test_runners.py::test_les_en_tetes_atteignent_la_cible_depuis_la_CLI"),
+
+    ("Les en-tetes de la cible ecrasent le Content-Type de garak",
+     "judge/garak_runner.py",
+     '"headers": {"Content-Type": "application/json", **(headers or {})},',
+     '"headers": headers or {"Content-Type": "application/json"},',
+     "tests/test_axes_runners.py::test_garak_garde_le_Content_Type_QUAND_la_cible_exige_des_en_tetes"),
+
+    # Le dashboard jugeait avec SA copie de la politique, qui avait diverge.
+    ("Le dashboard recoit une autre politique que celle de la CI",
+     "api/main.py",
+     "    from scripts.ci_gate import load_policy\n\n    return load_policy()",
+     "    return {\"per_category\": {}}",
+     "tests/test_api.py::test_la_politique_servie_EST_celle_du_gate_CI"),
+
+    # « Revue requise » sortait en 0 : une derogation expiree ne bloquait rien.
+    ("REVIEW_REQUIRED laisse passer la CI",
+     "scripts/ci_gate.py",
+     '    return {"BLOCKED": 1, "REVIEW_REQUIRED": 3}.get(verdict, 0)',
+     '    return 1 if verdict == "BLOCKED" else 0',
+     "tests/test_ci_gate.py::test_REVIEW_REQUIRED_ne_sort_PLUS_en_zero"),
+
+    ("Une derogation de CVE expiree couvre encore la faille",
+     "scripts/check_cve.py",
+     "    actives, expirees = partager_derogations(derogations)",
+     "    actives, expirees = list(derogations), []",
+     "tests/test_ci_gate.py::test_une_derogation_EXPIREE_ou_ILLISIBLE_ne_couvre_plus_rien"),
+
+    ("Un scan pip-audit vide passe pour « aucune CVE »",
+     "scripts/check_cve.py",
+     '    if not rapport.get("dependencies"):',
+     "    if False:",
+     "tests/test_ci_gate.py::test_un_scan_ABSENT_ou_VIDE_ne_vaut_pas_aucune_CVE"),
 ]
 
 

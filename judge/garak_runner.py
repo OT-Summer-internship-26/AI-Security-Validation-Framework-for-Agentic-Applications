@@ -91,7 +91,11 @@ def run_garak(
             "name": "audit-target",
             "uri": target_url,
             "method": "post",
-            "headers": headers or {"Content-Type": "application/json"},
+            # FUSION, PAS REMPLACEMENT. garak envoie le corps en CHAINE (`data=`)
+            # et n'ajoute aucun Content-Type : des en-tetes de cible sans lui
+            # (`{"Authorization": …}`) faisaient repondre 422 a une cible JSON
+            # sur chaque sonde — axe exclu, sans autre signe.
+            "headers": {"Content-Type": "application/json", **(headers or {})},
             # `extra_payload` : champs JSON constants exigés par la cible EN PLUS du
             # prompt (ex. lab DVAP autonomous-agent : {"title": …, "content": …} — les
             # deux sont requis, sinon 422). Même paramètre que build_http_callback pour

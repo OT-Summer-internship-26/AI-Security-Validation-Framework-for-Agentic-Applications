@@ -251,8 +251,12 @@ peut pas garantir :
 3. **Un déploiement par CONDENSÉ** — le workflow résout l'étiquette en condensé
    et déploie celui-ci. On ne déploie pas « la dernière », on déploie celle-là.
 4. **Une confirmation post-déploiement** — `/health` rend le champ `build` ; le
-   workflow exige qu'il corresponde à la version demandée. Sans ça, un
-   `up -d` qui ne recrée rien passerait pour un déploiement réussi.
+   workflow exige qu'il corresponde au **commit** de la version demandée. Sans
+   ça, un `up -d` qui ne recrée rien passerait pour un déploiement réussi.
+   *Corrigé le 2026-09-18* : la comparaison se faisait contre l'étiquette
+   (`sha-<7>` ou `1.2.3`) alors que `build` porte `sha-<SHA complet>` — tout
+   déploiement réussi échouait ici, et le retour arrière proposé désignait une
+   étiquette inexistante. Le commit est celui déjà résolu par l'étape `topologie`.
 
 **Ce qui reste à vous, et c'est délibéré** : l'hôte, l'accès et la fenêtre. Le
 transport SSH est **inert** tant que `DEPLOY_HOST` / `DEPLOY_SSH_KEY` n'existent

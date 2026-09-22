@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -66,8 +67,11 @@ def main() -> int:
     #     Mais AUCUN chemin ne le remplissait : ni la CLI, ni le modele de
     #     requete de l'API. Une cible derriere `Authorization: Bearer …` etait
     #     donc inauditable — le parametre existait, le cablage non.
-    ap.add_argument("--headers", default=None,
-                    help="en-tetes HTTP JSON envoyes a la cible. "
+    #     L'API, elle, passe par `AUDIT_TARGET_HEADERS` : une ligne de commande
+    #     est journalisee et visible dans `ps`, un jeton n'a rien a y faire.
+    ap.add_argument("--headers", default=os.environ.get("AUDIT_TARGET_HEADERS"),
+                    help="en-tetes HTTP JSON envoyes a la cible (defaut : variable "
+                         "AUDIT_TARGET_HEADERS, qui garde le jeton hors de `ps`). "
                          "Ex. --headers '{\"Authorization\": \"Bearer xxx\"}'. "
                          "Sans ce drapeau, une cible protegee par un token repond 401 : "
                          "l'axe est EXCLU du score (jamais note 0) — l'audit ne mesure "
@@ -141,6 +145,10 @@ def main() -> int:
         "target_url": args.target,
         "prompt_field": args.prompt_field, "response_field": args.response_field,
         "extra_payload": extra_payload,
+        # Garak ne passe pas par `raw_cb` : il lit ses en-tetes dans la CONFIG
+        # (`_run_garak_layer`). Absents d'ici, une cible authentifiee lui
+        # repondait 401 et le seul axe independant du LLM sortait « exclu ».
+        "headers": headers,
         "llm_profile": args.profile, "attacks_per_type": args.attacks_per_type,
         "max_concurrent": args.max_concurrent, "pyrit_max_turns": args.pyrit_max_turns,
         "garak_probes": args.garak_probes,

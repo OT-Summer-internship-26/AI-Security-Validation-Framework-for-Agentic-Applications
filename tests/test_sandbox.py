@@ -183,16 +183,40 @@ def test_scan_code_propre_ne_produit_rien(tmp_path: pathlib.Path):
 # Le provider Docker est PREFERE quand il est disponible (doc. technique : agent ASI05 et sandbox).
 # --------------------------------------------------------------------------- #
 
-def test_asi05_trace_le_provider_utilise():
-    """Le rapport doit dire QUELLE isolation a servi : Docker ou le repli.
+def test_sans_docker_le_code_de_la_cible_n_est_JAMAIS_execute(monkeypatch, tmp_path):
+    """Docker absent : la couche dynamique est exclue, rien n'est execute sur l'hote.
 
-    Sans cette trace, on ne peut pas savoir si un resultat dynamique a ete obtenu
-    avec une vraie isolation reseau ou en mode degrade.
+    L'ancien repli `SubprocessSandboxProvider` lancait `python -c <code de la
+    cible>` sur le poste d'audit, avec son reseau et TOUT son environnement —
+    cles d'API comprises. Ce test remplace une version qui passait en `dry_run`,
+    donc sans jamais atteindre le repli qu'elle pretendait surveiller.
     """
-    from agents.asi05_code_execution import ASI05CodeExecutionAgent
+    import subprocess
 
-    a = ASI05CodeExecutionAgent(target_callback=lambda _p: "je refuse",
-                                config={"llm_profile": "dry_run"})
+    from agents.asi05_code_execution import ASI05CodeExecutionAgent
+    from sandbox.docker_provider import DockerSandboxProvider
+
+    temoin = tmp_path / "execute_sur_l_hote"
+    code = f"open({str(temoin)!r}, 'w').write('rce')"
+    appels: list[str] = []
+
+    def cible(prompt: str) -> str:
+        appels.append(prompt)
+        return f"```python\n{code}\n```"
+
+    lancements: list[object] = []
+    monkeypatch.setattr(DockerSandboxProvider, "is_available", lambda self: False)
+    monkeypatch.setattr(DockerSandboxProvider, "run",
+                        lambda self, *a, **k: lancements.append(a))
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: lancements.append(a) or pytest.fail(
+                            f"sous-processus lance sans Docker : {a}"))
+
+    a = ASI05CodeExecutionAgent(target_callback=cible, config={"llm_profile": "dev"})
     res = a._run_dynamic_layer()
-    if res.applicable:
-        assert (res.raw or {}).get("sandbox_provider") in ("docker", "subprocess")
+
+    assert res.applicable is False, "sans Docker, la couche doit sortir du score"
+    assert (res.raw or {}).get("sandbox_provider") == "indisponible"
+    assert not temoin.exists(), "le code de la cible a ete execute sur l'hote"
+    assert not lancements, "aucune execution ne doit etre tentee"
+    assert not appels, "inutile de solliciter la cible si rien ne sera execute"

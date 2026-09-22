@@ -240,8 +240,11 @@ def test_les_en_tetes_atteignent_la_cible_depuis_la_CLI(monkeypatch):
 
     monkeypatch.setattr(socle, "build_http_callback", espion)
 
+    config_agent: dict = {}
+
     class AgentEspion:
         def __init__(self, target_callback=None, config=None):
+            config_agent.update(config or {})
             raise SystemExit(0)
 
     from workflow import audit_graph
@@ -254,6 +257,9 @@ def test_les_en_tetes_atteignent_la_cible_depuis_la_CLI(monkeypatch):
 
     assert vus.get("headers") == {"Authorization": "Bearer jeton"}, (
         "les en-tetes se perdent entre la ligne de commande et la cible")
+    # Garak ne passe pas par le callback : il lit la CONFIG de l'agent.
+    assert config_agent.get("headers") == {"Authorization": "Bearer jeton"}, (
+        "garak attaque la cible sans ses en-tetes : 401, axe exclu")
 
 
 def test_des_en_tetes_mal_formes_sont_refuses_AVANT_l_audit(monkeypatch):
@@ -296,20 +302,81 @@ def test_les_en_tetes_entrent_dans_la_config_du_workflow(monkeypatch, tmp_path):
     assert capture.get("headers") == {"X-API-Key": "abc"}
 
 
-def test_l_API_transmet_les_en_tetes_au_runner():
-    """L'API passe par une LIGNE DE COMMANDE : ajouter le champ ne suffisait pas.
+def test_le_jeton_de_la_cible_atteint_le_runner_SANS_passer_par_le_journal(
+        monkeypatch, tmp_path):
+    """Les en-tetes arrivent au runner, jamais dans sa ligne de commande.
 
-    `_build_cmd` doit poser `--headers`, sinon le champ du modele est accepte,
-    stocke, affiche dans le suivi — et jamais applique.
+    `_build_cmd` posait `--headers {"Authorization": "Bearer …"}`, et `_execute`
+    journalise cette ligne (`$ …`) dans `run_logs` — que `GET /runs/{id}` rend a
+    tout `viewer`. `masquer_secrets` masquait `request.headers` partout, sauf la.
+    On lance donc `_execute` pour de bon, sous-processus remplace par un faux.
     """
-    from api.main import AuditRequest, _build_cmd
+    import io
+    import subprocess
 
-    req = AuditRequest(target_url="http://cible/chat",
-                       headers={"Authorization": "Bearer via-api"})
-    cmd = _build_cmd(req, "ASI_01")
+    monkeypatch.setenv("AUDIT_STATE_DB", str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("AUDIT_TARGET_HEADERS", '{"X-Herite": "du-service"}')
+    import api.main as main
+    from api import store
 
-    assert "--headers" in cmd, "l'API accepte les en-tetes et ne les transmet pas"
-    assert '{"Authorization": "Bearer via-api"}' in cmd[cmd.index("--headers") + 1]
+    store.fermer()
+    store.init()
+    secret = "Bearer jeton-de-la-cible"
+    lances: list[tuple[list[str], dict]] = []
+
+    class FauxRunner:
+        def __init__(self, cmd, env=None, **_):
+            lances.append((cmd, env))
+            self.stdout = io.StringIO("")
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(subprocess, "Popen", FauxRunner)
+    try:
+        for entetes in ({"Authorization": secret}, None):
+            req = main.AuditRequest(category="ASI_01", target_url="http://cible/chat",
+                                    headers=entetes)
+            run = main.Run(f"run-{len(lances)}", req)
+            main._execute(run)
+            # Exactement ce que `GET /runs/{id}` rend a un `viewer`.
+            rendu = json.dumps(main.masquer_secrets(store.lire_run(run.id)))
+            assert "$ " in rendu, "la ligne de commande n'est plus journalisee"
+            assert secret not in rendu, "jeton de la cible lisible dans le suivi"
+
+        (cmd, env), (_, env_sans) = lances
+        assert secret not in " ".join(cmd), "jeton de la cible dans la ligne de commande"
+        assert json.loads(env["AUDIT_TARGET_HEADERS"]) == {"Authorization": secret}, (
+            "l'API accepte les en-tetes et ne les transmet pas")
+        assert "AUDIT_TARGET_HEADERS" not in env_sans, (
+            "une valeur heritee du service part vers une cible qui ne l'a pas demandee")
+    finally:
+        store.fermer()
+
+
+def test_le_runner_lit_les_en_tetes_dans_l_environnement(monkeypatch):
+    """Le pendant cote runner : `AUDIT_TARGET_HEADERS` vaut `--headers`."""
+    runner = _charger("run_agent")
+    vus: dict = {}
+
+    import agents.base_agent as socle
+
+    monkeypatch.setattr(socle, "build_http_callback",
+                        lambda target, **kw: vus.update(kw) or (lambda p: ""))
+
+    class AgentEspion:
+        def __init__(self, target_callback=None, config=None):
+            raise SystemExit(0)
+
+    from workflow import audit_graph
+
+    monkeypatch.setitem(audit_graph.AGENT_REGISTRY, "ASI_01", AgentEspion)
+    monkeypatch.setenv("AUDIT_TARGET_HEADERS", '{"Authorization": "Bearer env"}')
+    monkeypatch.setattr(sys, "argv", ["run_agent.py", *BASE])
+    with pytest.raises(SystemExit):
+        runner.main()
+
+    assert vus.get("headers") == {"Authorization": "Bearer env"}
 
 
 # --------------------------------------------------------------------------- #

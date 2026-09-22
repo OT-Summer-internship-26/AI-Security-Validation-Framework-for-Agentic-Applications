@@ -11,9 +11,15 @@ POURQUOI UNE POLITIQUE ET PAS UN SEUIL
     hors périmètre. La décision se compose donc de règles nommées et traçables.
 
 USAGE
-    python scripts/ci_gate.py                       # dernier audit
     python scripts/ci_gate.py <audit.json>
-    python scripts/ci_gate.py --summary out.md      # rapport Markdown pour la PR
+    python scripts/ci_gate.py --dernier             # le plus récent sur disque
+    python scripts/ci_gate.py <audit.json> --summary out.md   # rapport pour la PR
+
+CODES DE SORTIE
+    0  PASS / PASS_WARNING
+    1  BLOCKED, ou aucun audit lisible
+    2  aucun audit désigné (usage)
+    3  REVIEW_REQUIRED — une validation humaine est exigée
 """
 from __future__ import annotations
 
@@ -58,6 +64,27 @@ def latest_audit() -> Path | None:
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
+def partager_derogations(derogations: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(actives, expirées), au JOUR près. Partagé avec `check_cve.py` : une
+    dérogation a le même sens pour une faille de cible et pour une CVE."""
+    today = date.today()
+    active, expired = [], []
+    for d in derogations:
+        try:
+            exp = datetime.fromisoformat(str(d.get("expires_at"))).date()
+        except Exception:
+            # DATE ILLISIBLE → EXPIRÉE, et il faut l'écrire explicitement.
+            #     La version précédente posait `exp = today`, ce qui satisfait
+            #     `exp >= today` : la dérogation partait dans les ACTIVES et
+            #     neutralisait le finding — l'inverse exact du commentaire placé
+            #     juste à côté. Une date incompréhensible ouvrait donc une porte
+            #     au lieu de la fermer. Trouvé par test, jamais en production.
+            expired.append(d)
+            continue
+        (active if exp >= today else expired).append(d)
+    return active, expired
+
+
 def evaluate(audit: dict, policy: dict) -> tuple[str, list[dict], dict]:
     """Applique la politique → (verdict, règles déclenchées, compteurs).
 
@@ -82,21 +109,7 @@ def evaluate(audit: dict, policy: dict) -> tuple[str, list[dict], dict]:
              for v in (ag.get("vulnerabilities") or [])]
 
     # ── Dérogations : seules celles NON expirées neutralisent un finding ──
-    today = date.today()
-    active, expired = [], []
-    for d in policy.get("derogations", []):
-        try:
-            exp = datetime.fromisoformat(str(d.get("expires_at"))).date()
-        except Exception:
-            # DATE ILLISIBLE → EXPIRÉE, et il faut l'écrire explicitement.
-            #     La version précédente posait `exp = today`, ce qui satisfait
-            #     `exp >= today` : la dérogation partait dans les ACTIVES et
-            #     neutralisait le finding — l'inverse exact du commentaire placé
-            #     juste à côté. Une date incompréhensible ouvrait donc une porte
-            #     au lieu de la fermer. Trouvé par test, jamais en production.
-            expired.append(d)
-            continue
-        (active if exp >= today else expired).append(d)
+    active, expired = partager_derogations(policy.get("derogations", []))
 
     waived_titles = {str(d.get("finding_title", "")).strip().lower() for d in active}
     kept = [v for v in vulns
@@ -292,7 +305,11 @@ def main() -> int:
         Path(args.summary).write_text(
             markdown(audit, verdict, rules, counts, path.name), encoding="utf-8")
 
-    return 1 if verdict == "BLOCKED" else 0
+    # REVIEW_REQUIRED NE SORT PLUS EN 0. Il annonçait « validation humaine »
+    # et laissait passer le pipeline : une dérogation EXPIRÉE — censée
+    # « redevenir bloquante » — ne bloquait donc rien. Code distinct : l'appelant
+    # sait qu'il s'agit d'une revue, pas d'un blocage, et la CI s'arrête.
+    return {"BLOCKED": 1, "REVIEW_REQUIRED": 3}.get(verdict, 0)
 
 
 if __name__ == "__main__":

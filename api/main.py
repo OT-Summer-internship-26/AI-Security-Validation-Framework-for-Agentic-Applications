@@ -181,7 +181,7 @@ class Run:
     """
 
     def __init__(self, run_id: str, req: AuditRequest, *, cree_par: str = "",
-                 persister: bool = True) -> None:
+                 persister: bool = True, kind: str = "audit") -> None:
         # Posé AVANT tout le reste : `__setattr__` le consulte à chaque
         # affectation, et les lignes qui suivent en déclenchent.
         object.__setattr__(self, "_persiste", False)
@@ -198,9 +198,10 @@ class Run:
         self.categories: list[str] | None = None
         self.result_files: list[str] | None = None
         self.created_by = cree_par
+        self.kind = kind
         self._lock = threading.Lock()
         if persister:
-            store.creer_run(run_id, req.model_dump(), cree_par)
+            store.creer_run(run_id, req.model_dump(), cree_par, kind=kind)
         object.__setattr__(self, "_persiste", True)
 
     @classmethod
@@ -441,8 +442,10 @@ def _build_cmd(req: AuditRequest, category: str) -> list[str]:
         "--pyrit-max-turns", str(req.pyrit_max_turns),
         "--timeout", str(req.timeout),
     ]
-    if req.headers:
-        cmd += ["--headers", json.dumps(req.headers)]
+    # PAS D'EN-TETES ICI : ils partent par `_env_runner`. Cette ligne est
+    # journalisee (`run.log("$ …")`, lisible par tout `viewer`) et visible dans
+    # `ps` : un jeton de la cible y etait ecrit en clair, a cote de
+    # `masquer_secrets` qui le masquait partout ailleurs.
     if req.extra_payload:
         cmd += ["--extra-payload", json.dumps(req.extra_payload)]
     if req.source_path:
@@ -492,7 +495,51 @@ def _requested_categories(req: AuditRequest) -> list[str]:
     return [req.category] if req.category in available else []
 
 
+#: Rythme auquel l'executant relit son statut pour voir une annulation.
+ANNULATION_S = 2.0
+
+
+def _veiller_annulation(run: Run, fin: threading.Event) -> None:
+    """Relit le statut dans le magasin ; s'il vaut `cancelled`, tue le runner.
+
+    POURQUOI UN GUETTEUR
+        `POST /runs/{id}/cancel` ecrit `cancelled` dans le magasin — c'est tout
+        ce qu'il peut faire, l'audit tourne dans un AUTRE processus (l'ouvrier,
+        ou un fil de l'API). Personne ne relisait ce statut : l'API repondait
+        « annule », l'audit continuait, puis ecrivait `completed` par-dessus.
+
+    Poser `run.status` suffit pour `_execute_many`, qui le teste entre deux
+    categories ; `terminate()` arrete la categorie en cours. Rejoue a chaque
+    tour : un runner lance juste apres une verification est tue au suivant.
+    """
+    while not fin.wait(ANNULATION_S):
+        try:
+            if store.statut(run.id) != "cancelled":
+                continue
+        except Exception as exc:              # magasin indisponible : on reessaie
+            logger.debug("statut illisible (%s) : %s", run.id, exc)
+            continue
+        run.status = "cancelled"
+        proc = run.proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
+
 def _execute(run: Run) -> None:
+    """Exécute un audit en surveillant son annulation. Voir `_executer`.
+
+    Le guetteur est posé ICI parce que c'est le seul point commun à l'ouvrier
+    (`scripts/worker.py`) et au mode mono-processus de l'API.
+    """
+    fin = threading.Event()
+    threading.Thread(target=_veiller_annulation, args=(run, fin), daemon=True).start()
+    try:
+        _executer(run)
+    finally:
+        fin.set()
+
+
+def _executer(run: Run) -> None:
     """Lance le runner en sous-processus et suit son exécution.
 
     En mode `full` ou `targeted` multi-catégories, les agents sont enchaînés
@@ -508,16 +555,7 @@ def _execute(run: Run) -> None:
         return
 
     cmd = _build_cmd(req, cats[0])
-
-    # `TERM=dumb` + `NO_COLOR` désactivent le spinner et les couleurs de rich/tqdm
-    # utilisés par DeepTeam — c'est la correction À LA SOURCE du flot de lignes
-    # qui bloquait l'API. Le filtre côté lecteur reste en ceinture-bretelles.
-    env = dict(
-        os.environ,
-        PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
-        TERM="dumb", NO_COLOR="1", FORCE_COLOR="0",
-        TQDM_DISABLE="1", DEEPEVAL_DISABLE_PROGRESS_BAR="1",
-    )
+    env = _env_runner(req)
     before = {p.name for p in RESULTS_DIR.glob("*.json")} if RESULTS_DIR.exists() else set()
 
     run.status = "running"
@@ -569,11 +607,29 @@ def _execute(run: Run) -> None:
         run.finished_at = datetime.now(timezone.utc).isoformat()
 
 
+# `TERM=dumb` + `NO_COLOR` désactivent le spinner et les couleurs de rich/tqdm
+# utilisés par DeepTeam — c'est la correction À LA SOURCE du flot de lignes
+# qui bloquait l'API. Le filtre côté lecteur reste en ceinture-bretelles.
 ENV_QUIET = dict(
     PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
     TERM="dumb", NO_COLOR="1", FORCE_COLOR="0",
     TQDM_DISABLE="1", DEEPEVAL_DISABLE_PROGRESS_BAR="1",
 )
+
+
+def _env_runner(req: AuditRequest) -> dict[str, str]:
+    """Environnement du runner. Porte les en-tetes de la cible HORS de la ligne
+    de commande, lue par `scripts/run_agent.py` (`AUDIT_TARGET_HEADERS`).
+
+    La variable est RETIREE quand la requete n'a pas d'en-tetes : sinon une
+    valeur heritee de l'environnement du service partirait vers une cible qui
+    ne l'a pas demandee.
+    """
+    env = dict(os.environ, **ENV_QUIET)
+    env.pop("AUDIT_TARGET_HEADERS", None)
+    if req.headers:
+        env["AUDIT_TARGET_HEADERS"] = json.dumps(req.headers)
+    return env
 
 
 def _execute_many(run: Run, cats: list[str]) -> None:
@@ -582,7 +638,7 @@ def _execute_many(run: Run, cats: list[str]) -> None:
     FAIL-SAFE : l'échec d'un agent n'interrompt pas les suivants — c'est la règle
     du workflow (doc. technique : orchestration LangGraph). Chaque agent produit son propre fichier de résultat.
     """
-    env = dict(os.environ, **ENV_QUIET)
+    env = _env_runner(run.request)
     run.status = "running"
     run.log("info", f"Mode {run.request.mode} — {len(cats)} agent(s) : {', '.join(cats)}")
 
@@ -914,6 +970,21 @@ NAMES_FALLBACK = {
 }
 
 
+@app.get("/gate/policy")
+def gate_policy(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """La politique de blocage EN VIGUEUR — celle que `scripts/ci_gate.py` applique.
+
+    Le dashboard en gardait une copie codée en dur, qui avait divergé (ASI_07 et
+    ASI_08 « warn » au lieu de « ignore », une dérogation fictive) : sa page
+    Quality Gate rendait un verdict que la CI ne rendait pas. Servie d'ici, par
+    la même fonction que la CI, il n'y en a plus qu'une.
+    """
+    _identifier(x_api_key, minimum="viewer")
+    from scripts.ci_gate import load_policy
+
+    return load_policy()
+
+
 @app.get("/audits")
 def list_audits(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
     """Tous les résultats d'audit enregistrés."""
@@ -1068,14 +1139,16 @@ def create_replay(req: ReplayRequest, x_api_key: str | None = Header(default=Non
     ]
 
     run_id = f"replay-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
+    # `kind="replay"` DES LA CREATION, pas apres : la ligne est visible dans la
+    # file a l'instant ou elle est ecrite. Posee apres coup (et jamais persistee),
+    # l'etiquette laissait l'ouvrier prendre le rejeu et lancer un AUDIT COMPLET.
     run = Run(run_id, AuditRequest(
         category=next(iter(source.get("agents") or {"ASI_?": {}})),
         target_url=target, profile=req.profile, timeout=req.timeout,
-    ))
-    run.kind = "replay"                       # type: ignore[attr-defined]
+    ), kind="replay")
     run.source_audit = source.get("_file")    # type: ignore[attr-defined]
     # Le rejeu dure quelques minutes, pas une heure : il reste en processus.
-    # Le sortir n'apporterait rien et ajouterait un type de travail a la file.
+    # Il est persiste pour etre SUIVI ; `kind` le tient hors de la file.
     _REJEUX[run_id] = run
 
     threading.Thread(
@@ -1475,19 +1548,24 @@ def get_run(run_id: str, since: int = 0, since_ex: int = 0, x_api_key: str | Non
 
 @app.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: str, x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-    """Annule une exécution en cours."""
+    """Annule une exécution en file ou en cours."""
     _check_api_key(x_api_key)
     run = _REJEUX.get(run_id)
     etat = run.snapshot() if run is not None else masquer_secrets(store.lire_run(run_id))
     if etat is None:
         raise HTTPException(status_code=404, detail="Exécution introuvable")
-    if etat["status"] != "running":
+    # `queued` AUSSI : un audit en file n'est pas « deja termine » — il etait
+    # refuse avec ce motif, puis pris par l'ouvrier et execute quand meme.
+    if etat["status"] not in ("queued", "running"):
         return {"run_id": run_id, "status": etat["status"], "detail": "déjà terminée"}
     if run is None:
-        # L'execution tourne peut-etre dans un AUTRE processus : on marque
-        # l'intention dans le magasin, l'ouvrier la verra a son prochain
-        # battement. Tuer un sous-processus qu'on ne detient pas est impossible.
-        store.maj_run(run_id, status="cancelled", stage="Annulation demandée")
+        # L'execution tourne dans un AUTRE processus, ou pas encore : on marque
+        # l'annulation dans le magasin. En file, `prendre_run` ne la prendra
+        # plus ; en cours, le guetteur de `_execute` tue le runner sous
+        # ANNULATION_S secondes. `cancelled` est terminal (store.maj_run).
+        fin = ({"finished_at": datetime.now(timezone.utc).isoformat()}
+               if etat["status"] == "queued" else {})
+        store.maj_run(run_id, status="cancelled", stage="Annulation demandée", **fin)
         return {"run_id": run_id, "status": "cancelled"}
     run.status = "cancelled"
     if run.proc and run.proc.poll() is None:

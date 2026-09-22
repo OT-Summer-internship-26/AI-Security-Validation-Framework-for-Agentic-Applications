@@ -4,7 +4,7 @@ import {
   Search, Download, ChevronRight, X, Clock, Coins, ShieldCheck, FileText,
 } from 'lucide-react'
 import { getAudits, getAudit, getDefaultPolicy, useAudits } from '@/data/repository'
-import { API_BASE } from '@/data/api'
+import { openReport } from '@/data/api'
 import { inferMode, targetOf, MODE_LABEL, axesUsed } from '@/data/insights'
 import { evaluateGate, VERDICT_META } from '@/data/gate'
 import { ScoreBar } from '@/components/ScoreBar'
@@ -19,7 +19,7 @@ type SortKey = 'date' | 'score' | 'duration' | 'cost'
 type SortDir = 'asc' | 'desc'
 
 export function HistoryPage() {
-  const { selectedAuditId, setSelectedAuditId } = useApp()
+  const { selectedAuditId, setSelectedAuditId, addToast } = useApp()
   useAudits()   // abonnement : rafraîchit après un audit
   const [search, setSearch] = useState('')
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'all'>('all')
@@ -226,21 +226,26 @@ export function HistoryPage() {
                     {humanDuration(a.duration_s)}
                   </td>
                   {/* Rapport : l'API le génère à la volée et renvoie le HTML.
+                      Un BOUTON et non un lien : un lien ne porte pas la clé
+                      d'API, et l'API protégée répondait 401 (voir openReport).
                       `stopPropagation` est indispensable — sans lui, le clic
                       ouvrirait AUSSI le tiroir de détail de la ligne. */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <a
-                      href={`${API_BASE}/audits/${a.id}/report`}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={e => e.stopPropagation()}
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation()
+                        openReport(a.id).catch((err: Error) => addToast({
+                          type: 'error', title: 'Rapport indisponible', message: err.message,
+                        }))
+                      }}
                       title="Ouvrir le rapport de sécurité (imprimable en PDF)"
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
                                  border border-border text-xs font-medium text-text-secondary
                                  hover:border-brand hover:text-brand transition-colors"
                     >
                       <FileText size={13} /> Rapport
-                    </a>
+                    </button>
                   </td>
                   <td className="px-4 py-3">
                     <ChevronRight size={16} className="text-text-muted" />
