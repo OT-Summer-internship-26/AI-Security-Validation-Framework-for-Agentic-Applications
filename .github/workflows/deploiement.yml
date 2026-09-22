@@ -271,8 +271,17 @@ jobs:
         # réussi. `/health` rend désormais le champ `build` : on peut donc
         # confirmer que c'est BIEN la version demandée qui répond, et pas
         # l'ancienne restée en place parce que `up -d` n'a rien recréé.
+        # AUCUNE EXPRESSION `${{ }}` DANS CE SHELL — elles passent par `env:`.
+        #     Une expression est substituée AVANT l'exécution : une valeur
+        #     choisie par qui déclenche le workflow devient du script, dans un
+        #     job qui porte `DEPLOY_SSH_KEY`. C'est ce que Semgrep signale
+        #     (`run-shell-injection`), et ce que la nouvelle porte a attrapé sur
+        #     cette étape même. Une variable d'environnement, elle, n'est pas
+        #     interprétée comme du code.
         env:
           URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+          COMMIT: ${{ steps.topologie.outputs.commit }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           # LE TEST EST DANS LE SCRIPT, PAS DANS UN `if:` D'ETAPE.
@@ -296,9 +305,9 @@ jobs:
           #     `inputs.version` echouait donc A CHAQUE deploiement reussi, et
           #     reclamait un retour arriere. Le commit, lui, est deja resolu par
           #     l'etape `topologie`, pour les deux formes d'etiquette.
-          ATTENDU="sha-${{ steps.topologie.outputs.commit }}"
+          ATTENDU="sha-$COMMIT"
           if [ "$BUILD" != "$ATTENDU" ]; then
-            echo "::error::l'API répond en build « $BUILD » alors que ${{ inputs.version }} ($ATTENDU) a été déployée"
+            echo "::error::l'API répond en build « $BUILD » alors que $VERSION ($ATTENDU) a été déployée"
             # UN ECHEC QUI NE DIT PAS COMMENT REVENIR N'EST QU'UNE MAUVAISE NOUVELLE.
             #     La production est peut-etre cassee a cet instant. Chercher le
             #     condense precedent dans l'historique des executions, sous
@@ -325,4 +334,4 @@ jobs:
             esac
             exit 1
           fi
-          echo "confirmé : la version en service est bien ${{ inputs.version }} ($BUILD)"
+          echo "confirmé : la version en service est bien $VERSION ($BUILD)"
